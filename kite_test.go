@@ -1,9 +1,9 @@
-package gokite
+package kiteconnect
 
 import "testing"
 
 func TestNew(t *testing.T) {
-	apiKey := "kitefront"
+	apiKey := "api_key"
 	apiSecret := "api_secret"
 	client := New(apiKey, apiSecret)
 
@@ -24,7 +24,7 @@ func TestClientSetDebug(t *testing.T) {
 	apiKey := "kitefront"
 	apiSecret := "api_secret"
 	client := New(apiKey, apiSecret)
-	client.setDebug(true)
+	client.SetDebug(true)
 
 	if client.debug != true {
 		t.Errorf("Debug is not set properly.")
