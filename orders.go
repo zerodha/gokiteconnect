@@ -7,8 +7,8 @@ import (
 
 type Order struct {
 	TransactionType string `json:"transaction_type"`
-	Tradingsymbol   string `json:"tradingsymbol"`
 	InstrumentToken int    `json:"instrument_token"`
+	Tradingsymbol   string `json:"tradingsymbol"`
 	Exchange        string `json:"exchange"`
 
 	OrderID         string `json:"order_id"`
