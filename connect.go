@@ -23,7 +23,54 @@ const (
 	kiteHeaderVersion string = "3"
 )
 
-// URI's
+// Useful public constants
+const (
+	// Varieties
+	VarietyRegular = "regular"
+	VarietyAMO     = "amo"
+	VarietyBO      = "bo"
+	VarietyCO      = "co"
+
+	// Products
+	ProductBO   = "BO"
+	ProductCO   = "CO"
+	ProductMIS  = "MIS"
+	ProductCNC  = "CNC"
+	ProductNRML = "NRML"
+
+	// Order types
+	OrderTypeMarket = "MARKET"
+	OrderTypeLimit  = "LIMIT"
+	OrderTypeSL     = "SL"
+	OrderTypeSLM    = "SL-M"
+
+	// Validities
+	ValidityDay = "DAY"
+	ValidityIOC = "IOC"
+
+	// Transaction type
+	TransactionTypeBuy  = "BUY"
+	TransactionTypeSell = "SELL"
+
+	// Exchanges
+	ExchangeNSE = "NSE"
+	ExchangeBSE = "BSE"
+	ExchangeMCX = "MCX"
+	ExchangeNFO = "NFO"
+	ExchangeBFO = "BFO"
+	ExchangeCDS = "CDS"
+
+	// Margins segments
+	MarginsEquity    = "equity"
+	MarginsCommodity = "commodity"
+
+	// Order status
+	OrderStatusComplete  = "COMPLETE"
+	OrderStatusRejected  = "REJECTED"
+	OrderStatusCancelled = "CANCELLED"
+)
+
+// API endpoints
 const (
 	URIUserSession           string = "/session/token"
 	URIUserSessionInvalidate string = "/session/token"
@@ -32,23 +79,39 @@ const (
 	URIUserMargins           string = "/user/margins"
 	URIUserMarginsSegment    string = "/user/margins/%s" // "/user/margins/{segment}"
 
-	URIOrders      string = "/orders"
-	URITrades      string = "/trades"
-	URIOrderInfo   string = "/orders/%s"        // "/orders/{order_id}"
-	URIOrderTrades string = "/orders/%s/trades" // "/orders/{order_id}/trades"
-	URIPlaceOrder  string = "/orders/%s"        // "/orders/{variety}"
-	URIModifyOrder string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
-	URICancelOrder string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
+	URIGetOrders       string = "/orders"
+	URIGetTrades       string = "/trades"
+	URIGetOrderHistory string = "/orders/%s"        // "/orders/{order_id}"
+	URIGetOrderTrades  string = "/orders/%s/trades" // "/orders/{order_id}/trades"
+	URIPlaceOrder      string = "/orders/%s"        // "/orders/{variety}"
+	URIModifyOrder     string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
+	URICancelOrder     string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
 
-	URIPositions     string = "/portfolio/positions"
-	URIProductModify string = "/portfolio/positions"
-	URIHoldings      string = "/portfolio/holdings"
+	URIGetPositions    string = "/portfolio/positions"
+	URIGetHoldings     string = "/portfolio/holdings"
+	URIConvertPosition string = "/portfolio/positions"
 
-	URIInstruments         string = "/instruments"
-	URIInstrumentsExchange string = "/instruments/%s"                  // "/instruments/{exchange}"
-	URIQuote               string = "/instruments/%s/%s"               // "/instruments/{exchange}/{tradingsymbol}"
-	URIHistorical          string = "/instruments/historical/%s/%s"    // "/instruments/historical/{instrument_token}/{interval}"
-	URITriggerRange        string = "/instruments/%s/%s/trigger_range" // "/instruments/{exchange}/{tradingsymbol}/trigger_range"
+	// MF endpoints
+	URIGetMFOrders    string = "/mf/orders"
+	URIGetMFOrderInfo string = "/mf/orders/%s" // "/mf/orders/{order_id}"
+	URIPlaceMFOrder   string = "/mf/orders"
+	URICancelMFOrder  string = "/mf/orders/%s" // "/mf/orders/{order_id}"
+	URIGetMFSIPs      string = "/mf/sips"
+	URIGetMFSIPInfo   string = "/mf/sips/%s" //  "/mf/sips/{sip_id}"
+	URIPlaceMFSIP     string = "/mf/sips"
+	URIModifyMFSIP    string = "/mf/sips/%s" //  "/mf/sips/{sip_id}"
+	URICancelMFSIP    string = "/mf/sips/%s" //  "/mf/sips/{sip_id}"
+	URIGetMFHoldings  string = "/mf/holdings"
+
+	URIGetInstruments         string = "/instruments"
+	URIGetMFInstruments       string = "/mf/instruments"
+	URIGetInstrumentsExchange string = "/instruments/%s"                  // "/instruments/{exchange}"
+	URIGetHistorical          string = "/instruments/historical/%s/%s"    // "/instruments/historical/{instrument_token}/{interval}"
+	URIGetTriggerRange        string = "/instruments/%s/%s/trigger_range" // "/instruments/{exchange}/{tradingsymbol}/trigger_range"
+
+	URIGetQuote string = "/quote"
+	URIGetLTP   string = "/quote/ltp"
+	URIGetOHLC  string = "/quote/ohlc"
 )
 
 // New creates a new kiteconnect Client instance
