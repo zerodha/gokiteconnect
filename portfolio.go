@@ -80,7 +80,7 @@ type Positions struct {
 	Day []Position `json:"day"`
 }
 
-// PositionModParams represents the input params of a Position Conversion request.
+// ConvertPositionParams represents the input params of a Position Conversion request.
 type ConvertPositionParams struct {
 	Exchange        string `url:"exchange"`
 	TradingSymbol   string `url:"tradingsymbol"`
