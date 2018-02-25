@@ -86,14 +86,20 @@ type MFSIPResponse struct {
 type MFOrderParams struct {
 	Tradingsymbol   string  `json:"tradingsymbol" url:"tradingsymbol"`
 	TransactionType string  `json:"transaction_type" url:"transaction_type"`
-	Quantity        float64 `json:"quantity" url:"quantity"`
-	Amount          float64 `json:"amount" url:"amount"`
-	Frequency       string  `json:"frequency" url:"frequency"`
-	InstalmentDay   int     `json:"instalment_day" url:"instalment_day"`
-	InitialAmount   float64 `json:"initial_amount" url:"initial_amount"`
-	Instalments     int     `json:"instalments" url:"instalments"`
+	Quantity        float64 `json:"quantity" url:"quantity,omitempty"`
+	Amount          float64 `json:"amount" url:"amount,omitempty"`
+	Tag             string  `json:"tag" url:"tag,omitempty"`
+}
 
-	Tag string `json:"tag" url:"tag"`
+// MFSIPParams represents parameters for placing an SIP.
+type MFSIPParams struct {
+	Tradingsymbol string  `json:"tradingsymbol" url:"tradingsymbol"`
+	Amount        float64 `json:"amount" url:"amount"`
+	Instalments   int     `json:"instalments" url:"instalments"`
+	Frequency     string  `json:"frequency" url:"frequency"`
+	InstalmentDay int     `json:"instalment_day" url:"instalment_day,omitempty"`
+	InitialAmount float64 `json:"initial_amount" url:"initial_amount,omitempty"`
+	Tag           string  `json:"tag" url:"tag,omitempty"`
 }
 
 // MFSIPModifyParams represents parameters for modifying a SIP
@@ -105,21 +111,21 @@ type MFSIPModifyParams struct {
 	Status        string  `json:"status" url:"status,omitempty"`
 }
 
-// GetMFOrders gets list of orders.
+// GetMFOrders gets list of mutualfund orders.
 func (c *Client) GetMFOrders() (MFOrders, error) {
 	var orders MFOrders
 	err := c.doEnvelope(http.MethodGet, URIGetMFOrders, nil, nil, &orders)
 	return orders, err
 }
 
-// GetMFOrderInfo gets history of individual order.
+// GetMFOrderInfo get individual mutualfund order info.
 func (c *Client) GetMFOrderInfo(OrderID string) (MFOrder, error) {
 	var orderInfo MFOrder
 	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetMFOrderInfo, OrderID), nil, nil, &orderInfo)
 	return orderInfo, err
 }
 
-// PlaceMFOrder places an order.
+// PlaceMFOrder places an mutualfund order.
 func (c *Client) PlaceMFOrder(orderParams MFOrderParams) (MFOrderResponse, error) {
 	var (
 		orderResponse MFOrderResponse
@@ -133,4 +139,60 @@ func (c *Client) PlaceMFOrder(orderParams MFOrderParams) (MFOrderResponse, error
 
 	err = c.doEnvelope(http.MethodPost, URIPlaceMFOrder, params, nil, &orderResponse)
 	return orderResponse, err
+}
+
+// GetMFSIPs gets list of mutualfund SIPs.
+func (c *Client) GetMFSIPs() (MFSIPs, error) {
+	var sips MFSIPs
+	err := c.doEnvelope(http.MethodGet, URIGetMFSIPs, nil, nil, &sips)
+	return sips, err
+}
+
+// GetMFSIPInfo get individual SIP info.
+func (c *Client) GetMFSIPInfo(sipID string) (MFSIP, error) {
+	var sip MFSIP
+	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetMFSIPInfo, sipID), nil, nil, &sip)
+	return sip, err
+}
+
+// PlaceMFSIP places an mutualfund order.
+func (c *Client) PlaceMFSIP(sipParams MFSIPParams) (MFSIPResponse, error) {
+	var (
+		sipResponse MFSIPResponse
+		params      url.Values
+		err         error
+	)
+
+	if params, err = query.Values(sipParams); err != nil {
+		return sipResponse, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
+	}
+
+	err = c.doEnvelope(http.MethodPost, URIPlaceMFSIP, params, nil, &sipResponse)
+	return sipResponse, err
+}
+
+// ModifyMFSIP modifies an mutualfund SIP.
+func (c *Client) ModifyMFSIP(sipID string, sipParams MFSIPModifyParams) (MFSIPResponse, error) {
+	var (
+		sipResponse MFSIPResponse
+		params      url.Values
+		err         error
+	)
+
+	if params, err = query.Values(sipParams); err != nil {
+		return sipResponse, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
+	}
+
+	err = c.doEnvelope(http.MethodPut, fmt.Sprintf(URIModifyMFSIP, sipID), params, nil, &sipResponse)
+	return sipResponse, err
+}
+
+// CancelMFSIP cancels an mutualfund SIP.
+func (c *Client) CancelMFSIP(sipID string) (MFSIPResponse, error) {
+	var (
+		sipResponse MFSIPResponse
+	)
+
+	err := c.doEnvelope(http.MethodPut, fmt.Sprintf(URICancelMFSIP, sipID), nil, nil, &sipResponse)
+	return sipResponse, err
 }
