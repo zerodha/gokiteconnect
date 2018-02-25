@@ -196,3 +196,10 @@ func (c *Client) CancelMFSIP(sipID string) (MFSIPResponse, error) {
 	err := c.doEnvelope(http.MethodPut, fmt.Sprintf(URICancelMFSIP, sipID), nil, nil, &sipResponse)
 	return sipResponse, err
 }
+
+// GetMFHoldings gets list of user holdings.
+func (c *Client) GetMFHoldings() (MFHoldings, error) {
+	var holdings MFHoldings
+	err := c.doEnvelope(http.MethodGet, URIGetMFHoldings, nil, nil, &holdings)
+	return holdings, err
+}
