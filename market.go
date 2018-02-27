@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/google/go-querystring/query"
 )
@@ -23,16 +24,16 @@ type Quote map[string]struct {
 	Volume          int     `json:"volume"`
 	BuyQuantity     int     `json:"buy_quantity"`
 	SellQuantity    int     `json:"sell_quantity"`
-	Ohlc            struct {
+	OHLC            struct {
 		Open  float64 `json:"open"`
 		High  float64 `json:"high"`
 		Low   float64 `json:"low"`
 		Close float64 `json:"close"`
 	} `json:"ohlc"`
 	NetChange float64 `json:"net_change"`
-	Oi        float64 `json:"oi"`
-	OiDayHigh float64 `json:"oi_day_high"`
-	OiDayLow  float64 `json:"oi_day_low"`
+	OI        float64 `json:"oi"`
+	OIDayHigh float64 `json:"oi_day_high"`
+	OIDayLow  float64 `json:"oi_day_low"`
 	Depth     struct {
 		Buy []struct {
 			Price    float64 `json:"price"`
@@ -51,7 +52,7 @@ type Quote map[string]struct {
 type QuoteOHLC map[string]struct {
 	InstrumentToken int     `json:"instrument_token"`
 	LastPrice       float64 `json:"last_price"`
-	Ohlc            struct {
+	OHLC            struct {
 		Open  float64 `json:"open"`
 		High  float64 `json:"high"`
 		Low   float64 `json:"low"`
@@ -63,6 +64,28 @@ type QuoteOHLC map[string]struct {
 type QuoteLTP map[string]struct {
 	InstrumentToken int     `json:"instrument_token"`
 	LastPrice       float64 `json:"last_price"`
+}
+
+// HistoricalData represents individual historical data point.
+type HistoricalData struct {
+	Date   time.Time `json:"date"`
+	Open   float64   `json:"open"`
+	High   float64   `json:"high"`
+	Low    float64   `json:"Low"`
+	Close  float64   `json:"close"`
+	Volume int64     `json:"volume"`
+}
+
+type historicalDataReceived struct {
+	Candles [][]interface{} `json:"candles"`
+}
+
+type historicalDataParams struct {
+	fromDate        string `url:"from"`
+	toDate          string `url:"to"`
+	continuous      int    `url:"continuous"`
+	instrumentToken int    `url:"instrument_token"`
+	interval        string `url:"interval"`
 }
 
 // GetQuote gets map of quotes.
@@ -126,4 +149,91 @@ func (c *Client) GetOHLC(instruments ...string) (QuoteOHLC, error) {
 
 	err = c.doEnvelope(http.MethodGet, URIGetQuote, params, nil, &quotes)
 	return quotes, err
+}
+
+func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalData, error) {
+	var data []HistoricalData
+
+	for _, i := range inp.Candles {
+		var (
+			ds     string
+			open   float64
+			high   float64
+			low    float64
+			close  float64
+			volume int64
+			ok     bool
+		)
+
+		if ds, ok = i[0].(string); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		}
+
+		if open, ok = i[0].(float64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		}
+
+		if high, ok = i[0].(float64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		}
+
+		if low, ok = i[0].(float64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		}
+
+		if close, ok = i[0].(float64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		}
+
+		if volume, ok = i[0].(int64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		}
+
+		d, err := time.Parse("2006-01-02T15:04:05-0700", ds)
+		if err != nil {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", err), nil)
+		}
+
+		data = append(data, HistoricalData{
+			Date:   d,
+			Open:   open,
+			High:   high,
+			Low:    low,
+			Close:  close,
+			Volume: volume,
+		})
+	}
+
+	return data, nil
+}
+
+// GetHistoricalData gets list of historical data.
+func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDate time.Time, toDate time.Time, continuous bool) ([]HistoricalData, error) {
+	var (
+		err       error
+		data      []HistoricalData
+		params    url.Values
+		inpParams historicalDataParams
+	)
+
+	inpParams.instrumentToken = instrumentToken
+	inpParams.interval = interval
+	inpParams.fromDate = fromDate.Format("2006/01/02 15:04:05")
+	inpParams.toDate = toDate.Format("2006/01/02 15:04:05")
+	inpParams.continuous = 0
+
+	if continuous {
+		inpParams.continuous = 1
+	}
+
+	if params, err = query.Values(inpParams); err != nil {
+		return data, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
+	}
+
+	var resp historicalDataReceived
+	if c.doEnvelope(http.MethodGet, URIGetHistorical, params, nil, &resp); err != nil {
+		return data, err
+	}
+
+	return c.formatHistoricalData(resp)
 }
