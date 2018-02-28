@@ -107,7 +107,7 @@ const (
 	URIGetInstruments         string = "/instruments"
 	URIGetMFInstruments       string = "/mf/instruments"
 	URIGetInstrumentsExchange string = "/instruments/%s"                  // "/instruments/{exchange}"
-	URIGetHistorical          string = "/instruments/historical/%s/%s"    // "/instruments/historical/{instrument_token}/{interval}"
+	URIGetHistorical          string = "/instruments/historical/%d/%s"    // "/instruments/historical/{instrument_token}/{interval}"
 	URIGetTriggerRange        string = "/instruments/%s/%s/trigger_range" // "/instruments/{exchange}/{tradingsymbol}/trigger_range"
 
 	URIGetQuote string = "/quote"
@@ -179,4 +179,24 @@ func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.
 	}
 
 	return c.httpClient.DoEnvelope(method, c.baseURI+uri, params, headers, v)
+}
+
+func (c *Client) do(method, uri string, params url.Values, headers http.Header) (HTTPResponse, error) {
+	if params == nil {
+		params = url.Values{}
+	}
+
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+
+	headers.Add("X-Kite-Version", kiteHeaderVersion)
+	headers.Add("User-Agent", name+"/"+version)
+
+	if c.apiKey != "" && c.accessToken != "" {
+		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+		headers.Add("Authorization", authHeader)
+	}
+
+	return c.httpClient.Do(method, c.baseURI+uri, params, headers)
 }

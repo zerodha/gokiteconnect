@@ -68,12 +68,12 @@ type QuoteLTP map[string]struct {
 
 // HistoricalData represents individual historical data point.
 type HistoricalData struct {
-	Date   time.Time `json:"date"`
-	Open   float64   `json:"open"`
-	High   float64   `json:"high"`
-	Low    float64   `json:"Low"`
-	Close  float64   `json:"close"`
-	Volume int64     `json:"volume"`
+	Date   Time    `json:"date"`
+	Open   float64 `json:"open"`
+	High   float64 `json:"high"`
+	Low    float64 `json:"Low"`
+	Close  float64 `json:"close"`
+	Volume int     `json:"volume"`
 }
 
 type historicalDataReceived struct {
@@ -81,11 +81,11 @@ type historicalDataReceived struct {
 }
 
 type historicalDataParams struct {
-	fromDate        string `url:"from"`
-	toDate          string `url:"to"`
-	continuous      int    `url:"continuous"`
-	instrumentToken int    `url:"instrument_token"`
-	interval        string `url:"interval"`
+	FromDate        string `url:"from"`
+	ToDate          string `url:"to"`
+	Continuous      int    `url:"continuous"`
+	InstrumentToken int    `url:"instrument_token"`
+	Interval        string `url:"interval"`
 }
 
 // GetQuote gets map of quotes.
@@ -161,41 +161,46 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 			high   float64
 			low    float64
 			close  float64
-			volume int64
+			volume int
 			ok     bool
 		)
 
 		if ds, ok = i[0].(string); !ok {
-			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response `date`: %v", i[0]), nil)
 		}
 
-		if open, ok = i[0].(float64); !ok {
-			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		if open, ok = i[1].(float64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response `open`: %v", i[1]), nil)
 		}
 
-		if high, ok = i[0].(float64); !ok {
-			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		if high, ok = i[2].(float64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response `high`: %v", i[2]), nil)
 		}
 
-		if low, ok = i[0].(float64); !ok {
-			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		if low, ok = i[3].(float64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response `low`: %v", i[3]), nil)
 		}
 
-		if close, ok = i[0].(float64); !ok {
-			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		if close, ok = i[4].(float64); !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response `close`: %v", i[4]), nil)
 		}
 
-		if volume, ok = i[0].(int64); !ok {
-			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", ds), nil)
+		// Assert volume
+		v, ok := i[5].(float64)
+		if !ok {
+			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response `volume`: %v", i[5]), nil)
 		}
 
+		volume = int(v)
+
+		// Parse string to date
 		d, err := time.Parse("2006-01-02T15:04:05-0700", ds)
 		if err != nil {
 			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response: %v", err), nil)
 		}
 
 		data = append(data, HistoricalData{
-			Date:   d,
+			Date:   Time{d},
 			Open:   open,
 			High:   high,
 			Low:    low,
@@ -216,14 +221,14 @@ func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDat
 		inpParams historicalDataParams
 	)
 
-	inpParams.instrumentToken = instrumentToken
-	inpParams.interval = interval
-	inpParams.fromDate = fromDate.Format("2006/01/02 15:04:05")
-	inpParams.toDate = toDate.Format("2006/01/02 15:04:05")
-	inpParams.continuous = 0
+	inpParams.InstrumentToken = instrumentToken
+	inpParams.Interval = interval
+	inpParams.FromDate = fromDate.Format("2006-01-02 15:04:05")
+	inpParams.ToDate = toDate.Format("2006-01-02 15:04:05")
+	inpParams.Continuous = 0
 
 	if continuous {
-		inpParams.continuous = 1
+		inpParams.Continuous = 1
 	}
 
 	if params, err = query.Values(inpParams); err != nil {
@@ -231,7 +236,7 @@ func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDat
 	}
 
 	var resp historicalDataReceived
-	if c.doEnvelope(http.MethodGet, URIGetHistorical, params, nil, &resp); err != nil {
+	if c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetHistorical, instrumentToken, interval), params, nil, &resp); err != nil {
 		return data, err
 	}
 
