@@ -125,7 +125,7 @@ func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Hea
 
 	resp.Response = r
 	resp.Body = body
-	h.hLog.Printf("%s %s -- %d %v", method, rURL, resp.Response.StatusCode, req.Header)
+	h.hLog.Printf("%s %s -- %d %v", method, req.URL.RequestURI(), resp.Response.StatusCode, req.Header)
 
 	return resp, nil
 }
