@@ -31,8 +31,8 @@ type MFOrder struct {
 	StatusMessage     string `json:"status_message"`
 	Folio             string `json:"folio"`
 	Fund              string `json:"fund"`
-	OrderTimestamp    string `json:"order_timestamp"`
-	ExchangeTimestamp string `json:"exchange_timestamp"`
+	OrderTimestamp    Time   `json:"order_timestamp"`
+	ExchangeTimestamp Time   `json:"exchange_timestamp"`
 	SettlementID      string `json:"settlement_id"`
 
 	TransactionType string  `json:"transaction_type"`
@@ -58,11 +58,11 @@ type MFSIP struct {
 	TransactionType string `json:"transaction_type"`
 
 	Status             string  `json:"status"`
-	Created            string  `json:"created"`
+	Created            Time    `json:"created"`
 	Frequency          string  `json:"frequency"`
 	InstalmentAmount   float64 `json:"instalment_amount"`
 	Instalments        int     `json:"instalments"`
-	LastInstalment     string  `json:"last_instalment"`
+	LastInstalment     Time    `json:"last_instalment"`
 	PendingInstalments int     `json:"pending_instalments"`
 	InstalmentDay      int     `json:"instalment_day"`
 	Tag                string  `json:"tag"`

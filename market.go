@@ -16,10 +16,10 @@ type quoteParams struct {
 // Quote represents individual quote.
 type Quote map[string]struct {
 	InstrumentToken int     `json:"instrument_token"`
-	Timestamp       string  `json:"timestamp"`
+	Timestamp       Time    `json:"timestamp"`
 	LastPrice       float64 `json:"last_price"`
 	LastQuantity    int     `json:"last_quantity"`
-	LastTradeTime   string  `json:"last_trade_time"`
+	LastTradeTime   Time    `json:"last_trade_time"`
 	AveragePrice    float64 `json:"average_price"`
 	Volume          int     `json:"volume"`
 	BuyQuantity     int     `json:"buy_quantity"`

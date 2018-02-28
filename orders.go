@@ -18,9 +18,9 @@ type Order struct {
 	ParentOrderID           string `json:"parent_order_id"`
 	Status                  string `json:"status"`
 	StatusMessage           string `json:"status_message"`
-	OrderTimestamp          string `json:"order_timestamp"`
-	ExchangeUpdateTimestamp string `json:"exchange_update_timestamp"`
-	ExchangeTimestamp       string `json:"exchange_timestamp"`
+	OrderTimestamp          Time   `json:"order_timestamp"`
+	ExchangeUpdateTimestamp Time   `json:"exchange_update_timestamp"`
+	ExchangeTimestamp       Time   `json:"exchange_timestamp"`
 	Meta                    string `json:"meta"`
 	RejectedBy              string `json:"rejected_by"`
 	Variety                 string `json:"variety"`
@@ -79,8 +79,8 @@ type Trade struct {
 	Quantity          float64 `json:"quantity"`
 	TradeID           string  `json:"trade_id"`
 	Product           string  `json:"product"`
-	OrderTimestamp    string  `json:"order_timestamp"`
-	ExchangeTimestamp string  `json:"exchange_timestamp"`
+	FillTimestamp     Time    `json:"fill_timestamp"`
+	ExchangeTimestamp Time    `json:"exchange_timestamp"`
 	ExchangeOrderID   string  `json:"exchange_order_id"`
 	OrderID           string  `json:"order_id"`
 	TransactionType   string  `json:"transaction_type"`

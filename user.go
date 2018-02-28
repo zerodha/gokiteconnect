@@ -25,6 +25,7 @@ type UserSession struct {
 
 	APIKey      string `json:"api_key"`
 	PublicToken string `json:"public_token"`
+	LoginTime   Time   `json:"login_time"`
 }
 
 // UserSessionTokens represents response after renew access token.
@@ -43,23 +44,16 @@ type Bank struct {
 
 // UserProfile represents a user's personal and financial profile.
 type UserProfile struct {
-	UserName string `json:"user_name" msgp:"user_name"`
-
-	// This does not come from the OMS.
-	UserShortName string `json:"user_shortname"`
-
-	AvatarURL string `json:"avatar_url"`
-
-	UserType   string   `json:"user_type" msgp:"user_type"`
-	Email      string   `json:"email" msgp:"email"`
-	Phone      string   `json:"phone" msgp:"phone"`
-	Broker     string   `json:"broker" msgp:"broker"`
-	Banks      []Bank   `json:"bank_accounts" msgp:"bank_accounts"`
-	DPIDs      []string `json:"dp_ids" msgp:"dp_ids"`
-	Products   []string `json:"products" msgp:"products"`
-	OrderTypes []string `json:"order_types" msgp:"order_types"`
-	Exchanges  []string `json:"exchanges" msgp:"exchanges"`
-	Pan        string   `json:"pan" msgp:"pan"`
+	UserName      string   `json:"user_name"`
+	UserShortName string   `json:"user_shortname"`
+	AvatarURL     string   `json:"avatar_url"`
+	UserType      string   `json:"user_type"`
+	Email         string   `json:"email"`
+	Phone         string   `json:"phone"`
+	Broker        string   `json:"broker"`
+	Products      []string `json:"products"`
+	OrderTypes    []string `json:"order_types"`
+	Exchanges     []string `json:"exchanges"`
 }
 
 // Margins represents the margins response from Nestcore for a single segment.
