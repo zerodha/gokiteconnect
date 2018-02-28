@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/gocarina/gocsv"
 	"github.com/google/go-querystring/query"
 )
 
@@ -87,6 +88,45 @@ type historicalDataParams struct {
 	InstrumentToken int    `url:"instrument_token"`
 	Interval        string `url:"interval"`
 }
+
+type Instrument struct {
+	InstrumentToken int     `csv:"instrument_token"`
+	ExchangeToken   int     `csv:"exchange_token"`
+	Tradingsymbol   string  `csv:"tradingsymbol"`
+	Name            string  `csv:"name"`
+	LastPrice       float64 `csv:"last_price"`
+	Expiry          Time    `csv:"expiry"`
+	StrikePrice     float64 `csv:"strike"`
+	tickSize        float64 `csv:"tick_size"`
+	lotSize         float64 `csv:"lot_size"`
+	instrumentType  string  `csv:"instrument_type"`
+	segment         string  `csv:"segment"`
+	exchange        string  `csv:"exchange"`
+}
+
+type Instruments []Instrument
+
+type MFInstrument struct {
+	Tradingsymbol string  `csv:"tradingsymbol"`
+	Name          string  `csv:"name"`
+	LastPrice     float64 `csv:"last_price"`
+	AMC           string  `csv:"amc"`
+
+	PurchaseAllowed                 bool    `csv:"purchase_allowed"`
+	RedemtpionAllowed               bool    `csv:"redemption_allowed"`
+	MinimumPurchaseAmount           float64 `csv:"minimum_purchase_amount"`
+	PurchaseAmountMultiplier        float64 `csv:"purchase_amount_multiplier"`
+	MinimumAdditionalPurchaseAmount float64 `csv:"additional_purchase_multiple"`
+	MinimumRedemptionQuantity       float64 `csv:"minimum_redemption_quantity"`
+	RedemptionQuantityMultiplier    float64 `csv:"redemption_quantity_multiplier"`
+	DividendType                    string  `csv:"dividend_type"`
+	SchemeType                      string  `csv:"scheme_type"`
+	Plan                            string  `csv:"plan"`
+	SettlementType                  string  `csv:"settlement_type"`
+	LastPriceDate                   Time    `csv:"last_price_date"`
+}
+
+type MFInstruments []MFInstrument
 
 // GetQuote gets map of quotes.
 func (c *Client) GetQuote(instruments ...string) (Quote, error) {
@@ -241,4 +281,44 @@ func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDat
 	}
 
 	return c.formatHistoricalData(resp)
+}
+
+func (c *Client) parseInstruments(data interface{}, url string, params url.Values) error {
+	var (
+		err  error
+		resp HTTPResponse
+	)
+
+	// Get CSV response
+	if resp, err = c.do(http.MethodGet, url, params, nil); err != nil {
+		return err
+	}
+
+	// Unmarshal CSV response to instruments
+	if err = gocsv.UnmarshalBytes(resp.Body, data); err != nil {
+		return NewError(GeneralError, fmt.Sprintf("Error parsing csv response: %v", err), nil)
+	}
+
+	return nil
+}
+
+// GetInstruments retrives list of instruments.
+func (c *Client) GetInstruments() (Instruments, error) {
+	var instruments Instruments
+	err := c.parseInstruments(&instruments, URIGetInstruments, nil)
+	return instruments, err
+}
+
+// GetInstrumentsByExchange retrives list of instruments for given exchange.
+func (c *Client) GetInstrumentsByExchange(exchange string) (Instruments, error) {
+	var instruments Instruments
+	err := c.parseInstruments(&instruments, fmt.Sprintf(URIGetInstrumentsExchange, exchange), nil)
+	return instruments, err
+}
+
+// GetMFInstruments retrives list of mutualfund instruments.
+func (c *Client) GetMFInstruments() (MFInstruments, error) {
+	var instruments MFInstruments
+	err := c.parseInstruments(&instruments, URIGetMFInstruments, nil)
+	return instruments, err
 }
