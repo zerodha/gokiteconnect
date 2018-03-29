@@ -26,7 +26,7 @@ type Client struct {
 const (
 	name     string        = "gokiteconnect"
 	version  string        = "3.0.0"
-	timeout  time.Duration = time.Duration(7000)
+	timeout  time.Duration = 7000 * time.Millisecond
 	baseURI  string        = "https://api.kite.trade"
 	loginURI string        = "https://kite.trade/connect/login?api_key=%s&v=3"
 	// Kite connect header version
@@ -132,16 +132,16 @@ func New(apiKey string) *Client {
 	}
 
 	// Create a default http handler with default timeout.
-	client.SetHTTPHandler(&http.Client{
-		Timeout: timeout * time.Millisecond,
+	client.SetHTTPClient(&http.Client{
+		Timeout: timeout,
 	})
 
 	return client
 }
 
-// SetHTTPHandler overrides default http handler with a custom one.
+// SetHTTPClient overrides default http handler with a custom one.
 // This can be used to set custom timeouts and transport.
-func (c *Client) SetHTTPHandler(h *http.Client) {
+func (c *Client) SetHTTPClient(h *http.Client) {
 	c.httpClient = NewHTTPClient(h, nil)
 }
 
@@ -158,7 +158,7 @@ func (c *Client) SetBaseURI(baseURI string) {
 // SetTimeout sets request timeout for default http client.
 func (c *Client) SetTimeout(timeout time.Duration) {
 	httpClient := c.httpClient.GetClient()
-	httpClient.Timeout = timeout * time.Millisecond
+	httpClient.Timeout = timeout
 }
 
 // SetAccessToken sets the access token to the Kite Connect instance.
