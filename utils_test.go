@@ -12,32 +12,21 @@ func TestCustomUnmarshalJSON(t *testing.T) {
 		Date Time `json:"date"`
 	}
 
-	// Test all the valid custom time formatting
-	validJSON := []string{
-		"{\"date\":\"2006-01-02\"}",
-		"{\"date\":\"2006-01-02 15:04:05\"}",
-		"{\"date\":\"2006-01-02T15:04:05-0700\"}",
+	testCases := []struct {
+		input  string
+		isZero bool
+	}{
+		{"{\"date\":\"2006-01-02\"}", false},
+		{"{\"date\":\"2006-01-02 15:04:05\"}", false},
+		{"{\"date\":\"2006-01-02T15:04:05-0700\"}", false},
+		{"{\"date\":\"2006-01-02T\"}", true},
 	}
 
-	for _, j := range validJSON {
+	for _, j := range testCases {
 		res := sampleJSON{}
-		json.Unmarshal([]byte(j), &res)
-		if res.Date.IsZero() {
-			t.Errorf("Custom time JSON parsing failed. Sample JSON: %s", j)
-		}
-	}
-
-	// Test and invalid format
-	invalidJSON := []string{
-		"{\"date\":\"2006-01-02:\"}",
-	}
-
-	for _, j := range invalidJSON {
-		res := sampleJSON{}
-		json.Unmarshal([]byte(j), &res)
-
-		if !res.Date.IsZero() {
-			t.Errorf("Custom time JSON parsing didn't fail. Sample JSON: %s", j)
+		json.Unmarshal([]byte(j.input), &res)
+		if res.Date.IsZero() != j.isZero {
+			t.Errorf("Custom time JSON parsing failed. Expected: %v, Got: %v, Test string: %s", j.isZero, res.Date.IsZero(), j.input)
 		}
 	}
 }
@@ -47,31 +36,21 @@ func TestCustomUnmarshalCSV(t *testing.T) {
 		Date Time `csv:"date"`
 	}
 
-	// Valid csv
-	validCSV := []string{
-		"date\n2006-01-02",
-		"date\n2006-01-02 15:04:05",
-		"date\n2006-01-02T15:04:05-0700",
+	testCases := []struct {
+		input  string
+		isZero bool
+	}{
+		{"date\n2006-01-02", false},
+		{"date\n2006-01-02 15:04:05", false},
+		{"date\n2006-01-02T15:04:05-0700", false},
+		{"date\n2006-01-02:", true},
 	}
 
-	for _, j := range validCSV {
+	for _, j := range testCases {
 		res := []sampleCSV{}
-		gocsv.UnmarshalBytes([]byte(j), &res)
-		if res[0].Date.IsZero() {
-			t.Errorf("Custom time CSV parsing failed. Sample CSV: %s", j)
-		}
-	}
-
-	// Invalid csv
-	invalidCSV := []string{
-		"date\n2006-01-02:",
-	}
-
-	for _, j := range invalidCSV {
-		res := []sampleCSV{}
-		gocsv.UnmarshalBytes([]byte(j), &res)
-		if !res[0].Date.IsZero() {
-			t.Errorf("Custom time CSV parsing not failing. Sample CSV: %s", j)
+		gocsv.UnmarshalBytes([]byte(j.input), &res)
+		if res[0].Date.IsZero() != j.isZero {
+			t.Errorf("Custom time CSV parsing failed. Expected: %v, Got: %v, Test string: %s", j.isZero, res[0].Date.IsZero(), j.input)
 		}
 	}
 }
