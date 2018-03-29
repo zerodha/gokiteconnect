@@ -8,7 +8,7 @@ import (
 	"github.com/google/go-querystring/query"
 )
 
-// MFHolding represents a single MF holding row.
+// MFHolding represents a individual mutualfund holding.
 type MFHolding struct {
 	Folio         string  `json:"folio"`
 	Fund          string  `json:"fund"`
@@ -19,10 +19,10 @@ type MFHolding struct {
 	Quantity      float64 `json:"quantity"`
 }
 
-// MFHoldings represents a list of Holding entries.
+// MFHoldings represents a list of mutualfund holdings.
 type MFHoldings []Holding
 
-// MFOrder represents a single MF order.
+// MFOrder represents a individual mutualfund order response.
 type MFOrder struct {
 	OrderID           string `json:"order_id"`
 	ExchangeOrderID   string `json:"exchange_order_id"`
@@ -46,10 +46,10 @@ type MFOrder struct {
 	Tag             string  `json:"tag"`
 }
 
-// MFOrders represents a list of Order entries.
+// MFOrders represents a list of mutualfund orders.
 type MFOrders []Order
 
-// MFSIP represents a single SIP.
+// MFSIP represents a individual mutualfund SIP response.
 type MFSIP struct {
 	ID              string `json:"sip_id"`
 	Tradingsymbol   string `json:"tradingsymbol"`
@@ -68,15 +68,15 @@ type MFSIP struct {
 	Tag                string  `json:"tag"`
 }
 
-// MFSIPs represents a list of Holding entries.
+// MFSIPs represents a list of mutualfund SIPs.
 type MFSIPs []MFSIP
 
-// MFOrderResponse represents the result of a successful order placement.
+// MFOrderResponse represents the successful order place response.
 type MFOrderResponse struct {
 	OrderID string `json:"order_id"`
 }
 
-// MFSIPResponse represents the result of a successful order placement.
+// MFSIPResponse represents the successful SIP place response.
 type MFSIPResponse struct {
 	OrderID *string `json:"order_id"`
 	SIPID   string  `json:"sip_id"`
@@ -91,7 +91,7 @@ type MFOrderParams struct {
 	Tag             string  `json:"tag" url:"tag,omitempty"`
 }
 
-// MFSIPParams represents parameters for placing an SIP.
+// MFSIPParams represents parameters for placing a SIP.
 type MFSIPParams struct {
 	Tradingsymbol string  `json:"tradingsymbol" url:"tradingsymbol"`
 	Amount        float64 `json:"amount" url:"amount"`
@@ -102,7 +102,7 @@ type MFSIPParams struct {
 	Tag           string  `json:"tag" url:"tag,omitempty"`
 }
 
-// MFSIPModifyParams represents parameters for modifying a SIP
+// MFSIPModifyParams represents parameters for modifying a SIP.
 type MFSIPModifyParams struct {
 	Amount        float64 `json:"amount" url:"amount,omitempty"`
 	Frequency     string  `json:"frequency" url:"frequency,omitempty"`
@@ -155,7 +155,7 @@ func (c *Client) GetMFSIPInfo(sipID string) (MFSIP, error) {
 	return sip, err
 }
 
-// PlaceMFSIP places an mutualfund order.
+// PlaceMFSIP places an mutualfund SIP order.
 func (c *Client) PlaceMFSIP(sipParams MFSIPParams) (MFSIPResponse, error) {
 	var (
 		sipResponse MFSIPResponse
@@ -197,7 +197,7 @@ func (c *Client) CancelMFSIP(sipID string) (MFSIPResponse, error) {
 	return sipResponse, err
 }
 
-// GetMFHoldings gets list of user holdings.
+// GetMFHoldings gets list of user mutualfund holdings.
 func (c *Client) GetMFHoldings() (MFHoldings, error) {
 	var holdings MFHoldings
 	err := c.doEnvelope(http.MethodGet, URIGetMFHoldings, nil, nil, &holdings)

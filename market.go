@@ -14,7 +14,7 @@ type quoteParams struct {
 	Instruments []string `url:"i"`
 }
 
-// Quote represents individual quote.
+// Quote represents the full quote response.
 type Quote map[string]struct {
 	InstrumentToken int     `json:"instrument_token"`
 	Timestamp       Time    `json:"timestamp"`
@@ -67,7 +67,7 @@ type QuoteLTP map[string]struct {
 	LastPrice       float64 `json:"last_price"`
 }
 
-// HistoricalData represents individual historical data point.
+// HistoricalData represents individual historical data response.
 type HistoricalData struct {
 	Date   Time    `json:"date"`
 	Open   float64 `json:"open"`
@@ -89,6 +89,7 @@ type historicalDataParams struct {
 	Interval        string `url:"interval"`
 }
 
+// Instrument represents individual instrument response.
 type Instrument struct {
 	InstrumentToken int     `csv:"instrument_token"`
 	ExchangeToken   int     `csv:"exchange_token"`
@@ -104,8 +105,10 @@ type Instrument struct {
 	exchange        string  `csv:"exchange"`
 }
 
+// Instruments represents list of instruments.
 type Instruments []Instrument
 
+// MFInstrument represents individual mutualfund instrument response.
 type MFInstrument struct {
 	Tradingsymbol string  `csv:"tradingsymbol"`
 	Name          string  `csv:"name"`
@@ -126,9 +129,10 @@ type MFInstrument struct {
 	LastPriceDate                   Time    `csv:"last_price_date"`
 }
 
+// MFInstruments represents list of mutualfund instruments.
 type MFInstruments []MFInstrument
 
-// GetQuote gets map of quotes.
+// GetQuote gets map of quotes for given instruments in the format of `exchange:tradingsymbol`.
 func (c *Client) GetQuote(instruments ...string) (Quote, error) {
 	var (
 		err     error
@@ -149,7 +153,7 @@ func (c *Client) GetQuote(instruments ...string) (Quote, error) {
 	return quotes, err
 }
 
-// GetLTP gets map of quotes.
+// GetLTP gets map of LTP quotes for given instruments in the format of `exchange:tradingsymbol`.
 func (c *Client) GetLTP(instruments ...string) (QuoteLTP, error) {
 	var (
 		err     error
@@ -170,7 +174,7 @@ func (c *Client) GetLTP(instruments ...string) (QuoteLTP, error) {
 	return quotes, err
 }
 
-// GetOHLC gets map of quotes.
+// GetOHLC gets map of OHLC quotes for given instruments in the format of `exchange:tradingsymbol`.
 func (c *Client) GetOHLC(instruments ...string) (QuoteOHLC, error) {
 	var (
 		err     error
@@ -309,7 +313,7 @@ func (c *Client) GetInstruments() (Instruments, error) {
 	return instruments, err
 }
 
-// GetInstrumentsByExchange retrives list of instruments for given exchange.
+// GetInstrumentsByExchange retrives list of instruments for a given exchange.
 func (c *Client) GetInstrumentsByExchange(exchange string) (Instruments, error) {
 	var instruments Instruments
 	err := c.parseInstruments(&instruments, fmt.Sprintf(URIGetInstrumentsExchange, exchange), nil)

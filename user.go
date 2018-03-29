@@ -9,15 +9,6 @@ import (
 	"github.com/zerodhatech/go-kite-connect/models"
 )
 
-// Client represents interface for Kiteconnect client.
-type Client struct {
-	apiKey      string
-	accessToken string
-	debug       bool
-	baseURI     string
-	httpClient  HTTPClient
-}
-
 // UserSession represents the response after a successful authentication.
 type UserSession struct {
 	UserProfile
@@ -56,7 +47,7 @@ type UserProfile struct {
 	Exchanges     []string `json:"exchanges"`
 }
 
-// Margins represents the margins response from Nestcore for a single segment.
+// Margins represents the user margins for a segment.
 type Margins struct {
 	Category  string           `json:"-"`
 	Enabled   bool             `json:"enabled"`
@@ -66,7 +57,6 @@ type Margins struct {
 }
 
 // AvailableMargins represents the available margins from the margins response for a single segment.
-// TODO: Add holding_sales and turnover once in the nestcore API.
 type AvailableMargins struct {
 	AdHocMargin   float64 `json:"adhoc_margin"`
 	Cash          float64 `json:"cash"`
@@ -139,7 +129,7 @@ func (c *Client) invalidateToken(tokenKey string, tokenValue string) (bool, erro
 	return b, err
 }
 
-// InvalidateAccessToken invalidates the current set access token.
+// InvalidateAccessToken invalidates the current access token.
 func (c *Client) InvalidateAccessToken() (bool, error) {
 	return c.invalidateToken("access_token", c.accessToken)
 }

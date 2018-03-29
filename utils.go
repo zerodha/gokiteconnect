@@ -10,7 +10,7 @@ type Time struct {
 	time.Time
 }
 
-// Array of knows time formats
+// List of known time formats
 var ctLayouts = []string{"2006-01-02", "2006-01-02 15:04:05", "2006-01-02T15:04:05-0700"}
 
 // UnmarshalJSON parses JSON time string with custom time formats

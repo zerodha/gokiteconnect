@@ -8,7 +8,7 @@ import (
 	"github.com/google/go-querystring/query"
 )
 
-// Order represents a single order entry.
+// Order represents a individual order response.
 type Order struct {
 	AccountID string `json:"account_id"`
 	PlacedBy  string `json:"placed_by"`
@@ -44,7 +44,7 @@ type Order struct {
 	CancelledQuantity float64 `json:"cancelled_quantity"`
 }
 
-// Orders is a list of Order entries.
+// Orders is a list of orders.
 type Orders []Order
 
 // OrderParams represents parameters for placing an order.
@@ -68,12 +68,12 @@ type OrderParams struct {
 	Tag string `json:"tag" url:"tag,omitempty"`
 }
 
-// OrderResponse represents the result of a successful order placement.
+// OrderResponse represents the order place success response.
 type OrderResponse struct {
 	OrderID string `json:"order_id"`
 }
 
-// Trade type as returned by the c++ api.
+// Trade represents an individual trade response.
 type Trade struct {
 	AveragePrice      float64 `json:"average_price"`
 	Quantity          float64 `json:"quantity"`
@@ -89,7 +89,7 @@ type Trade struct {
 	InstrumentToken   uint32  `json:"instrument_token"`
 }
 
-// Trades is a list of Trade entries.
+// Trades is a list of trades.
 type Trades []Trade
 
 // GetOrders gets list of orders.
@@ -106,7 +106,7 @@ func (c *Client) GetTrades() (Trades, error) {
 	return trades, err
 }
 
-// GetOrderHistory gets history of individual order.
+// GetOrderHistory gets history of an individual order.
 func (c *Client) GetOrderHistory(OrderID string) ([]Order, error) {
 	var orderHistory []Order
 	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetOrderHistory, OrderID), nil, nil, &orderHistory)

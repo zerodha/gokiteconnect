@@ -6,7 +6,7 @@ package kiteconnect
 
 import "net/http"
 
-// API errors.
+// API errors. Check documantation to learn about individual exception: https://kite.trade/docs/connect/v3/exceptions/.
 const (
 	GeneralError    = "GeneralException"
 	TokenError      = "TokenException"

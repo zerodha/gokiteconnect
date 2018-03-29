@@ -14,6 +14,15 @@ type PlainResponse struct {
 	Message string `json:"string"`
 }
 
+// Client represents interface for Kite Connect client.
+type Client struct {
+	apiKey      string
+	accessToken string
+	debug       bool
+	baseURI     string
+	httpClient  HTTPClient
+}
+
 const (
 	name     string        = "gokiteconnect"
 	version  string        = "3.0.0"
@@ -115,14 +124,14 @@ const (
 	URIGetOHLC  string = "/quote/ohlc"
 )
 
-// New creates a new kiteconnect Client instance
+// New creates a new Kite Connect client.
 func New(apiKey string) *Client {
 	client := &Client{
 		apiKey:  apiKey,
 		baseURI: baseURI,
 	}
 
-	// Create a default http handler with default timeout
+	// Create a default http handler with default timeout.
 	client.SetHTTPHandler(&http.Client{
 		Timeout: timeout * time.Millisecond,
 	})
@@ -130,33 +139,34 @@ func New(apiKey string) *Client {
 	return client
 }
 
-// SetHTTPHandler sets a custom http handler. Can be used to set custom timeouts and transport.
+// SetHTTPHandler overrides default http handler with a custom one.
+// This can be used to set custom timeouts and transport.
 func (c *Client) SetHTTPHandler(h *http.Client) {
 	c.httpClient = NewHTTPClient(h, nil)
 }
 
-// SetDebug sets debug mode to enable HTTP logs
+// SetDebug sets debug mode to enable HTTP logs.
 func (c *Client) SetDebug(debug bool) {
 	c.debug = debug
 }
 
-// SetBaseURI overrides base Kiteconnect API endpoint
+// SetBaseURI overrides the base Kiteconnect API endpoint with custom url.
 func (c *Client) SetBaseURI(baseURI string) {
 	c.baseURI = baseURI
 }
 
-// SetTimeout sets request timeout for http client
+// SetTimeout sets request timeout for default http client.
 func (c *Client) SetTimeout(timeout time.Duration) {
 	httpClient := c.httpClient.GetClient()
 	httpClient.Timeout = timeout * time.Millisecond
 }
 
-// SetAccessToken sets field accessToken in Kiteconnect instance
+// SetAccessToken sets the access token to the Kite Connect instance.
 func (c *Client) SetAccessToken(accessToken string) {
 	c.accessToken = accessToken
 }
 
-// GetLoginURL gets KiteConnect login endpoint
+// GetLoginURL gets Kite Connect login endpoint.
 func (c *Client) GetLoginURL() string {
 	return fmt.Sprintf(loginURI, c.apiKey)
 }
@@ -166,10 +176,12 @@ func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.
 		params = url.Values{}
 	}
 
+	// Send custom headers set
 	if headers == nil {
 		headers = map[string][]string{}
 	}
 
+	// Add Kite Connect version to header
 	headers.Add("X-Kite-Version", kiteHeaderVersion)
 	headers.Add("User-Agent", name+"/"+version)
 

@@ -9,7 +9,7 @@ import (
 	"github.com/zerodhatech/go-kite-connect/models"
 )
 
-// Holding is the holdings response per user.
+// Holding is an individual holdings response.
 type Holding struct {
 	Tradingsymbol   string `json:"tradingsymbol"`
 	Exchange        string `json:"exchange"`
@@ -32,10 +32,10 @@ type Holding struct {
 	DayChangePercentage float64 `json:"day_change_percentage"`
 }
 
-// Holdings is a list of Holding response
+// Holdings is a list of holdings
 type Holdings []Holding
 
-// Position represents a single position entry.
+// Position represents an individual position response.
 type Position struct {
 	Tradingsymbol   string `json:"tradingsymbol"`
 	Exchange        string `json:"exchange"`
@@ -74,13 +74,13 @@ type Position struct {
 	DaySellValue    float64 `json:"day_sell_value"`
 }
 
-// Positions defines the response structure for positions calls.
+// Positions represents a list of net and day positions.
 type Positions struct {
 	Net []Position `json:"net"`
 	Day []Position `json:"day"`
 }
 
-// ConvertPositionParams represents the input params of a Position Conversion request.
+// ConvertPositionParams represents the input params for a position conversion.
 type ConvertPositionParams struct {
 	Exchange        string `url:"exchange"`
 	TradingSymbol   string `url:"tradingsymbol"`
@@ -91,7 +91,7 @@ type ConvertPositionParams struct {
 	Quantity        string `url:"quantity"`
 }
 
-// GetHoldings gets list of user holdings.
+// GetHoldings gets a list of holdings.
 func (c *Client) GetHoldings() (Holdings, error) {
 	var holdings Holdings
 	err := c.doEnvelope(http.MethodGet, URIGetHoldings, nil, nil, &holdings)
@@ -105,7 +105,7 @@ func (c *Client) GetPositions() (Positions, error) {
 	return positions, err
 }
 
-// ConvertPosition converts postion's product type
+// ConvertPosition converts postion's product type.
 func (c *Client) ConvertPosition(positionParams ConvertPositionParams) (bool, error) {
 	var (
 		b      bool
