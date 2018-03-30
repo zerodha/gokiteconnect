@@ -1,11 +1,16 @@
 package kiteconnect
 
 import (
+	"io/ioutil"
 	"net/http"
+	"net/url"
+	"path"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	httpmock "gopkg.in/jarcoal/httpmock.v1"
 )
 
 // Test New Kite Connect instance
@@ -75,47 +80,95 @@ func TestClientSetters(t *testing.T) {
 }
 
 // Following boiler plate is used to implement setup/teardown using Go subtests feature
+const mockBaseDir = "./mock_responses"
+
+var MockResponses = map[string]string{
+	URIUserProfile:            "profile.json",
+	URIUserMargins:            "margins.json",
+	URIGetOrders:              "orders.json",
+	URIGetTrades:              "trades.json",
+	URIGetOrderHistory:        "order_info.json",   // "/orders/{order_id}"
+	URIGetOrderTrades:         "order_trades.json", // "/orders/{order_id}/trades"
+	URIGetPositions:           "positions.json",
+	URIGetHoldings:            "holdings.json",
+	URIGetMFOrders:            "mf_orders.json",
+	URIGetMFOrderInfo:         "mf_orders_info.json", // "/mf/orders/{order_id}"
+	URIGetMFSIPs:              "mf_sips.json",
+	URIGetMFSIPInfo:           "mf_sip_info.json", //  "/mf/sips/{sip_id}"
+	URIGetMFHoldings:          "mf_holdings.json",
+	URIGetInstruments:         "instruments_all.csv",
+	URIGetMFInstruments:       "mf_instruments.csv",
+	URIGetInstrumentsExchange: "instruments_nse.csv",    // "/instruments/{exchange}"
+	URIGetHistorical:          "historical_minute.json", // "/instruments/historical/{instrument_token}/{interval}"
+	URIGetTriggerRange:        "trigger_range.json",     // "/instruments/{exchange}/{tradingsymbol}/trigger_range"
+	URIGetQuote:               "quote.json",
+	URIGetLTP:                 "ltp.json",
+	URIGetOHLC:                "ohlc.json",
+}
 
 // Test only function prefix with this
 const suiteTestMethodPrefix = "Test"
 
 // TestSuite is an interface where you define suite and test case preparation and tear down logic.
-type TestSuite struct{}
+type TestSuite struct {
+	KiteConnect *Client
+}
 
 // Setup the API suit
-func SetupAPITestSuit() {}
+func (ts *TestSuite) SetupAPITestSuit() {
+	ts.KiteConnect = New("test_api_key")
+	httpmock.ActivateNonDefault(ts.KiteConnect.httpClient.GetClient())
+
+	for route, f := range MockResponses {
+		resp, err := ioutil.ReadFile(path.Join(mockBaseDir, f))
+		if err != nil {
+			panic("Error while reading mock response: " + f)
+		}
+
+		base, err := url.Parse(ts.KiteConnect.baseURI)
+		if err != nil {
+			panic("something went wrong")
+		}
+		base.Path = path.Join(base.Path, route)
+
+		// endpoint := path.Join(ts.KiteConnect.baseURI, route)
+		httpmock.RegisterResponder("GET", base.String(), httpmock.NewBytesResponder(200, resp))
+	}
+}
 
 // TearDown API suit
-func TearDownAPITestSuit() {}
+func (ts *TestSuite) TearDownAPITestSuit() {
+	// defer httpmock.DeactivateAndReset()
+}
 
 // Individual test setup
-func SetupAPITest() {}
+func (ts *TestSuite) SetupAPITest() {}
 
 // Individual test teardown
-func TearDownAPITest() {}
+func (ts *TestSuite) TearDownAPITest() {}
 
 /*
 Run sets up the suite, runs its test cases and tears it down:
-    1. Calls `suite.SetUpSuite`
+    1. Calls `ts.SetUpSuite`
     2. Seeks for any methods that have `Test` prefix, for each of them it:
       a. Calls `SetUp`
       b. Calls the test method itself
       c. Calls `TearDown`
-    3. Calls `suite.TearDownSuite`
+    3. Calls `ts.TearDownSuite`
 */
-func RunAPITests(t *testing.T, suite *TestSuite) {
-	SetupAPITestSuit()
-	defer TearDownAPITestSuit()
+func RunAPITests(t *testing.T, ts *TestSuite) {
+	ts.SetupAPITestSuit()
+	defer ts.TearDownAPITestSuit()
 
-	suiteType := reflect.TypeOf(suite)
+	suiteType := reflect.TypeOf(ts)
 	for i := 0; i < suiteType.NumMethod(); i++ {
 		m := suiteType.Method(i)
 		if strings.HasPrefix(m.Name, suiteTestMethodPrefix) {
 			t.Run(m.Name, func(t *testing.T) {
-				SetupAPITest()
-				defer TearDownAPITest()
+				ts.SetupAPITest()
+				defer ts.TearDownAPITest()
 
-				in := []reflect.Value{reflect.ValueOf(suite), reflect.ValueOf(t)}
+				in := []reflect.Value{reflect.ValueOf(ts), reflect.ValueOf(t)}
 				m.Func.Call(in)
 			})
 		}
