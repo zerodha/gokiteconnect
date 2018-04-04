@@ -24,11 +24,11 @@ type Client struct {
 }
 
 const (
-	name     string        = "gokiteconnect"
-	version  string        = "3.0.0"
-	timeout  time.Duration = 7000 * time.Millisecond
-	baseURI  string        = "https://api.kite.trade"
-	loginURI string        = "https://kite.trade/connect/login?api_key=%s&v=3"
+	name           string        = "gokiteconnect"
+	version        string        = "3.0.0"
+	requestTimeout time.Duration = 7000 * time.Millisecond
+	baseURI        string        = "https://api.kite.trade"
+	loginURI       string        = "https://kite.trade/connect/login?api_key=%s&v=3"
 	// Kite connect header version
 	kiteHeaderVersion string = "3"
 )
@@ -133,7 +133,7 @@ func New(apiKey string) *Client {
 
 	// Create a default http handler with default timeout.
 	client.SetHTTPClient(&http.Client{
-		Timeout: timeout,
+		Timeout: requestTimeout,
 	})
 
 	return client
