@@ -1,6 +1,8 @@
 package kiteconnect
 
-import "testing"
+import (
+	"testing"
+)
 
 func (ts *TestSuite) TestGetUserProfile(t *testing.T) {
 	profile, err := ts.KiteConnect.GetUserProfile()
@@ -17,5 +19,16 @@ func (ts *TestSuite) TestGetUserMargins(t *testing.T) {
 
 	if !margins.Equity.Enabled || !margins.Commodity.Enabled {
 		t.Errorf("Incorrect margin values.")
+	}
+}
+
+func (ts *TestSuite) TestGetUserSegmentMargins(t *testing.T) {
+	margins, err := ts.KiteConnect.GetUserSegmentMargins("test")
+	if err != nil {
+		t.Errorf("Error while reading user margins. Error: %v", err)
+	}
+
+	if !margins.Enabled {
+		t.Errorf("Incorrect segment margin values.")
 	}
 }

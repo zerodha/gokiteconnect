@@ -37,16 +37,31 @@ func TestClientSetters(t *testing.T) {
 		Timeout: customHTTPClientTimeout,
 	}
 
+	// Check if default debug is false
+	if client.debug != false || client.httpClient.GetClient().debug != false {
+		t.Errorf("Default debug is not false.")
+	}
+
 	// Set custom debug
 	client.SetDebug(customDebug)
 	if client.debug != customDebug || client.httpClient.GetClient().debug != customDebug {
 		t.Errorf("Debug is not set properly.")
 	}
 
+	// Test default base uri
+	if client.baseURI != baseURI {
+		t.Errorf("Default base URI is not set properly.")
+	}
+
 	// Set custom base URI
 	client.SetBaseURI(customBaseURI)
 	if client.baseURI != customBaseURI {
 		t.Errorf("Base URI is not set properly.")
+	}
+
+	// Test default timeout
+	if client.httpClient.GetClient().client.Timeout != requestTimeout {
+		t.Errorf("Default request timeout is not set properly.")
 	}
 
 	// Set custom timeout for default http client
@@ -85,6 +100,7 @@ const mockBaseDir = "./mock_responses"
 var MockResponses = map[string]string{
 	URIUserProfile:            "profile.json",
 	URIUserMargins:            "margins.json",
+	URIUserMarginsSegment:     "margins_equity.json",
 	URIGetOrders:              "orders.json",
 	URIGetTrades:              "trades.json",
 	URIGetOrderHistory:        "order_info.json",   // "/orders/{order_id}"
@@ -117,7 +133,7 @@ type TestSuite struct {
 // Setup the API suit
 func (ts *TestSuite) SetupAPITestSuit() {
 	ts.KiteConnect = New("test_api_key")
-	httpmock.ActivateNonDefault(ts.KiteConnect.httpClient.GetClient())
+	httpmock.ActivateNonDefault(ts.KiteConnect.httpClient.GetClient().client)
 
 	for route, f := range MockResponses {
 		resp, err := ioutil.ReadFile(path.Join(mockBaseDir, f))
