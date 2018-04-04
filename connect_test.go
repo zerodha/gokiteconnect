@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -145,7 +146,10 @@ func (ts *TestSuite) SetupAPITestSuit() {
 		if err != nil {
 			panic("something went wrong")
 		}
-		base.Path = path.Join(base.Path, route)
+		// Replace all url variables with string "test"
+		re := regexp.MustCompile("%s")
+		formattedRoute := re.ReplaceAllString(route, "test")
+		base.Path = path.Join(base.Path, formattedRoute)
 
 		// endpoint := path.Join(ts.KiteConnect.baseURI, route)
 		httpmock.RegisterResponder("GET", base.String(), httpmock.NewBytesResponder(200, resp))
