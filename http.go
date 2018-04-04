@@ -21,13 +21,14 @@ type HTTPClient interface {
 	Do(method, rURL string, params url.Values, headers http.Header) (HTTPResponse, error)
 	DoEnvelope(method, url string, params url.Values, headers http.Header, obj interface{}) error
 	DoJSON(method, url string, params url.Values, headers http.Header, obj interface{}) (HTTPResponse, error)
-	GetClient() *http.Client
+	GetClient() *httpClient
 }
 
 // httpClient is the default implementation of HTTPClient.
 type httpClient struct {
 	client *http.Client
 	hLog   *log.Logger
+	debug  bool
 }
 
 // HTTPResponse encompasses byte body  + the response of an HTTP request.
@@ -49,7 +50,7 @@ type envelope struct {
 
 // NewHTTPClient returns a self-contained HTTP request object
 // with underlying keep-alive transport.
-func NewHTTPClient(h *http.Client, hLog *log.Logger) HTTPClient {
+func NewHTTPClient(h *http.Client, hLog *log.Logger, debug bool) HTTPClient {
 	if hLog == nil {
 		hLog = log.New(os.Stdout, "base.HTTP: ", log.Ldate|log.Ltime|log.Lshortfile)
 	}
@@ -67,6 +68,7 @@ func NewHTTPClient(h *http.Client, hLog *log.Logger) HTTPClient {
 	return &httpClient{
 		hLog:   hLog,
 		client: h,
+		debug:  debug,
 	}
 }
 
@@ -125,7 +127,9 @@ func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Hea
 
 	resp.Response = r
 	resp.Body = body
-	h.hLog.Printf("%s %s -- %d %v", method, req.URL.RequestURI(), resp.Response.StatusCode, req.Header)
+	if h.debug {
+		h.hLog.Printf("%s %s -- %d %v", method, req.URL.RequestURI(), resp.Response.StatusCode, req.Header)
+	}
 
 	return resp, nil
 }
@@ -177,6 +181,6 @@ func (h *httpClient) DoJSON(method, url string, params url.Values, headers http.
 }
 
 // GetClient return's the underlying net/http client.
-func (h *httpClient) GetClient() *http.Client {
-	return h.client
+func (h *httpClient) GetClient() *httpClient {
+	return h
 }

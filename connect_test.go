@@ -39,7 +39,7 @@ func TestClientSetters(t *testing.T) {
 
 	// Set custom debug
 	client.SetDebug(customDebug)
-	if client.debug != customDebug {
+	if client.debug != customDebug || client.httpClient.GetClient().debug != customDebug {
 		t.Errorf("Debug is not set properly.")
 	}
 
@@ -51,7 +51,7 @@ func TestClientSetters(t *testing.T) {
 
 	// Set custom timeout for default http client
 	client.SetTimeout(customTimeout)
-	if client.httpClient.GetClient().Timeout != customTimeout {
+	if client.httpClient.GetClient().client.Timeout != customTimeout {
 		t.Errorf("HTTPClient timeout is not set properly.")
 	}
 
@@ -63,18 +63,18 @@ func TestClientSetters(t *testing.T) {
 
 	// Set custom HTTP Client
 	client.SetHTTPClient(customHTTPClient)
-	if client.httpClient.GetClient() != customHTTPClient {
+	if client.httpClient.GetClient().client != customHTTPClient {
 		t.Errorf("Custom HTTPClient is not set properly.")
 	}
 
 	// Set timeout for custo http client
-	if client.httpClient.GetClient().Timeout != customHTTPClientTimeout {
+	if client.httpClient.GetClient().client.Timeout != customHTTPClientTimeout {
 		t.Errorf("Custom HTTPClient timeout is not set properly.")
 	}
 
 	// Set custom timeout for custom http client
 	client.SetTimeout(customTimeout)
-	if client.httpClient.GetClient().Timeout != customTimeout {
+	if client.httpClient.GetClient().client.Timeout != customTimeout {
 		t.Errorf("HTTPClient timeout is not set properly.")
 	}
 }

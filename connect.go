@@ -142,12 +142,13 @@ func New(apiKey string) *Client {
 // SetHTTPClient overrides default http handler with a custom one.
 // This can be used to set custom timeouts and transport.
 func (c *Client) SetHTTPClient(h *http.Client) {
-	c.httpClient = NewHTTPClient(h, nil)
+	c.httpClient = NewHTTPClient(h, nil, c.debug)
 }
 
 // SetDebug sets debug mode to enable HTTP logs.
 func (c *Client) SetDebug(debug bool) {
 	c.debug = debug
+	c.httpClient.GetClient().debug = debug
 }
 
 // SetBaseURI overrides the base Kiteconnect API endpoint with custom url.
@@ -157,8 +158,8 @@ func (c *Client) SetBaseURI(baseURI string) {
 
 // SetTimeout sets request timeout for default http client.
 func (c *Client) SetTimeout(timeout time.Duration) {
-	httpClient := c.httpClient.GetClient()
-	httpClient.Timeout = timeout
+	hClient := c.httpClient.GetClient().client
+	hClient.Timeout = timeout
 }
 
 // SetAccessToken sets the access token to the Kite Connect instance.
