@@ -278,8 +278,8 @@ func (t *Ticker) OnOrderUpdate(f func(order kiteconnect.Order)) {
 	t.callbacks.onOrderUpdate = f
 }
 
-// Connect to ticker.
-func (t *Ticker) Connect() {
+// Serve starts the connection to ticker server. Since its blocking its recommended to use it in go routine.
+func (t *Ticker) Serve() {
 	for {
 		// If reconnect attempt exceeds max then close the loop
 		if t.reconnectAttempt > t.reconnectMaxRetries {
