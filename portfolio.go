@@ -6,7 +6,6 @@ import (
 	"net/url"
 
 	"github.com/google/go-querystring/query"
-	"github.com/zerodhatech/go-kite-connect/models"
 )
 
 // Holding is an individual holdings response.
@@ -111,14 +110,13 @@ func (c *Client) ConvertPosition(positionParams ConvertPositionParams) (bool, er
 		b      bool
 		err    error
 		params url.Values
-		out    models.PlainResponse
 	)
 
 	if params, err = query.Values(positionParams); err != nil {
 		return false, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
-	if err = c.doEnvelope(http.MethodPut, URIConvertPosition, params, nil, &out); err == nil {
+	if err = c.doEnvelope(http.MethodPut, URIConvertPosition, params, nil, nil); err == nil {
 		b = true
 	}
 

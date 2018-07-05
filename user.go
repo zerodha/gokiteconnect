@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-
-	"github.com/zerodhatech/go-kite-connect/models"
 )
 
 // UserSession represents the response after a successful authentication.
@@ -110,18 +108,15 @@ func (c *Client) GenerateSession(requestToken string, apiSecret string) (UserSes
 	return session, err
 }
 
-func (c *Client) invalidateToken(tokenKey string, tokenValue string) (bool, error) {
-	var (
-		b   bool
-		out models.PlainResponse
-	)
+func (c *Client) invalidateToken(tokenType string, token string) (bool, error) {
+	var b bool
 
 	// construct url values
 	params := url.Values{}
 	params.Add("api_key", c.apiKey)
-	params.Add(tokenKey, tokenValue)
+	params.Add(tokenType, token)
 
-	err := c.doEnvelope(http.MethodDelete, URIUserSessionInvalidate, params, nil, &out)
+	err := c.doEnvelope(http.MethodDelete, URIUserSessionInvalidate, params, nil, nil)
 	if err == nil {
 		b = true
 	}
