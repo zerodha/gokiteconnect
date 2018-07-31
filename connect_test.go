@@ -103,6 +103,7 @@ var MockResponses = map[string]string{
 	URIUserMargins:            "margins.json",
 	URIUserMarginsSegment:     "margins_equity.json",
 	URIGetOrders:              "orders.json",
+	URIModifyOrder:            "order_response.json",
 	URIGetTrades:              "trades.json",
 	URIGetOrderHistory:        "order_info.json",   // "/orders/{order_id}"
 	URIGetOrderTrades:         "order_trades.json", // "/orders/{order_id}/trades"
@@ -153,6 +154,27 @@ func (ts *TestSuite) SetupAPITestSuit() {
 
 		// endpoint := path.Join(ts.KiteConnect.baseURI, route)
 		httpmock.RegisterResponder("GET", base.String(), httpmock.NewBytesResponder(200, resp))
+
+		// for modify endpoints, add a PUT method responder
+		if route == URIGetMFSIPInfo || route == URIModifyOrder || route == URIGetPositions {
+			httpmock.RegisterResponder("PUT", base.String(), httpmock.NewBytesResponder(200, resp))
+		}
+
+		// mock different responses for POST calls
+		if route == URIGetOrderHistory || route == URIGetMFOrders {
+			orderResp, err := ioutil.ReadFile(path.Join(mockBaseDir, "order_response.json"))
+			if err != nil {
+				panic("Error while reading mock response: " + f)
+			}
+			httpmock.RegisterResponder("POST", base.String(), httpmock.NewBytesResponder(200, orderResp))
+		}
+		if route == URIGetMFSIPs {
+			orderResp, err := ioutil.ReadFile(path.Join(mockBaseDir, "mf_order_response.json"))
+			if err != nil {
+				panic("Error while reading mock response: " + f)
+			}
+			httpmock.RegisterResponder("POST", base.String(), httpmock.NewBytesResponder(200, orderResp))
+		}
 	}
 }
 
