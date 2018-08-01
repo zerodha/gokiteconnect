@@ -5,5 +5,4 @@ go:
  - release
  - tip
 
-script:
- - go test -v
+script: go test -v -cover . 
