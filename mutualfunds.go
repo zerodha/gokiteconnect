@@ -15,12 +15,13 @@ type MFHolding struct {
 	Tradingsymbol string  `json:"tradingsymbol"`
 	AveragePrice  float64 `json:"average_price"`
 	LastPrice     float64 `json:"last_price"`
+	LastPriceDate string  `json:"last_price_date"`
 	Pnl           float64 `json:"pnl"`
 	Quantity      float64 `json:"quantity"`
 }
 
 // MFHoldings represents a list of mutualfund holdings.
-type MFHoldings []Holding
+type MFHoldings []MFHolding
 
 // MFOrder represents a individual mutualfund order response.
 type MFOrder struct {
