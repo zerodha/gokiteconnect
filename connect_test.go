@@ -83,7 +83,7 @@ func TestClientSetters(t *testing.T) {
 		t.Errorf("Custom HTTPClient is not set properly.")
 	}
 
-	// Set timeout for custo http client
+	// Set timeout for custom http client
 	if client.httpClient.GetClient().client.Timeout != customHTTPClientTimeout {
 		t.Errorf("Custom HTTPClient timeout is not set properly.")
 	}
@@ -98,30 +98,42 @@ func TestClientSetters(t *testing.T) {
 // Following boiler plate is used to implement setup/teardown using Go subtests feature
 const mockBaseDir = "./mock_responses"
 
-var MockResponses = map[string]string{
-	URIUserProfile:            "profile.json",
-	URIUserMargins:            "margins.json",
-	URIUserMarginsSegment:     "margins_equity.json",
-	URIGetOrders:              "orders.json",
-	URIModifyOrder:            "order_response.json",
-	URIGetTrades:              "trades.json",
-	URIGetOrderHistory:        "order_info.json",   // "/orders/{order_id}"
-	URIGetOrderTrades:         "order_trades.json", // "/orders/{order_id}/trades"
-	URIGetPositions:           "positions.json",
-	URIGetHoldings:            "holdings.json",
-	URIGetMFOrders:            "mf_orders.json",
-	URIGetMFOrderInfo:         "mf_orders_info.json", // "/mf/orders/{order_id}"
-	URIGetMFSIPs:              "mf_sips.json",
-	URIGetMFSIPInfo:           "mf_sip_info.json", //  "/mf/sips/{sip_id}"
-	URIGetMFHoldings:          "mf_holdings.json",
-	URIGetInstruments:         "instruments_all.csv",
-	URIGetMFInstruments:       "mf_instruments.csv",
-	URIGetInstrumentsExchange: "instruments_nse.csv",    // "/instruments/{exchange}"
-	URIGetHistorical:          "historical_minute.json", // "/instruments/historical/{instrument_token}/{interval}"
-	URIGetTriggerRange:        "trigger_range.json",     // "/instruments/{exchange}/{tradingsymbol}/trigger_range"
-	URIGetQuote:               "quote.json",
-	URIGetLTP:                 "ltp.json",
-	URIGetOHLC:                "ohlc.json",
+var MockResponders = [][]string{
+	// Array of [<httpMethod>, <url>, <file_name>]
+
+	// GET endpoints
+	[]string{http.MethodGet, URIUserProfile, "profile.json"},
+	[]string{http.MethodGet, URIUserMargins, "margins.json"},
+	[]string{http.MethodGet, URIUserMarginsSegment, "margins_equity.json"},
+	[]string{http.MethodGet, URIGetOrders, "orders.json"},
+	[]string{http.MethodGet, URIGetTrades, "trades.json"},
+	[]string{http.MethodGet, URIGetOrderHistory, "order_info.json"},
+	[]string{http.MethodGet, URIGetOrderTrades, "order_trades.json"},
+	[]string{http.MethodGet, URIGetPositions, "positions.json"},
+	[]string{http.MethodGet, URIGetHoldings, "holdings.json"},
+	[]string{http.MethodGet, URIGetMFOrders, "mf_orders.json"},
+	[]string{http.MethodGet, URIGetMFOrderInfo, "mf_orders_info.json"},
+	[]string{http.MethodGet, URIGetMFSIPs, "mf_sips.json"},
+	[]string{http.MethodGet, URIGetMFSIPInfo, "mf_sip_info.json"},
+	[]string{http.MethodGet, URIGetMFHoldings, "mf_holdings.json"},
+	[]string{http.MethodGet, URIGetInstruments, "instruments_all.csv"},
+	[]string{http.MethodGet, URIGetMFInstruments, "mf_instruments.csv"},
+	[]string{http.MethodGet, URIGetInstrumentsExchange, "instruments_nse.csv"},
+	[]string{http.MethodGet, URIGetHistorical, "historical_minute.json"},
+	[]string{http.MethodGet, URIGetTriggerRange, "trigger_range.json"},
+	[]string{http.MethodGet, URIGetQuote, "quote.json"},
+	[]string{http.MethodGet, URIGetLTP, "ltp.json"},
+	[]string{http.MethodGet, URIGetOHLC, "ohlc.json"},
+
+	// PUT endpoints
+	[]string{http.MethodPut, URIModifyMFSIP, "mf_sip_info.json"},
+	[]string{http.MethodPut, URIModifyOrder, "order_response.json"},
+	[]string{http.MethodPut, URIConvertPosition, "positions.json"},
+
+	// POST endpoints
+	[]string{http.MethodPost, URIPlaceOrder, "order_response.json"},
+	[]string{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
+	[]string{http.MethodPost, URIPlaceMFSIP, "mf_order_response.json"},
 }
 
 // Test only function prefix with this
@@ -137,15 +149,19 @@ func (ts *TestSuite) SetupAPITestSuit() {
 	ts.KiteConnect = New("test_api_key")
 	httpmock.ActivateNonDefault(ts.KiteConnect.httpClient.GetClient().client)
 
-	for route, f := range MockResponses {
-		resp, err := ioutil.ReadFile(path.Join(mockBaseDir, f))
+	for _, v := range MockResponders {
+		httpMethod := v[0]
+		route := v[1]
+		filePath := v[2]
+
+		resp, err := ioutil.ReadFile(path.Join(mockBaseDir, filePath))
 		if err != nil {
-			panic("Error while reading mock response: " + f)
+			panic("Error while reading mock response: " + filePath)
 		}
 
 		base, err := url.Parse(ts.KiteConnect.baseURI)
 		if err != nil {
-			panic("something went wrong")
+			panic("Something went wrong")
 		}
 		// Replace all url variables with string "test"
 		re := regexp.MustCompile("%s")
@@ -153,28 +169,8 @@ func (ts *TestSuite) SetupAPITestSuit() {
 		base.Path = path.Join(base.Path, formattedRoute)
 
 		// endpoint := path.Join(ts.KiteConnect.baseURI, route)
-		httpmock.RegisterResponder("GET", base.String(), httpmock.NewBytesResponder(200, resp))
+		httpmock.RegisterResponder(httpMethod, base.String(), httpmock.NewBytesResponder(200, resp))
 
-		// for modify endpoints, add a PUT method responder
-		if route == URIGetMFSIPInfo || route == URIModifyOrder || route == URIGetPositions {
-			httpmock.RegisterResponder("PUT", base.String(), httpmock.NewBytesResponder(200, resp))
-		}
-
-		// mock different responses for POST calls
-		if route == URIGetOrderHistory || route == URIGetMFOrders {
-			orderResp, err := ioutil.ReadFile(path.Join(mockBaseDir, "order_response.json"))
-			if err != nil {
-				panic("Error while reading mock response: " + f)
-			}
-			httpmock.RegisterResponder("POST", base.String(), httpmock.NewBytesResponder(200, orderResp))
-		}
-		if route == URIGetMFSIPs {
-			orderResp, err := ioutil.ReadFile(path.Join(mockBaseDir, "mf_order_response.json"))
-			if err != nil {
-				panic("Error while reading mock response: " + f)
-			}
-			httpmock.RegisterResponder("POST", base.String(), httpmock.NewBytesResponder(200, orderResp))
-		}
 	}
 }
 
