@@ -1,4 +1,4 @@
-// KitTicker
+// Package kiteticker provides kite ticker access using callbacks.
 package kiteticker
 
 import (
@@ -734,11 +734,12 @@ func (t *Ticker) parsePacket(b []byte) (Tick, error) {
 
 		// Depth Information.
 		var (
-			buyPos  = 64
-			sellPos = 124
+			buyPos     = 64
+			sellPos    = 124
+			depthItems = (sellPos - buyPos) / 12
 		)
 
-		for i = 0; i < 5; i++ {
+		for i := 0; i < depthItems; i++ {
 			tick.Depth.Buy[i] = DepthItem{
 				Quantity: binary.BigEndian.Uint32(b[buyPos : buyPos+4]),
 				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[buyPos+4:buyPos+8]))),
