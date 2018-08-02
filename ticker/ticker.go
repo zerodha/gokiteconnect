@@ -1,4 +1,4 @@
-// KitTicker
+// Package kiteticker provides kite ticker access using callbacks.
 package kiteticker
 
 import (
@@ -732,27 +732,28 @@ func (t *Ticker) parsePacket(b []byte) (Tick, error) {
 		tick.Timestamp = kiteconnect.Time{time.Unix(int64(binary.BigEndian.Uint32(b[60:64])), 0)}
 		tick.NetChange = lastPrice - closePrice
 
-		// Depth.
-		var i, j int
-		for i = 64; i < 124; i += 12 {
-			tick.Depth.Buy[j] = DepthItem{
-				Quantity: binary.BigEndian.Uint32(b[i : i+4]),
-				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[i+4:i+8]))),
-				Orders:   uint32(binary.BigEndian.Uint16(b[i+8 : i+10])),
+		// Depth Information.
+		var (
+			buyPos     = 64
+			sellPos    = 124
+			depthItems = (sellPos - buyPos) / 12
+		)
+
+		for i := 0; i < depthItems; i++ {
+			tick.Depth.Buy[i] = DepthItem{
+				Quantity: binary.BigEndian.Uint32(b[buyPos : buyPos+4]),
+				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[buyPos+4:buyPos+8]))),
+				Orders:   uint32(binary.BigEndian.Uint16(b[buyPos+8 : buyPos+10])),
 			}
 
-			j++
-		}
-
-		j = 0
-		for i = 124; i < 184; i += 12 {
-			tick.Depth.Sell[j] = DepthItem{
-				Quantity: binary.BigEndian.Uint32(b[i : i+4]),
-				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[i+4:i+8]))),
-				Orders:   uint32(binary.BigEndian.Uint16(b[i+8 : i+10])),
+			tick.Depth.Sell[i] = DepthItem{
+				Quantity: binary.BigEndian.Uint32(b[sellPos : sellPos+4]),
+				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[sellPos+4:sellPos+8]))),
+				Orders:   uint32(binary.BigEndian.Uint16(b[sellPos+8 : sellPos+10])),
 			}
 
-			j++
+			buyPos += 12
+			sellPos += 12
 		}
 	}
 
