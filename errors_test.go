@@ -3,6 +3,8 @@ package kiteconnect
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetErrorName(t *testing.T) {
@@ -54,9 +56,8 @@ func TestGetErrorName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := GetErrorName(tt.code); got != tt.want {
-				t.Errorf("GetErrorName() = %v, want %v", got, tt.want)
-			}
+			got := GetErrorName(tt.code)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -83,9 +84,8 @@ func TestError_Error(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := NewError(tt.fields.ErrorType, tt.fields.Message, nil)
-			if got := e.Error(); got != tt.want {
-				t.Errorf("Error.Error() = %v, want %v", got, tt.want)
-			}
+			got := e.Error()
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -173,13 +173,8 @@ func TestNewError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := NewError(tt.args.etype, "Test Error", nil)
-			if err, ok := e.(Error); !ok {
-				t.Errorf("NewError() does not implement Error error = %v", e)
-			} else {
-				if err.Code != tt.want {
-					t.Errorf("NewError() error = %v, wantErr %v", err.Code, tt.want)
-				}
-			}
+			assert.IsType(t, Error{}, e, "NewError() does not implement Error error")
+			assert.Equal(t, tt.want, e.(Error).Code, "Not equal")
 		})
 	}
 }
