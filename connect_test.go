@@ -1,6 +1,7 @@
 package kiteconnect
 
 import (
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	httpmock "gopkg.in/jarcoal/httpmock.v1"
 )
 
@@ -24,13 +26,12 @@ func TestNewClient(t *testing.T) {
 	apiKey := "api_key"
 	client := New(apiKey)
 
-	if client.apiKey != apiKey {
-		t.Errorf("Api key is not assigned properly.")
-	}
+	assert.Equal(t, apiKey, client.apiKey)
 }
 
 // Test all client setters
 func TestClientSetters(t *testing.T) {
+	assert := assert.New(t)
 	apiKey := "kitefront"
 	client := New(apiKey)
 
@@ -44,60 +45,48 @@ func TestClientSetters(t *testing.T) {
 	}
 
 	// Check if default debug is false
-	if client.debug != false || client.httpClient.GetClient().debug != false {
-		t.Errorf("Default debug is not false.")
-	}
+	assert.False(client.debug)
+	assert.False(client.httpClient.GetClient().debug)
 
 	// Set custom debug
 	client.SetDebug(customDebug)
-	if client.debug != customDebug || client.httpClient.GetClient().debug != customDebug {
-		t.Errorf("Debug is not set properly.")
-	}
+	assert.Equal(customDebug, client.debug)
+	assert.Equal(customDebug, client.httpClient.GetClient().debug)
 
 	// Test default base uri
-	if client.baseURI != baseURI {
-		t.Errorf("Default base URI is not set properly.")
-	}
+	assert.Equal(baseURI, client.baseURI)
 
 	// Set custom base URI
 	client.SetBaseURI(customBaseURI)
-	if client.baseURI != customBaseURI {
-		t.Errorf("Base URI is not set properly.")
-	}
+	assert.Equal(customBaseURI, client.baseURI)
 
 	// Test default timeout
-	if client.httpClient.GetClient().client.Timeout != requestTimeout {
-		t.Errorf("Default request timeout is not set properly.")
-	}
+	assert.Equal(requestTimeout, client.httpClient.GetClient().client.Timeout)
 
 	// Set custom timeout for default http client
 	client.SetTimeout(customTimeout)
-	if client.httpClient.GetClient().client.Timeout != customTimeout {
-		t.Errorf("HTTPClient timeout is not set properly.")
-	}
+	assert.Equal(customTimeout, client.httpClient.GetClient().client.Timeout)
 
 	// Set access token
 	client.SetAccessToken(customAccessToken)
-	if client.accessToken != customAccessToken {
-		t.Errorf("Access token is not set properly.")
-	}
+	assert.Equal(customAccessToken, client.accessToken)
 
 	// Set custom HTTP Client
 	client.SetHTTPClient(customHTTPClient)
-	if client.httpClient.GetClient().client != customHTTPClient {
-		t.Errorf("Custom HTTPClient is not set properly.")
-	}
+	assert.Equal(customHTTPClient, client.httpClient.GetClient().client)
 
 	// Set timeout for custom http client
-	if client.httpClient.GetClient().client.Timeout != customHTTPClientTimeout {
-		t.Errorf("Custom HTTPClient timeout is not set properly.")
-	}
+	assert.Equal(customHTTPClientTimeout, client.httpClient.GetClient().client.Timeout)
 
 	// Set custom timeout for custom http client
 	client.SetTimeout(customTimeout)
-	if client.httpClient.GetClient().client.Timeout != customTimeout {
-		t.Errorf("HTTPClient timeout is not set properly.")
-	}
+	assert.Equal(customTimeout, client.httpClient.GetClient().client.Timeout)
+}
+
+func TestGetURL(t *testing.T) {
+	apiKey := "kitefront"
+	client := New(apiKey)
+	assert.Equal(t, fmt.Sprintf(loginURI, apiKey), client.GetLoginURL())
 }
 
 // Following boiler plate is used to implement setup/teardown using Go subtests feature
