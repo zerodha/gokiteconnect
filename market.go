@@ -98,11 +98,11 @@ type Instrument struct {
 	LastPrice       float64 `csv:"last_price"`
 	Expiry          Time    `csv:"expiry"`
 	StrikePrice     float64 `csv:"strike"`
-	tickSize        float64 `csv:"tick_size"`
-	lotSize         float64 `csv:"lot_size"`
-	instrumentType  string  `csv:"instrument_type"`
-	segment         string  `csv:"segment"`
-	exchange        string  `csv:"exchange"`
+	TickSize        float64 `csv:"tick_size"`
+	LotSize         float64 `csv:"lot_size"`
+	InstrumentType  string  `csv:"instrument_type"`
+	Segment         string  `csv:"segment"`
+	Exchange        string  `csv:"exchange"`
 }
 
 // Instruments represents list of instruments.
