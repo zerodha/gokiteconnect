@@ -102,7 +102,7 @@ type Instrument struct {
 	lotSize         float64 `csv:"lot_size"`
 	instrumentType  string  `csv:"instrument_type"`
 	segment         string  `csv:"segment"`
-	exchange        string  `csv:"exchange"`
+	Exchange        string  `csv:"exchange"`
 }
 
 // Instruments represents list of instruments.
