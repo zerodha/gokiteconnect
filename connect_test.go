@@ -14,6 +14,11 @@ import (
 	httpmock "gopkg.in/jarcoal/httpmock.v1"
 )
 
+const (
+	uriGetInstrumentsExchangeTest string = "/instruments/nse"
+	uriGetHistoricalTest          string = "/instruments/historical/123/myinterval"
+)
+
 // Test New Kite Connect instance
 func TestNewClient(t *testing.T) {
 	apiKey := "api_key"
@@ -118,8 +123,8 @@ var MockResponders = [][]string{
 	[]string{http.MethodGet, URIGetMFHoldings, "mf_holdings.json"},
 	[]string{http.MethodGet, URIGetInstruments, "instruments_all.csv"},
 	[]string{http.MethodGet, URIGetMFInstruments, "mf_instruments.csv"},
-	[]string{http.MethodGet, URIGetInstrumentsExchange, "instruments_nse.csv"},
-	[]string{http.MethodGet, URIGetHistorical, "historical_minute.json"},
+	[]string{http.MethodGet, uriGetInstrumentsExchangeTest, "instruments_nse.csv"},
+	[]string{http.MethodGet, uriGetHistoricalTest, "historical_minute.json"},
 	[]string{http.MethodGet, URIGetTriggerRange, "trigger_range.json"},
 	[]string{http.MethodGet, URIGetQuote, "quote.json"},
 	[]string{http.MethodGet, URIGetLTP, "ltp.json"},
@@ -167,7 +172,7 @@ func (ts *TestSuite) SetupAPITestSuit() {
 		re := regexp.MustCompile("%s")
 		formattedRoute := re.ReplaceAllString(route, "test")
 		base.Path = path.Join(base.Path, formattedRoute)
-
+		// fmt.Println(base.String())
 		// endpoint := path.Join(ts.KiteConnect.baseURI, route)
 		httpmock.RegisterResponder(httpMethod, base.String(), httpmock.NewBytesResponder(200, resp))
 

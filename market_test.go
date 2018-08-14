@@ -36,14 +36,15 @@ func (ts *TestSuite) TestGetLTP(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetHistoricalData(t *testing.T) {
-	marketHistorical, err := ts.KiteConnect.GetHistoricalData(123, "interval", time.Now(), time.Now(), true)
+	marketHistorical, err := ts.KiteConnect.GetHistoricalData(123, "myinterval", time.Unix(0, 0), time.Unix(1, 0), true)
 	if err != nil {
 		t.Errorf("Error while fetching MF orders. %v", err)
 	}
 
 	for i := 0; i < len(marketHistorical)-1; i++ {
-		if marketHistorical[i].Date.Unix() > marketHistorical[i-1].Date.Unix() {
+		if marketHistorical[i].Date.Unix() > marketHistorical[i+1].Date.Unix() {
 			t.Errorf("Unsorted candles returned. %v", err)
+			return
 		}
 	}
 }
