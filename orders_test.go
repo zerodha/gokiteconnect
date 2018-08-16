@@ -2,53 +2,39 @@ package kiteconnect
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func (ts *TestSuite) TestGetOrders(t *testing.T) {
 	orders, err := ts.KiteConnect.GetOrders()
-	if err != nil {
-		t.Errorf("Error while fetching orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching orders")
 	for _, order := range orders {
-		if order.OrderID == "" {
-			t.Errorf("Error while fetching order id in orders. %v", err)
-		}
+		assert.NotEqual(t, 0, order.OrderID, "Error while fetching order id in orders.")
 	}
 }
 
 func (ts *TestSuite) TestGetTrades(t *testing.T) {
 	trades, err := ts.KiteConnect.GetTrades()
-	if err != nil {
-		t.Errorf("Error while fetching trades. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching trades.")
 	for _, trade := range trades {
-		if trade.TradeID == "" {
-			t.Errorf("Error while fetching trade id in trades. %v", err)
-		}
+		assert.NotEqual(t, "", trade.TradeID, "Error while fetching trade id in trades.")
 	}
 }
 
 func (ts *TestSuite) TestGetOrderHistory(t *testing.T) {
 	orderHistory, err := ts.KiteConnect.GetOrderHistory("test")
-	if err != nil {
-		t.Errorf("Error while fetching trades. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching trades.")
 	for _, order := range orderHistory {
-		if order.OrderID == "" {
-			t.Errorf("Error while fetching order id in order history. %v", err)
-		}
+		assert.NotEqual(t, "", order.OrderID, "Error while fetching trade id in trades.")
 	}
 }
 
 func (ts *TestSuite) TestGetOrderTrades(t *testing.T) {
 	tradeHistory, err := ts.KiteConnect.GetOrderTrades("test")
-	if err != nil {
-		t.Errorf("Error while fetching trades. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching trades.")
 	for _, trade := range tradeHistory {
-		if trade.TradeID == "" {
-			t.Errorf("Error while fetching trade id in trade history. %v", err)
-		}
+		assert.NotEqual(t, "", trade.TradeID, "Error while fetching trade id in trades.")
 	}
 }
 
@@ -70,12 +56,8 @@ func (ts *TestSuite) TestPlaceOrder(t *testing.T) {
 		Tag:               "test",
 	}
 	orderResponse, err := ts.KiteConnect.PlaceOrder("test", params)
-	if err != nil {
-		t.Errorf("Error while placing order. %v", err)
-	}
-	if orderResponse.OrderID == "" {
-		t.Errorf("No order id returned. Error %v", err)
-	}
+	assert.Nil(t, err, "Error while placing order.")
+	assert.NotEqual(t, "", orderResponse.OrderID, "Error while fetching trade id in trades.")
 }
 
 func (ts *TestSuite) TestModifyOrder(t *testing.T) {
@@ -96,34 +78,22 @@ func (ts *TestSuite) TestModifyOrder(t *testing.T) {
 		Tag:               "test",
 	}
 	orderResponse, err := ts.KiteConnect.ModifyOrder("test", "test", params)
-	if err != nil {
-		t.Errorf("Error while placing order. %v", err)
-	}
-	if orderResponse.OrderID == "" {
-		t.Errorf("No order id returned. Error %v", err)
-	}
+	assert.Nil(t, err, "Error while placing order.")
+	assert.NotEqual(t, "", orderResponse.OrderID, "Error while fetching trade id in trades.")
 }
 
 func (ts *TestSuite) TestCancelOrder(t *testing.T) {
 	parentOrderID := "test"
 
 	orderResponse, err := ts.KiteConnect.CancelOrder("test", "test", &parentOrderID)
-	if err != nil {
-		t.Errorf("Error while placing order. %v", err)
-	}
-	if orderResponse.OrderID == "" {
-		t.Errorf("No order id returned. Error %v", err)
-	}
+	assert.Nil(t, err, "Error while cancelling order.")
+	assert.NotEqual(t, "", orderResponse.OrderID, "No order id returned.")
 }
 
 func (ts *TestSuite) TestExitOrder(t *testing.T) {
 	parentOrderID := "test"
 
 	orderResponse, err := ts.KiteConnect.ExitOrder("test", "test", &parentOrderID)
-	if err != nil {
-		t.Errorf("Error while placing order. %v", err)
-	}
-	if orderResponse.OrderID == "" {
-		t.Errorf("No order id returned. Error %v", err)
-	}
+	assert.Nil(t, err, "Error while exit order.")
+	assert.NotEqual(t, "", orderResponse.OrderID, "No order id returned.")
 }

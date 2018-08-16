@@ -2,28 +2,22 @@ package kiteconnect
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func (ts *TestSuite) TestGetMFOrders(t *testing.T) {
 	mfOrders, err := ts.KiteConnect.GetMFOrders()
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
 	for _, mfOrder := range mfOrders {
-		if mfOrder.OrderID == "" {
-			t.Errorf("Error while fetching order id in MF orders. %v", err)
-		}
+		assert.NotEqual(t, "", mfOrder.OrderID, "Error while fetching order id in MF orders.")
 	}
 }
 
 func (ts *TestSuite) TestGetMFOrderInfo(t *testing.T) {
 	orderInfo, err := ts.KiteConnect.GetMFOrderInfo("test")
-	if err != nil {
-		t.Errorf("Error while fetching trades. %v", err)
-	}
-	if orderInfo.OrderID == "" {
-		t.Errorf("Error while fetching order id in MF order info. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
+	assert.NotEqual(t, "", orderInfo.OrderID, "Error while fetching order id in MF order info.")
 }
 
 func (ts *TestSuite) TestPlaceMFOrder(t *testing.T) {
@@ -35,31 +29,22 @@ func (ts *TestSuite) TestPlaceMFOrder(t *testing.T) {
 		Tag:             "test",
 	}
 	orderResponse, err := ts.KiteConnect.PlaceMFOrder(params)
-	if err != nil {
-		t.Errorf("Error while placing MF order. %v", err)
-	}
-	if orderResponse.OrderID == "" {
-		t.Errorf("No order id returned while placing MF order. Error %v", err)
-	}
+	assert.Nil(t, err, "Error while placing")
+	assert.NotEqual(t, "", orderResponse.OrderID, "No order id returned while placing MF order.")
 }
 
 func (ts *TestSuite) TestGetMFSIPs(t *testing.T) {
 	sips, err := ts.KiteConnect.GetMFSIPs()
-	if err != nil {
-		t.Errorf("Error while fetching MF SIPs. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching MF SIP")
 	for _, sip := range sips {
-		if sip.ID == "" {
-			t.Errorf("Error while fetching id in MF SIP. %v", err)
-		}
+		assert.NotEqual(t, "", sip.ID, "Error while fetching MF SIPs.")
 	}
 }
 
 func (ts *TestSuite) TestGetMFSIPInfo(t *testing.T) {
 	sip, err := ts.KiteConnect.GetMFSIPInfo("test")
-	if err != nil || sip.ID == "" {
-		t.Errorf("Error while fetching MF SIP Info. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching MF SIP Info.")
+	assert.NotEqual(t, "", sip.ID, "Error while fetching MF SIP Info.")
 }
 
 func (ts *TestSuite) TestPlaceMFSIP(t *testing.T) {
@@ -73,12 +58,8 @@ func (ts *TestSuite) TestPlaceMFSIP(t *testing.T) {
 		Tag:           "test",
 	}
 	sipResponse, err := ts.KiteConnect.PlaceMFSIP(params)
-	if err != nil {
-		t.Errorf("Error while placing MF SIP order. %v", err)
-	}
-	if sipResponse.SIPID == "" {
-		t.Errorf("No SIP id returned while placing MF SIP Order. Error %v", err)
-	}
+	assert.Nil(t, err, "Error while placing MF SIP order.")
+	assert.NotEqual(t, "", sipResponse.SIPID, "No SIP id returned while placing MF SIP Order.")
 }
 
 func (ts *TestSuite) TestModifyMFSIP(t *testing.T) {
@@ -90,32 +71,21 @@ func (ts *TestSuite) TestModifyMFSIP(t *testing.T) {
 		Status:        "test",
 	}
 	sipResponse, err := ts.KiteConnect.ModifyMFSIP("test", params)
-	if err != nil {
-		t.Errorf("Error while modifying MF SIP order. %v", err)
-	}
-	if sipResponse.SIPID == "" {
-		t.Errorf("No SIP id returned while modifying MF SIP Order. Error %v", err)
-	}
+	assert.Nil(t, err, "Error while modifying MF SIP order.")
+	assert.NotEqual(t, "", sipResponse.SIPID, "No SIP id returned while modifying MF SIP Order.")
 }
 
 func (ts *TestSuite) TestCancelMFSIP(t *testing.T) {
 	sipResponse, err := ts.KiteConnect.CancelMFSIP("test")
-	if err != nil {
-		t.Errorf("Error while cancelling MF SIP order. %v", err)
-	}
-	if sipResponse.SIPID == "" {
-		t.Errorf("No SIP id returned while cancelling MF SIP Order. Error %v", err)
-	}
+	assert.Nil(t, err, "Error while cancelling MF SIP order.")
+	assert.NotEqual(t, "", sipResponse.SIPID, "No SIP id returned while cancelling MF SIP Order.")
 }
 
 func (ts *TestSuite) TestGetMFHoldings(t *testing.T) {
 	holdings, err := ts.KiteConnect.GetMFHoldings()
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching MF orders.")
+
 	for _, holding := range holdings {
-		if holding.Tradingsymbol == "" {
-			t.Errorf("Error while fetching Tradingsymbol in MF holdings. %v", err)
-		}
+		assert.NotEqual(t, "", holding.Tradingsymbol, "Error while fetching Tradingsymbol in MF holdings.")
 	}
 }

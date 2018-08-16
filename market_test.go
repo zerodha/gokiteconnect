@@ -3,102 +3,70 @@ package kiteconnect
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func (ts *TestSuite) TestGetQuote(t *testing.T) {
 	marketQuote, err := ts.KiteConnect.GetQuote()
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
-
-	if q, ok := marketQuote["NSE:INFY"]; ok {
-		if q.InstrumentToken != 408065 {
-			t.Errorf("Incorrect values set. %v", err)
-		}
-	} else {
-		t.Errorf("Key wanted but not found. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
+	q, ok := marketQuote["NSE:INFY"]
+	assert.True(t, ok, "Does not have required key")
+	assert.Equal(t, 408065, q.InstrumentToken, "Incorrect values set.")
 }
 
 func (ts *TestSuite) TestGetLTP(t *testing.T) {
 	marketLTP, err := ts.KiteConnect.GetLTP()
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
 
-	if ltp, ok := marketLTP["NSE:INFY"]; ok {
-		if ltp.InstrumentToken != 408065 {
-			t.Errorf("Incorrect values set. %v", err)
-		}
-	} else {
-		t.Errorf("Key wanted but not found. %v", err)
-	}
+	ltp, ok := marketLTP["NSE:INFY"]
+	assert.True(t, ok, "Does not have required key")
+	assert.Equal(t, 408065, ltp.InstrumentToken, "Incorrect values set.")
 }
 
 func (ts *TestSuite) TestGetHistoricalData(t *testing.T) {
 	marketHistorical, err := ts.KiteConnect.GetHistoricalData(123, "myinterval", time.Unix(0, 0), time.Unix(1, 0), true)
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
 
 	for i := 0; i < len(marketHistorical)-1; i++ {
-		if marketHistorical[i].Date.Unix() > marketHistorical[i+1].Date.Unix() {
-			t.Errorf("Unsorted candles returned. %v", err)
-			return
-		}
+		assert.Condition(t, func() bool {
+			return marketHistorical[i].Date.Unix() < marketHistorical[i+1].Date.Unix()
+		}, "Unsorted candles returned. %v")
 	}
 }
 
 func (ts *TestSuite) TestGetOHLC(t *testing.T) {
 	marketOHLC, err := ts.KiteConnect.GetOHLC()
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
 
-	if ohlc, ok := marketOHLC["NSE:INFY"]; ok {
-		if ohlc.InstrumentToken != 408065 {
-			t.Errorf("Incorrect values set. %v", err)
-		}
-	} else {
-		t.Errorf("Key wanted but not found. %v", err)
-	}
+	ohlc, ok := marketOHLC["NSE:INFY"]
+	assert.True(t, ok, "Does not have required key")
+	assert.Equal(t, 408065, ohlc.InstrumentToken, "Incorrect values set.")
 }
 
 func (ts *TestSuite) TestGetInstruments(t *testing.T) {
 	marketInstruments, err := ts.KiteConnect.GetInstruments()
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
 
 	for _, mInstr := range marketInstruments {
-		if mInstr.InstrumentToken == 0 {
-			t.Errorf("Incorrect data loaded. %v", err)
-		}
+		assert.NotEqual(t, 0, mInstr.InstrumentToken, "Incorrect data loaded. %v")
 	}
 }
 
 func (ts *TestSuite) TestGetInstrumentsByExchange(t *testing.T) {
 	marketInstruments, err := ts.KiteConnect.GetInstrumentsByExchange("nse")
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
 
 	for _, mInstr := range marketInstruments {
-		if mInstr.Exchange != "NSE" {
-			t.Errorf("Incorrect data loaded. %v", err)
-		}
+		assert.Equal(t, "NSE", mInstr.Exchange, "Incorrect data loaded. %v")
 	}
 }
 
 func (ts *TestSuite) TestGetMFInstruments(t *testing.T) {
 	marketInstruments, err := ts.KiteConnect.GetMFInstruments()
-	if err != nil {
-		t.Errorf("Error while fetching MF orders. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching")
 
 	for _, mInstr := range marketInstruments {
-		if mInstr.Tradingsymbol == "" {
-			t.Errorf("Incorrect data loaded. %v", err)
-		}
+		assert.NotEqual(t, "", mInstr.Tradingsymbol, "Incorrect data loaded. %v")
 	}
 }
