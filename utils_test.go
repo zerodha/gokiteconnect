@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gocarina/gocsv"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCustomUnmarshalJSON(t *testing.T) {
@@ -25,9 +26,7 @@ func TestCustomUnmarshalJSON(t *testing.T) {
 	for _, j := range testCases {
 		res := sampleJSON{}
 		json.Unmarshal([]byte(j.input), &res)
-		if res.Date.IsZero() != j.isZero {
-			t.Errorf("Custom time JSON parsing failed. Expected: %v, Got: %v, Test string: %s", j.isZero, res.Date.IsZero(), j.input)
-		}
+		assert.Equal(t, j.isZero, res.Date.IsZero(), "Custom time JSON parsing failed.")
 	}
 }
 
@@ -49,8 +48,6 @@ func TestCustomUnmarshalCSV(t *testing.T) {
 	for _, j := range testCases {
 		res := []sampleCSV{}
 		gocsv.UnmarshalBytes([]byte(j.input), &res)
-		if res[0].Date.IsZero() != j.isZero {
-			t.Errorf("Custom time CSV parsing failed. Expected: %v, Got: %v, Test string: %s", j.isZero, res[0].Date.IsZero(), j.input)
-		}
+		assert.Equal(t, j.isZero, res[0].Date.IsZero(), "Custom time CSV parsing failed.")
 	}
 }

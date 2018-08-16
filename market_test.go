@@ -12,7 +12,7 @@ func (ts *TestSuite) TestGetQuote(t *testing.T) {
 	assert.Nil(t, err, "Error while fetching")
 	q, ok := marketQuote["NSE:INFY"]
 	assert.True(t, ok, "Does not have required key")
-	assert.Equal(t, q.InstrumentToken, 408065, "Incorrect values set.")
+	assert.Equal(t, 408065, q.InstrumentToken, "Incorrect values set.")
 }
 
 func (ts *TestSuite) TestGetLTP(t *testing.T) {
@@ -21,7 +21,7 @@ func (ts *TestSuite) TestGetLTP(t *testing.T) {
 
 	ltp, ok := marketLTP["NSE:INFY"]
 	assert.True(t, ok, "Does not have required key")
-	assert.Equal(t, ltp.InstrumentToken, 408065, "Incorrect values set.")
+	assert.Equal(t, 408065, ltp.InstrumentToken, "Incorrect values set.")
 }
 
 func (ts *TestSuite) TestGetHistoricalData(t *testing.T) {
@@ -41,7 +41,7 @@ func (ts *TestSuite) TestGetOHLC(t *testing.T) {
 
 	ohlc, ok := marketOHLC["NSE:INFY"]
 	assert.True(t, ok, "Does not have required key")
-	assert.Equal(t, ohlc.InstrumentToken, 408065, "Incorrect values set.")
+	assert.Equal(t, 408065, ohlc.InstrumentToken, "Incorrect values set.")
 }
 
 func (ts *TestSuite) TestGetInstruments(t *testing.T) {

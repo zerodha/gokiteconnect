@@ -2,40 +2,29 @@ package kiteconnect
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func (ts *TestSuite) TestGetPositions(t *testing.T) {
 	positions, err := ts.KiteConnect.GetPositions()
-	if err != nil {
-		t.Errorf("Error while fetching positions. %v", err)
-	}
-	if positions.Day == nil {
-		t.Errorf("Error while fetching day positions. %v", err)
-	}
-	if positions.Net == nil {
-		t.Errorf("Error while fetching net positions. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching positions")
+	assert.NotNil(t, positions.Day, "Error while fetching day positions")
+	assert.NotNil(t, positions.Net, "Error while fetching net positions")
+
 	for _, position := range positions.Day {
-		if position.Tradingsymbol == "" {
-			t.Errorf("Error while fetching trading symbol in day position. %v", err)
-		}
+		assert.NotEqual(t, "", position.Tradingsymbol, "Error while fetching trading symbol in day position.")
 	}
 	for _, position := range positions.Net {
-		if position.Tradingsymbol == "" {
-			t.Errorf("Error while fetching tradingsymbol in net position. %v", err)
-		}
+		assert.NotEqual(t, "", position.Tradingsymbol, "Error while fetching tradingsymbol in net position.")
 	}
 }
 
 func (ts *TestSuite) TestGetHoldings(t *testing.T) {
 	holdings, err := ts.KiteConnect.GetHoldings()
-	if err != nil {
-		t.Errorf("Error while fetching holdings. %v", err)
-	}
+	assert.Nil(t, err, "Error while fetching holdings")
 	for _, holding := range holdings {
-		if holding.Tradingsymbol == "" {
-			t.Errorf("Error while fetching tradingsymbol in holdings. %v", err)
-		}
+		assert.NotEqual(t, "", holding.Tradingsymbol, "Error while fetching tradingsymbol in net position.")
 	}
 }
 
@@ -50,7 +39,6 @@ func (ts *TestSuite) TestConvertPosition(t *testing.T) {
 		Quantity:        "test",
 	}
 	response, err := ts.KiteConnect.ConvertPosition(params)
-	if err != nil || response != true {
-		t.Errorf("Error while converting position. %v", err)
-	}
+	assert.Nil(t, err, "Error while converting position")
+	assert.True(t, response, "Error while converting position")
 }
