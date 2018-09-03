@@ -1,9 +1,10 @@
 language: go
-go: 
+go:
  - 1.9.x
  - 1.10.x
+ - 1.11.x
  - release
  - tip
 
 install: go get -t -v .
-script: go test -v -cover . 
+script: go test -v -cover .
