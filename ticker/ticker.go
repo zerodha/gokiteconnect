@@ -204,8 +204,8 @@ func New(apiKey string, accessToken string) *Ticker {
 }
 
 // SetRootURL sets ticker root url.
-func (t *Ticker) SetRootURL(url.URL) {
-	t.url = tickerURL
+func (t *Ticker) SetRootURL(u url.URL) {
+	t.url = u
 }
 
 // SetAccessToken set access token.
