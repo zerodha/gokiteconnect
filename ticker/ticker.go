@@ -306,8 +306,8 @@ func (t *Ticker) Serve() {
 
 		// Prepare ticker URL with required params.
 		q := t.url.Query()
-		q.Add("api_key", t.apiKey)
-		q.Add("access_token", t.accessToken)
+		q.Set("api_key", t.apiKey)
+		q.Set("access_token", t.accessToken)
 		t.url.RawQuery = q.Encode()
 
 		// create a dialer
