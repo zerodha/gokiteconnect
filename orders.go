@@ -165,7 +165,7 @@ func (c *Client) CancelOrder(variety string, orderID string, parentOrderID *stri
 		params.Add("parent_order_id", *parentOrderID)
 	}
 
-	err := c.doEnvelope(http.MethodPut, fmt.Sprintf(URICancelOrder, variety, orderID), params, nil, &orderResponse)
+	err := c.doEnvelope(http.MethodDelete, fmt.Sprintf(URICancelOrder, variety, orderID), params, nil, &orderResponse)
 	return orderResponse, err
 }
 
