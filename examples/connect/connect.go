@@ -19,7 +19,9 @@ func main() {
 	fmt.Println(kc.GetLoginURL())
 
 	// Obtained request token after Kite Connect login flow
-	requestToken := "request_token_obtained"
+	// simulated here by scanning from stdin
+	var requestToken string
+	fmt.Scanf("%s\n", &requestToken)
 
 	// Get user details and access token
 	data, err := kc.GenerateSession(requestToken, apiSecret)

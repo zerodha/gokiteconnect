@@ -8,6 +8,11 @@ import (
 	"github.com/zerodhatech/gokiteconnect/ticker"
 )
 
+const (
+	apiKey    string = "my_api_key"
+	apiSecret string = "my_api_secret"
+)
+
 var (
 	ticker *kiteticker.Ticker
 )
@@ -52,11 +57,26 @@ func onOrderUpdate(order kiteconnect.Order) {
 }
 
 func main() {
-	apiKey := "my_api_key"
-	accessToken := "my_access_token"
+	// Create a new Kite connect instance
+	kc := kiteconnect.New(apiKey)
+
+	// Login URL from which request token can be obtained
+	fmt.Println(kc.GetLoginURL())
+
+	// Obtained request token after Kite Connect login flow
+	// simulated here by scanning from stdin
+	var requestToken string
+	fmt.Scanf("%s\n", &requestToken)
+
+	// Get user details and access token
+	data, err := kc.GenerateSession(requestToken, apiSecret)
+	if err != nil {
+		fmt.Printf("Error: %v", err)
+		return
+	}
 
 	// Create new Kite ticker instance
-	ticker = kiteticker.New(apiKey, accessToken)
+	ticker = kiteticker.New(apiKey, data.AccessToken)
 
 	// Assign callbacks
 	ticker.OnError(onError)
