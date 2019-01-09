@@ -139,6 +139,9 @@ var MockResponders = [][]string{
 	[]string{http.MethodPost, URIPlaceOrder, "order_response.json"},
 	[]string{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
 	[]string{http.MethodPost, URIPlaceMFSIP, "mf_order_response.json"},
+
+	// DELETE endpoints
+	[]string{http.MethodDelete, URICancelOrder, "order_response.json"},
 }
 
 // Test only function prefix with this
