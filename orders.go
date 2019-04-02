@@ -27,7 +27,7 @@ type Order struct {
 
 	Exchange        string `json:"exchange"`
 	TradingSymbol   string `json:"tradingsymbol"`
-	InstrumentToken int    `json:"instrument_token"`
+	InstrumentToken uint32 `json:"instrument_token"`
 
 	OrderType         string  `json:"order_type"`
 	TransactionType   string  `json:"transaction_type"`
