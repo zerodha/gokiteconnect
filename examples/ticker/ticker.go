@@ -5,7 +5,7 @@ import (
 	"time"
 
 	kiteconnect "github.com/zerodhatech/gokiteconnect"
-	"github.com/zerodhatech/gokiteconnect/ticker"
+	kiteticker "github.com/zerodhatech/gokiteconnect/ticker"
 )
 
 const (
@@ -53,7 +53,7 @@ func onNoReconnect(attempt int) {
 
 // Triggered when order update is received
 func onOrderUpdate(order kiteconnect.Order) {
-	fmt.Printf("Order: ", order.OrderID)
+	fmt.Printf("Order: %s", order.OrderID)
 }
 
 func main() {
