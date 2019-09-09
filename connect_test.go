@@ -126,8 +126,8 @@ var MockResponders = [][]string{
 	[]string{http.MethodGet, URIGetMFSIPs, "mf_sips.json"},
 	[]string{http.MethodGet, URIGetMFSIPInfo, "mf_sip_info.json"},
 	[]string{http.MethodGet, URIGetMFHoldings, "mf_holdings.json"},
-	[]string{http.MethodGet, fmt.Sprintf(URIGetGTTOrder, 123), "gtt_get_order.json"},
-	[]string{http.MethodGet, URIGetGTTOrders, "gtt_get_orders.json"},
+	[]string{http.MethodGet, fmt.Sprintf(URIGetGTT, 123), "gtt_get_order.json"},
+	[]string{http.MethodGet, URIGetGTTs, "gtt_get_orders.json"},
 	[]string{http.MethodGet, URIGetInstruments, "instruments_all.csv"},
 	[]string{http.MethodGet, URIGetMFInstruments, "mf_instruments.csv"},
 	[]string{http.MethodGet, uriGetInstrumentsExchangeTest, "instruments_nse.csv"},
@@ -141,17 +141,17 @@ var MockResponders = [][]string{
 	[]string{http.MethodPut, URIModifyMFSIP, "mf_sip_info.json"},
 	[]string{http.MethodPut, URIModifyOrder, "order_response.json"},
 	[]string{http.MethodPut, URIConvertPosition, "positions.json"},
-	[]string{http.MethodPut, fmt.Sprintf(URIModifyGTTOrder, 123), "gtt_modify_order.json"},
+	[]string{http.MethodPut, fmt.Sprintf(URIModifyGTT, 123), "gtt_modify_order.json"},
 
 	// POST endpoints
 	[]string{http.MethodPost, URIPlaceOrder, "order_response.json"},
 	[]string{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
 	[]string{http.MethodPost, URIPlaceMFSIP, "mf_order_response.json"},
-	[]string{http.MethodPost, URIPlaceGTTOrder, "gtt_place_order.json"},
+	[]string{http.MethodPost, URIPlaceGTT, "gtt_place_order.json"},
 
 	// DELETE endpoints
 	[]string{http.MethodDelete, URICancelOrder, "order_response.json"},
-	[]string{http.MethodDelete, fmt.Sprintf(URIDeleteGTTOrder, 123), "gtt_modify_order.json"},
+	[]string{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), "gtt_modify_order.json"},
 }
 
 // Test only function prefix with this

@@ -29,6 +29,7 @@ func main() {
 	srv := &http.Server{Addr: ":8080"}
 	http.HandleFunc("/api/user/callback/kite/", func(w http.ResponseWriter, r *http.Request) {
 		requestToken = r.URL.Query()["request_token"][0]
+		log.Println("request token", requestToken)
 		go srv.Shutdown(context.TODO())
 		w.Write([]byte("login successful!"))
 		return
@@ -44,6 +45,7 @@ func main() {
 
 	// Set access token
 	kc.SetAccessToken(data.AccessToken)
+	log.Println("data.AccessToken", data.AccessToken)
 
 	// Get margins
 	margins, err := kc.GetUserMargins()

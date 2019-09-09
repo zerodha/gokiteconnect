@@ -7,19 +7,19 @@ import (
 	"net/url"
 )
 
-// GTTOrderType represents the available GTT order types.
-type GTTOrderType string
+// GTTType represents the available GTT order types.
+type GTTType string
 
 const (
-	// GTTOrderTypeSingle is used to monitor a single trigger value
-	GTTOrderTypeSingle GTTOrderType = "single"
-	// GTTOrderTypeOCO is used to monitor two trigger values
+	// GTTTypeSingle is used to monitor a single trigger value
+	GTTTypeSingle GTTType = "single"
+	// GTTTypeOCO is used to monitor two trigger values
 	// where executing one cancels the other.
-	GTTOrderTypeOCO GTTOrderType = "two-leg"
+	GTTTypeOCO GTTType = "two-leg"
 )
 
-// GTTOrders represents a list of GTT orders.
-type GTTOrders []GTTOrder
+// GTTs represents a list of GTT orders.
+type GTTs []GTT
 
 // GTTMeta contains information about the rejection reason
 // received after GTT order was triggered.
@@ -35,12 +35,12 @@ type GTTCondition struct {
 	TriggerValues []float64 `json:"trigger_values"`
 }
 
-// GTTOrder represents a single GTT order.
-type GTTOrder struct {
+// GTT represents a single GTT order.
+type GTT struct {
 	ID            int          `json:"id"`
 	UserID        string       `json:"user_id"`
 	ParentTrigger interface{}  `json:"parent_trigger"`
-	Type          GTTOrderType `json:"type" url:""`
+	Type          GTTType      `json:"type" url:""`
 	CreatedAt     string       `json:"created_at"`
 	UpdatedAt     string       `json:"updated_at"`
 	ExpiresAt     string       `json:"expires_at"`
@@ -50,56 +50,92 @@ type GTTOrder struct {
 	Meta          GTTMeta      `json:"meta"`
 }
 
-// GTTOrderParams is a helper struct used to populate an
-// actual GTTOrder before sending it to the API.
-type GTTOrderParams struct {
+// Trigger is an abstraction over multiple GTT types.
+type Trigger interface {
+	TriggerValues() []float64
+	LimitPrices() []float64
+	Quantities() []float64
+}
+
+type TriggerParams struct {
+	TriggerValue float64
+	LimitPrice   float64
+	Quantity     float64
+}
+
+// GTTSingleLegTrigger implements Trigger interface for the SingleLegTrigger.
+type GTTSingleLegTrigger struct {
+	TriggerParams
+}
+
+func (t *GTTSingleLegTrigger) TriggerValues() []float64 { return []float64{t.TriggerValue} }
+func (t *GTTSingleLegTrigger) LimitPrices() []float64   { return []float64{t.LimitPrice} }
+func (t *GTTSingleLegTrigger) Quantities() []float64    { return []float64{t.Quantity} }
+
+// GTTOneCancelsOtherTrigger implements Trigger interface for the GTTOneCancelsOtherTrigger.
+type GTTOneCancelsOtherTrigger struct {
+	Upper TriggerParams
+	Lower TriggerParams
+}
+
+func (t *GTTOneCancelsOtherTrigger) TriggerValues() []float64 {
+	return []float64{t.Lower.TriggerValue, t.Upper.TriggerValue}
+}
+func (t *GTTOneCancelsOtherTrigger) LimitPrices() []float64 {
+	return []float64{t.Lower.LimitPrice, t.Upper.LimitPrice}
+}
+func (t *GTTOneCancelsOtherTrigger) Quantities() []float64 {
+	return []float64{t.Lower.Quantity, t.Upper.Quantity}
+}
+
+// GTTParams is a helper struct used to populate an
+// actual GTT before sending it to the API.
+type GTTParams struct {
 	Tradingsymbol   string
 	Exchange        string
 	LastPrice       float64
 	TransactionType string
-	Type            GTTOrderType
-	TriggerValues   []float64
-	LimitPrices     []float64
-	Quantities      []float64
+	Type            GTTType
+	Trigger         Trigger
 }
 
-func newGTT(o GTTOrderParams) GTTOrder {
+func newGTT(o GTTParams) GTT {
 	var orders Orders
 
-	for i := range o.TriggerValues {
+	for i := range o.Trigger.TriggerValues() {
 		orders = append(orders, Order{
 			Exchange:        o.Exchange,
 			TradingSymbol:   o.Tradingsymbol,
 			TransactionType: o.TransactionType,
-			Quantity:        o.Quantities[i],
-			Price:           o.LimitPrices[i],
+			Quantity:        o.Trigger.Quantities()[i],
+			Price:           o.Trigger.LimitPrices()[i],
 			OrderType:       OrderTypeLimit,
 			Product:         ProductCNC,
 		})
 	}
-	return GTTOrder{
+	return GTT{
 		Type: o.Type,
 		Condition: GTTCondition{
 			Exchange:      o.Exchange,
 			LastPrice:     o.LastPrice,
 			Tradingsymbol: o.Tradingsymbol,
-			TriggerValues: o.TriggerValues,
+			TriggerValues: o.Trigger.TriggerValues(),
 		},
 		Orders: orders,
 	}
 }
 
-// GTTOrderResponse is returned by the API calls to GTT API.
-type GTTOrderResponse struct {
+// GTTResponse is returned by the API calls to GTT API.
+type GTTResponse struct {
 	TriggerID int `json:"trigger_id"`
 }
 
-// PlaceGTTOrder constructs and places a GTT order using GTTOrderParams.
-func (c *Client) PlaceGTTOrder(o GTTOrderParams) (GTTOrderResponse, error) {
+// PlaceGTT constructs and places a GTT order using GTTParams.
+func (c *Client) PlaceGTT(o GTTParams) (GTTResponse, error) {
 	var (
 		params    = url.Values{}
 		gtt       = newGTT(o)
-		orderResp GTTOrderResponse
+		orderResp GTTResponse
 	)
 
 	condition, err := json.Marshal(gtt.Condition)
@@ -116,16 +152,16 @@ func (c *Client) PlaceGTTOrder(o GTTOrderParams) (GTTOrderResponse, error) {
 	params.Add("condition", string(condition))
 	params.Add("orders", string(orders))
 
-	err = c.doEnvelope(http.MethodPost, URIPlaceGTTOrder, params, nil, &orderResp)
+	err = c.doEnvelope(http.MethodPost, URIPlaceGTT, params, nil, &orderResp)
 	return orderResp, err
 }
 
-// ModifyGTTOrder modifies the condition or orders inside an already created GTT order.
-func (c *Client) ModifyGTTOrder(triggerID int, o GTTOrderParams) (GTTOrderResponse, error) {
+// ModifyGTT modifies the condition or orders inside an already created GTT order.
+func (c *Client) ModifyGTT(triggerID int, o GTTParams) (GTTResponse, error) {
 	var (
 		params    = url.Values{}
 		gtt       = newGTT(o)
-		orderResp GTTOrderResponse
+		orderResp GTTResponse
 	)
 
 	condition, err := json.Marshal(gtt.Condition)
@@ -142,27 +178,27 @@ func (c *Client) ModifyGTTOrder(triggerID int, o GTTOrderParams) (GTTOrderRespon
 	params.Add("condition", string(condition))
 	params.Add("orders", string(orders))
 
-	err = c.doEnvelope(http.MethodPut, fmt.Sprintf(URIModifyGTTOrder, triggerID), params, nil, &orderResp)
+	err = c.doEnvelope(http.MethodPut, fmt.Sprintf(URIModifyGTT, triggerID), params, nil, &orderResp)
 	return orderResp, err
 }
 
-// GetGTTOrders returns the current GTTOrders for the user.
-func (c *Client) GetGTTOrders() (GTTOrders, error) {
-	var orders GTTOrders
-	err := c.doEnvelope(http.MethodGet, URIGetGTTOrders, nil, nil, &orders)
+// GetGTTs returns the current GTTs for the user.
+func (c *Client) GetGTTs() (GTTs, error) {
+	var orders GTTs
+	err := c.doEnvelope(http.MethodGet, URIGetGTTs, nil, nil, &orders)
 	return orders, err
 }
 
-// GetGTTOrder returns a specific GTTOrder for the user.
-func (c *Client) GetGTTOrder(triggerID int) (GTTOrder, error) {
-	var order GTTOrder
-	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetGTTOrder, triggerID), nil, nil, &order)
+// GetGTT returns a specific GTT for the user.
+func (c *Client) GetGTT(triggerID int) (GTT, error) {
+	var order GTT
+	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetGTT, triggerID), nil, nil, &order)
 	return order, err
 }
 
-// DeleteGTTOrder deletes a GTT order.
-func (c *Client) DeleteGTTOrder(triggerID int) (GTTOrderResponse, error) {
-	var order GTTOrderResponse
-	err := c.doEnvelope(http.MethodDelete, fmt.Sprintf(URIGetGTTOrder, triggerID), nil, nil, &order)
+// DeleteGTT deletes a GTT order.
+func (c *Client) DeleteGTT(triggerID int) (GTTResponse, error) {
+	var order GTTResponse
+	err := c.doEnvelope(http.MethodDelete, fmt.Sprintf(URIGetGTT, triggerID), nil, nil, &order)
 	return order, err
 }

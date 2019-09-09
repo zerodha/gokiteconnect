@@ -16,8 +16,6 @@ const (
 func main() {
 	// Create a new Kite connect instance
 	kc := kiteconnect.New(apiKey)
-	kc.SetBaseURI("https://api-uat.zerodha.net")
-	kc.SetDebug(true)
 
 	var (
 		requestToken string
@@ -47,7 +45,7 @@ func main() {
 	kc.SetAccessToken(data.AccessToken)
 
 	log.Println("Fetching GTTs...")
-	orders, err := kc.GetGTTOrders()
+	orders, err := kc.GetGTTs()
 	if err != nil {
 		log.Fatalf("Error getting GTTs: %v", err)
 	}
@@ -55,15 +53,19 @@ func main() {
 
 	log.Println("Placing GTT...")
 	// Place GTT
-	gttResp, err := kc.PlaceGTTOrder(kiteconnect.GTTOrderParams{
+	gttResp, err := kc.PlaceGTT(kiteconnect.GTTParams{
 		Tradingsymbol:   "INFY",
 		Exchange:        "NSE",
 		LastPrice:       800,
 		TransactionType: kiteconnect.TransactionTypeBuy,
-		Type:            kiteconnect.GTTOrderTypeSingle,
-		TriggerValues:   []float64{1},
-		LimitPrices:     []float64{1},
-		Quantities:      []float64{1},
+		Type:            kiteconnect.GTTTypeSingle,
+		Trigger: &kiteconnect.GTTSingleLegTrigger{
+			TriggerParams: kiteconnect.TriggerParams{
+				TriggerValue: 1,
+				Quantity:     1,
+				LimitPrice:   1,
+			},
+		},
 	})
 	if err != nil {
 		log.Fatalf("error placing gtt: %v", err)
@@ -73,7 +75,7 @@ func main() {
 
 	log.Println("Fetching details of placed GTT...")
 
-	order, err := kc.GetGTTOrder(gttResp.TriggerID)
+	order, err := kc.GetGTT(gttResp.TriggerID)
 	if err != nil {
 		log.Fatalf("Error getting GTTs: %v", err)
 	}
@@ -81,15 +83,19 @@ func main() {
 
 	log.Println("Modify existing GTT...")
 
-	gttModifyResp, err := kc.ModifyGTTOrder(gttResp.TriggerID, kiteconnect.GTTOrderParams{
+	gttModifyResp, err := kc.ModifyGTT(gttResp.TriggerID, kiteconnect.GTTParams{
 		Tradingsymbol:   "INFY",
 		Exchange:        "NSE",
 		LastPrice:       800,
 		TransactionType: kiteconnect.TransactionTypeBuy,
-		Type:            kiteconnect.GTTOrderTypeSingle,
-		TriggerValues:   []float64{2},
-		Quantities:      []float64{2},
-		LimitPrices:     []float64{2},
+		Type:            kiteconnect.GTTTypeSingle,
+		Trigger: &kiteconnect.GTTSingleLegTrigger{
+			TriggerParams: kiteconnect.TriggerParams{
+				TriggerValue: 2,
+				Quantity:     2,
+				LimitPrice:   2,
+			},
+		},
 	})
 	if err != nil {
 		log.Fatalf("error placing gtt: %v", err)
@@ -97,7 +103,7 @@ func main() {
 
 	log.Println("modified GTT trigger_id = ", gttModifyResp.TriggerID)
 
-	gttDeleteResp, err := kc.DeleteGTTOrder(gttResp.TriggerID)
+	gttDeleteResp, err := kc.DeleteGTT(gttResp.TriggerID)
 	if err != nil {
 		log.Fatalf("Error getting GTTs: %v", err)
 	}
