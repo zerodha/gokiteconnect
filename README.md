@@ -143,6 +143,12 @@ func main() {
 
 Check [examples folder](https://github.com/zerodhatech/gokiteconnect/tree/master/examples) for more examples.
 
+You can run the following after updating the API Keys in the examples:
+
+```bash
+go run examples/connect/basic/connect.go
+```
+
 ## Run unit tests
 
 ```
