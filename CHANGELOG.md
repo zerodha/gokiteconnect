@@ -5,6 +5,7 @@
 <a name="v3.1.0"></a>
 ## [v3.1.0] - 2019-09-09
 ### Chore
+- update examples and changelog
 - modify examples
 - add go 1.11 to travis config
 
@@ -19,6 +20,9 @@
 
 ### Test
 - fix test for Cancel Order
+
+### Tests
+- update test package, gtt tests
 
 ### Pull Requests
 - Merge pull request [#11](https://github.com/zerodhatech/gokiteconnect/issues/11) from rhnvrm/master

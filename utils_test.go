@@ -8,6 +8,7 @@ import (
 )
 
 func TestCustomUnmarshalJSON(t *testing.T) {
+	t.Parallel()
 	type sampleJSON struct {
 		Date Time `json:"date"`
 	}
@@ -32,6 +33,7 @@ func TestCustomUnmarshalJSON(t *testing.T) {
 }
 
 func TestCustomUnmarshalCSV(t *testing.T) {
+	t.Parallel()
 	type sampleCSV struct {
 		Date Time `csv:"date"`
 	}

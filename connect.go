@@ -114,7 +114,7 @@ const (
 	URIGetMFHoldings  string = "/mf/holdings"
 
 	// GTT endpoints
-	URIPlaceGTT       string = "/gtt/triggers"
+	URIPlaceGTTOrder  string = "/gtt/triggers"
 	URIGetGTTOrders   string = "/gtt/triggers"
 	URIGetGTTOrder    string = "/gtt/triggers/%d"
 	URIModifyGTTOrder string = "/gtt/triggers/%d"

@@ -6,6 +6,7 @@ import (
 )
 
 func TestGetErrorName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		code int
@@ -62,6 +63,7 @@ func TestGetErrorName(t *testing.T) {
 }
 
 func TestError_Error(t *testing.T) {
+	t.Parallel()
 	type fields struct {
 		ErrorType string
 		Message   string
@@ -91,6 +93,7 @@ func TestError_Error(t *testing.T) {
 }
 
 func TestNewError(t *testing.T) {
+	t.Parallel()
 	type args struct {
 		etype string
 	}

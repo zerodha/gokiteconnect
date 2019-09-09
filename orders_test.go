@@ -5,6 +5,7 @@ import (
 )
 
 func (ts *TestSuite) TestGetOrders(t *testing.T) {
+	t.Parallel()
 	orders, err := ts.KiteConnect.GetOrders()
 	if err != nil {
 		t.Errorf("Error while fetching orders. %v", err)
@@ -17,6 +18,7 @@ func (ts *TestSuite) TestGetOrders(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetTrades(t *testing.T) {
+	t.Parallel()
 	trades, err := ts.KiteConnect.GetTrades()
 	if err != nil {
 		t.Errorf("Error while fetching trades. %v", err)
@@ -29,6 +31,7 @@ func (ts *TestSuite) TestGetTrades(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetOrderHistory(t *testing.T) {
+	t.Parallel()
 	orderHistory, err := ts.KiteConnect.GetOrderHistory("test")
 	if err != nil {
 		t.Errorf("Error while fetching trades. %v", err)
@@ -41,6 +44,7 @@ func (ts *TestSuite) TestGetOrderHistory(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetOrderTrades(t *testing.T) {
+	t.Parallel()
 	tradeHistory, err := ts.KiteConnect.GetOrderTrades("test")
 	if err != nil {
 		t.Errorf("Error while fetching trades. %v", err)
@@ -53,6 +57,7 @@ func (ts *TestSuite) TestGetOrderTrades(t *testing.T) {
 }
 
 func (ts *TestSuite) TestPlaceOrder(t *testing.T) {
+	t.Parallel()
 	params := OrderParams{
 		Exchange:          "test",
 		Tradingsymbol:     "test",
@@ -79,6 +84,7 @@ func (ts *TestSuite) TestPlaceOrder(t *testing.T) {
 }
 
 func (ts *TestSuite) TestModifyOrder(t *testing.T) {
+	t.Parallel()
 	params := OrderParams{
 		Exchange:          "test",
 		Tradingsymbol:     "test",
@@ -105,6 +111,7 @@ func (ts *TestSuite) TestModifyOrder(t *testing.T) {
 }
 
 func (ts *TestSuite) TestCancelOrder(t *testing.T) {
+	t.Parallel()
 	parentOrderID := "test"
 
 	orderResponse, err := ts.KiteConnect.CancelOrder("test", "test", &parentOrderID)
@@ -117,6 +124,7 @@ func (ts *TestSuite) TestCancelOrder(t *testing.T) {
 }
 
 func (ts *TestSuite) TestExitOrder(t *testing.T) {
+	t.Parallel()
 	parentOrderID := "test"
 
 	orderResponse, err := ts.KiteConnect.ExitOrder("test", "test", &parentOrderID)

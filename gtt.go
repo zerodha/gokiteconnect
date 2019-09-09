@@ -7,19 +7,27 @@ import (
 	"net/url"
 )
 
+// GTTOrderType represents the available GTT order types.
 type GTTOrderType string
 
 const (
+	// GTTOrderTypeSingle is used to monitor a single trigger value
 	GTTOrderTypeSingle GTTOrderType = "single"
-	GTTOrderTypeOCO    GTTOrderType = "two-leg"
+	// GTTOrderTypeOCO is used to monitor two trigger values
+	// where executing one cancels the other.
+	GTTOrderTypeOCO GTTOrderType = "two-leg"
 )
 
+// GTTOrders represents a list of GTT orders.
 type GTTOrders []GTTOrder
 
+// GTTMeta contains information about the rejection reason
+// received after GTT order was triggered.
 type GTTMeta struct {
 	RejectionReason string `json:"rejection_reason"`
 }
 
+// GTTCondition represents the condition inside a GTT order.
 type GTTCondition struct {
 	Exchange      string    `json:"exchange"`
 	Tradingsymbol string    `json:"tradingsymbol"`
@@ -27,6 +35,7 @@ type GTTCondition struct {
 	TriggerValues []float64 `json:"trigger_values"`
 }
 
+// GTTOrder represents a single GTT order.
 type GTTOrder struct {
 	ID            int          `json:"id"`
 	UserID        string       `json:"user_id"`
@@ -41,6 +50,8 @@ type GTTOrder struct {
 	Meta          GTTMeta      `json:"meta"`
 }
 
+// GTTOrderParams is a helper struct used to populate an
+// actual GTTOrder before sending it to the API.
 type GTTOrderParams struct {
 	Tradingsymbol   string
 	Exchange        string
@@ -78,10 +89,12 @@ func newGTT(o GTTOrderParams) GTTOrder {
 	}
 }
 
+// GTTOrderResponse is returned by the API calls to GTT API.
 type GTTOrderResponse struct {
 	TriggerID int `json:"trigger_id"`
 }
 
+// PlaceGTTOrder constructs and places a GTT order using GTTOrderParams.
 func (c *Client) PlaceGTTOrder(o GTTOrderParams) (GTTOrderResponse, error) {
 	var (
 		params    = url.Values{}
@@ -103,10 +116,11 @@ func (c *Client) PlaceGTTOrder(o GTTOrderParams) (GTTOrderResponse, error) {
 	params.Add("condition", string(condition))
 	params.Add("orders", string(orders))
 
-	err = c.doEnvelope(http.MethodPost, URIPlaceGTT, params, nil, &orderResp)
+	err = c.doEnvelope(http.MethodPost, URIPlaceGTTOrder, params, nil, &orderResp)
 	return orderResp, err
 }
 
+// ModifyGTTOrder modifies the condition or orders inside an already created GTT order.
 func (c *Client) ModifyGTTOrder(triggerID int, o GTTOrderParams) (GTTOrderResponse, error) {
 	var (
 		params    = url.Values{}
@@ -132,18 +146,21 @@ func (c *Client) ModifyGTTOrder(triggerID int, o GTTOrderParams) (GTTOrderRespon
 	return orderResp, err
 }
 
+// GetGTTOrders returns the current GTTOrders for the user.
 func (c *Client) GetGTTOrders() (GTTOrders, error) {
 	var orders GTTOrders
 	err := c.doEnvelope(http.MethodGet, URIGetGTTOrders, nil, nil, &orders)
 	return orders, err
 }
 
+// GetGTTOrder returns a specific GTTOrder for the user.
 func (c *Client) GetGTTOrder(triggerID int) (GTTOrder, error) {
 	var order GTTOrder
 	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetGTTOrder, triggerID), nil, nil, &order)
 	return order, err
 }
 
+// DeleteGTTOrder deletes a GTT order.
 func (c *Client) DeleteGTTOrder(triggerID int) (GTTOrderResponse, error) {
 	var order GTTOrderResponse
 	err := c.doEnvelope(http.MethodDelete, fmt.Sprintf(URIGetGTTOrder, triggerID), nil, nil, &order)
