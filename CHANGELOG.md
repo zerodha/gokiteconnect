@@ -14,6 +14,7 @@
 - add models for gtt
 
 ### Fix
+- travis config, update go versions
 - change type of instrument token in orders response struct to uint32
 - access token and api key getting appended multiple times in ticker
 - ticker SetRootURL() method didn't set root URL
