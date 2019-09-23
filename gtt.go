@@ -37,17 +37,16 @@ type GTTCondition struct {
 
 // GTT represents a single GTT order.
 type GTT struct {
-	ID            int          `json:"id"`
-	UserID        string       `json:"user_id"`
-	ParentTrigger interface{}  `json:"parent_trigger"`
-	Type          GTTType      `json:"type" url:""`
-	CreatedAt     string       `json:"created_at"`
-	UpdatedAt     string       `json:"updated_at"`
-	ExpiresAt     string       `json:"expires_at"`
-	Status        string       `json:"status"`
-	Condition     GTTCondition `json:"condition"`
-	Orders        []Order      `json:"orders"`
-	Meta          GTTMeta      `json:"meta"`
+	ID        int          `json:"id"`
+	UserID    string       `json:"user_id"`
+	Type      GTTType      `json:"type" url:""`
+	CreatedAt Time         `json:"created_at"`
+	UpdatedAt Time         `json:"updated_at"`
+	ExpiresAt Time         `json:"expires_at"`
+	Status    string       `json:"status"`
+	Condition GTTCondition `json:"condition"`
+	Orders    []Order      `json:"orders"`
+	Meta      GTTMeta      `json:"meta"`
 }
 
 // Trigger is an abstraction over multiple GTT types.
@@ -55,6 +54,7 @@ type Trigger interface {
 	TriggerValues() []float64
 	LimitPrices() []float64
 	Quantities() []float64
+	Type() GTTType
 }
 
 type TriggerParams struct {
@@ -68,9 +68,18 @@ type GTTSingleLegTrigger struct {
 	TriggerParams
 }
 
-func (t *GTTSingleLegTrigger) TriggerValues() []float64 { return []float64{t.TriggerValue} }
-func (t *GTTSingleLegTrigger) LimitPrices() []float64   { return []float64{t.LimitPrice} }
-func (t *GTTSingleLegTrigger) Quantities() []float64    { return []float64{t.Quantity} }
+func (t *GTTSingleLegTrigger) TriggerValues() []float64 {
+	return []float64{t.TriggerValue}
+}
+func (t *GTTSingleLegTrigger) LimitPrices() []float64 {
+	return []float64{t.LimitPrice}
+}
+func (t *GTTSingleLegTrigger) Quantities() []float64 {
+	return []float64{t.Quantity}
+}
+func (t *GTTSingleLegTrigger) Type() GTTType {
+	return GTTTypeSingle
+}
 
 // GTTOneCancelsOtherTrigger implements Trigger interface for the GTTOneCancelsOtherTrigger.
 type GTTOneCancelsOtherTrigger struct {
@@ -87,6 +96,9 @@ func (t *GTTOneCancelsOtherTrigger) LimitPrices() []float64 {
 func (t *GTTOneCancelsOtherTrigger) Quantities() []float64 {
 	return []float64{t.Lower.Quantity, t.Upper.Quantity}
 }
+func (t *GTTOneCancelsOtherTrigger) Type() GTTType {
+	return GTTTypeOCO
+}
 
 // GTTParams is a helper struct used to populate an
 // actual GTT before sending it to the API.
@@ -95,7 +107,6 @@ type GTTParams struct {
 	Exchange        string
 	LastPrice       float64
 	TransactionType string
-	Type            GTTType
 	Trigger         Trigger
 }
 
@@ -114,7 +125,7 @@ func newGTT(o GTTParams) GTT {
 		})
 	}
 	return GTT{
-		Type: o.Type,
+		Type: o.Trigger.Type(),
 		Condition: GTTCondition{
 			Exchange:      o.Exchange,
 			LastPrice:     o.LastPrice,

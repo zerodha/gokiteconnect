@@ -35,7 +35,6 @@ func (ts *TestSuite) TestModifyGTT(t *testing.T) {
 		Exchange:        "NSE",
 		LastPrice:       800,
 		TransactionType: TransactionTypeBuy,
-		Type:            GTTTypeSingle,
 		Trigger: &GTTSingleLegTrigger{
 			TriggerParams: TriggerParams{
 				TriggerValue: 2,
@@ -59,7 +58,6 @@ func (ts *TestSuite) TestPlaceGTT(t *testing.T) {
 		Exchange:        "NSE",
 		LastPrice:       800,
 		TransactionType: TransactionTypeBuy,
-		Type:            GTTTypeSingle,
 		Trigger: &GTTSingleLegTrigger{
 			TriggerParams: TriggerParams{
 				TriggerValue: 1,

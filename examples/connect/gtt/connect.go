@@ -58,7 +58,6 @@ func main() {
 		Exchange:        "NSE",
 		LastPrice:       800,
 		TransactionType: kiteconnect.TransactionTypeBuy,
-		Type:            kiteconnect.GTTTypeSingle,
 		Trigger: &kiteconnect.GTTSingleLegTrigger{
 			TriggerParams: kiteconnect.TriggerParams{
 				TriggerValue: 1,
@@ -88,7 +87,6 @@ func main() {
 		Exchange:        "NSE",
 		LastPrice:       800,
 		TransactionType: kiteconnect.TransactionTypeBuy,
-		Type:            kiteconnect.GTTTypeSingle,
 		Trigger: &kiteconnect.GTTSingleLegTrigger{
 			TriggerParams: kiteconnect.TriggerParams{
 				TriggerValue: 2,
