@@ -31,11 +31,13 @@ type Quote map[string]struct {
 		Low   float64 `json:"low"`
 		Close float64 `json:"close"`
 	} `json:"ohlc"`
-	NetChange float64 `json:"net_change"`
-	OI        float64 `json:"oi"`
-	OIDayHigh float64 `json:"oi_day_high"`
-	OIDayLow  float64 `json:"oi_day_low"`
-	Depth     struct {
+	NetChange         float64 `json:"net_change"`
+	OI                float64 `json:"oi"`
+	OIDayHigh         float64 `json:"oi_day_high"`
+	OIDayLow          float64 `json:"oi_day_low"`
+	LowerCircuitLimit float64 `json:"lower_circuit_limit"`
+	UpperCircuitLimit float64 `json:"upper_circuit_limit"`
+	Depth             struct {
 		Buy []struct {
 			Price    float64 `json:"price"`
 			Quantity int     `json:"quantity"`

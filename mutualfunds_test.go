@@ -5,6 +5,7 @@ import (
 )
 
 func (ts *TestSuite) TestGetMFOrders(t *testing.T) {
+	t.Parallel()
 	mfOrders, err := ts.KiteConnect.GetMFOrders()
 	if err != nil {
 		t.Errorf("Error while fetching MF orders. %v", err)
@@ -17,6 +18,7 @@ func (ts *TestSuite) TestGetMFOrders(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetMFOrderInfo(t *testing.T) {
+	t.Parallel()
 	orderInfo, err := ts.KiteConnect.GetMFOrderInfo("test")
 	if err != nil {
 		t.Errorf("Error while fetching trades. %v", err)
@@ -27,6 +29,7 @@ func (ts *TestSuite) TestGetMFOrderInfo(t *testing.T) {
 }
 
 func (ts *TestSuite) TestPlaceMFOrder(t *testing.T) {
+	t.Parallel()
 	params := MFOrderParams{
 		Tradingsymbol:   "test",
 		TransactionType: "test",
@@ -44,6 +47,7 @@ func (ts *TestSuite) TestPlaceMFOrder(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetMFSIPs(t *testing.T) {
+	t.Parallel()
 	sips, err := ts.KiteConnect.GetMFSIPs()
 	if err != nil {
 		t.Errorf("Error while fetching MF SIPs. %v", err)
@@ -56,6 +60,7 @@ func (ts *TestSuite) TestGetMFSIPs(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetMFSIPInfo(t *testing.T) {
+	t.Parallel()
 	sip, err := ts.KiteConnect.GetMFSIPInfo("test")
 	if err != nil || sip.ID == "" {
 		t.Errorf("Error while fetching MF SIP Info. %v", err)
@@ -63,6 +68,7 @@ func (ts *TestSuite) TestGetMFSIPInfo(t *testing.T) {
 }
 
 func (ts *TestSuite) TestPlaceMFSIP(t *testing.T) {
+	t.Parallel()
 	params := MFSIPParams{
 		Tradingsymbol: "test",
 		Amount:        100,
@@ -82,6 +88,7 @@ func (ts *TestSuite) TestPlaceMFSIP(t *testing.T) {
 }
 
 func (ts *TestSuite) TestModifyMFSIP(t *testing.T) {
+	t.Parallel()
 	params := MFSIPModifyParams{
 		Amount:        100,
 		Frequency:     "test",
@@ -99,6 +106,7 @@ func (ts *TestSuite) TestModifyMFSIP(t *testing.T) {
 }
 
 func (ts *TestSuite) TestCancelMFSIP(t *testing.T) {
+	t.Parallel()
 	sipResponse, err := ts.KiteConnect.CancelMFSIP("test")
 	if err != nil {
 		t.Errorf("Error while cancelling MF SIP order. %v", err)
@@ -109,6 +117,7 @@ func (ts *TestSuite) TestCancelMFSIP(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetMFHoldings(t *testing.T) {
+	t.Parallel()
 	holdings, err := ts.KiteConnect.GetMFHoldings()
 	if err != nil {
 		t.Errorf("Error while fetching MF orders. %v", err)

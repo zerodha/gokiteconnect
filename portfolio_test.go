@@ -5,6 +5,7 @@ import (
 )
 
 func (ts *TestSuite) TestGetPositions(t *testing.T) {
+	t.Parallel()
 	positions, err := ts.KiteConnect.GetPositions()
 	if err != nil {
 		t.Errorf("Error while fetching positions. %v", err)
@@ -28,6 +29,7 @@ func (ts *TestSuite) TestGetPositions(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetHoldings(t *testing.T) {
+	t.Parallel()
 	holdings, err := ts.KiteConnect.GetHoldings()
 	if err != nil {
 		t.Errorf("Error while fetching holdings. %v", err)
@@ -40,6 +42,7 @@ func (ts *TestSuite) TestGetHoldings(t *testing.T) {
 }
 
 func (ts *TestSuite) TestConvertPosition(t *testing.T) {
+	t.Parallel()
 	params := ConvertPositionParams{
 		Exchange:        "test",
 		TradingSymbol:   "test",

@@ -113,6 +113,13 @@ const (
 	URICancelMFSIP    string = "/mf/sips/%s" //  "/mf/sips/{sip_id}"
 	URIGetMFHoldings  string = "/mf/holdings"
 
+	// GTT endpoints
+	URIPlaceGTT  string = "/gtt/triggers"
+	URIGetGTTs   string = "/gtt/triggers"
+	URIGetGTT    string = "/gtt/triggers/%d"
+	URIModifyGTT string = "/gtt/triggers/%d"
+	URIDeleteGTT string = "/gtt/triggers/%d"
+
 	URIGetInstruments         string = "/instruments"
 	URIGetMFInstruments       string = "/mf/instruments"
 	URIGetInstrumentsExchange string = "/instruments/%s"                  // "/instruments/{exchange}"

@@ -5,6 +5,7 @@ import (
 )
 
 func (ts *TestSuite) TestGetUserProfile(t *testing.T) {
+	t.Parallel()
 	profile, err := ts.KiteConnect.GetUserProfile()
 	if err != nil || profile.Email == "" {
 		t.Errorf("Error while reading user profile. Error: %v", err)
@@ -12,6 +13,7 @@ func (ts *TestSuite) TestGetUserProfile(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetUserMargins(t *testing.T) {
+	t.Parallel()
 	margins, err := ts.KiteConnect.GetUserMargins()
 	if err != nil {
 		t.Errorf("Error while reading user margins. Error: %v", err)
@@ -23,6 +25,7 @@ func (ts *TestSuite) TestGetUserMargins(t *testing.T) {
 }
 
 func (ts *TestSuite) TestGetUserSegmentMargins(t *testing.T) {
+	t.Parallel()
 	margins, err := ts.KiteConnect.GetUserSegmentMargins("test")
 	if err != nil {
 		t.Errorf("Error while reading user margins. Error: %v", err)
