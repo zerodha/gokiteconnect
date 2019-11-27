@@ -13,17 +13,17 @@ type Order struct {
 	AccountID string `json:"account_id"`
 	PlacedBy  string `json:"placed_by"`
 
-	OrderID                 string `json:"order_id"`
-	ExchangeOrderID         string `json:"exchange_order_id"`
-	ParentOrderID           string `json:"parent_order_id"`
-	Status                  string `json:"status"`
-	StatusMessage           string `json:"status_message"`
-	OrderTimestamp          Time   `json:"order_timestamp"`
-	ExchangeUpdateTimestamp Time   `json:"exchange_update_timestamp"`
-	ExchangeTimestamp       Time   `json:"exchange_timestamp"`
-	Meta                    string `json:"meta"`
-	RejectedBy              string `json:"rejected_by"`
-	Variety                 string `json:"variety"`
+	OrderID                 string                 `json:"order_id"`
+	ExchangeOrderID         string                 `json:"exchange_order_id"`
+	ParentOrderID           string                 `json:"parent_order_id"`
+	Status                  string                 `json:"status"`
+	StatusMessage           string                 `json:"status_message"`
+	OrderTimestamp          Time                   `json:"order_timestamp"`
+	ExchangeUpdateTimestamp Time                   `json:"exchange_update_timestamp"`
+	ExchangeTimestamp       Time                   `json:"exchange_timestamp"`
+	Meta                    map[string]interface{} `json:"meta"`
+	RejectedBy              string                 `json:"rejected_by"`
+	Variety                 string                 `json:"variety"`
 
 	Exchange        string `json:"exchange"`
 	TradingSymbol   string `json:"tradingsymbol"`
