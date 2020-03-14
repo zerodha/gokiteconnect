@@ -282,7 +282,7 @@ func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDat
 	}
 
 	var resp historicalDataReceived
-	if c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetHistorical, instrumentToken, interval), params, nil, &resp); err != nil {
+	if err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetHistorical, instrumentToken, interval), params, nil, &resp); err != nil {
 		return data, err
 	}
 
