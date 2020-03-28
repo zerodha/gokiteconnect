@@ -219,7 +219,7 @@ func (c *Client) CancelMFSIP(sipID string) (MFSIPResponse, error) {
 	return sipResponse, err
 }
 
-// CancelMFOrder cancels an mutualfund SIP.
+// CancelMFOrder cancels an mutualfund order.
 func (c *Client) CancelMFOrder(orderID string) (MFOrderResponse, error) {
 	var orderResponse MFOrderResponse
 	err := c.doEnvelope(http.MethodDelete, fmt.Sprintf(URICancelMFOrder, orderID), nil, nil, &orderResponse)
