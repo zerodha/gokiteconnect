@@ -20,6 +20,21 @@ type MFHolding struct {
 	Quantity      float64 `json:"quantity"`
 }
 
+// MFTrade represents a individual trades of a mutualfund holding.
+type MFTrade struct {
+	Fund              string  `json:"fund"`
+	Tradingsymbol     string  `json:"tradingsymbol"`
+	AveragePrice      float64 `json:"average_price"`
+	Variety           string  `json:"variety"`
+	ExchangeTimestamp Time    `json:"exchange_timestamp"`
+	Amount            float64 `json:"amount"`
+	Folio             string  `json:"folio"`
+	Quantity          float64 `json:"quantity"`
+}
+
+// MFHoldingBreakdown represents a list of mutualfund holdings.
+type MFHoldingBreakdown []MFTrade
+
 // MFHoldings represents a list of mutualfund holdings.
 type MFHoldings []MFHolding
 
@@ -48,7 +63,10 @@ type MFOrder struct {
 }
 
 // MFOrders represents a list of mutualfund orders.
-type MFOrders []Order
+type MFOrders []MFOrder
+
+// MFAllottedISINs represents a list of all ISINs in which atleast one allotment is present.
+type MFAllottedISINs []string
 
 // MFSIP represents a individual mutualfund SIP response.
 type MFSIP struct {
@@ -58,15 +76,18 @@ type MFSIP struct {
 	DividendType    string `json:"dividend_type"`
 	TransactionType string `json:"transaction_type"`
 
-	Status             string  `json:"status"`
-	Created            Time    `json:"created"`
-	Frequency          string  `json:"frequency"`
-	InstalmentAmount   float64 `json:"instalment_amount"`
-	Instalments        int     `json:"instalments"`
-	LastInstalment     Time    `json:"last_instalment"`
-	PendingInstalments int     `json:"pending_instalments"`
-	InstalmentDay      int     `json:"instalment_day"`
-	Tag                string  `json:"tag"`
+	Status               string  `json:"status"`
+	SipType              string  `json:"sip_type"`
+	Created              Time    `json:"created"`
+	Frequency            string  `json:"frequency"`
+	InstalmentAmount     float64 `json:"instalment_amount"`
+	Instalments          int     `json:"instalments"`
+	LastInstalment       Time    `json:"last_instalment"`
+	PendingInstalments   int     `json:"pending_instalments"`
+	InstalmentDay        int     `json:"instalment_day"`
+	CompletedInstalments int     `json:"completed_instalments"`
+	NextInstalment       string  `json:"next_instalment"`
+	Tag                  string  `json:"tag"`
 }
 
 // MFSIPs represents a list of mutualfund SIPs.
@@ -194,8 +215,15 @@ func (c *Client) CancelMFSIP(sipID string) (MFSIPResponse, error) {
 		sipResponse MFSIPResponse
 	)
 
-	err := c.doEnvelope(http.MethodPut, fmt.Sprintf(URICancelMFSIP, sipID), nil, nil, &sipResponse)
+	err := c.doEnvelope(http.MethodDelete, fmt.Sprintf(URICancelMFSIP, sipID), nil, nil, &sipResponse)
 	return sipResponse, err
+}
+
+// CancelMFOrder cancels an mutualfund order.
+func (c *Client) CancelMFOrder(orderID string) (MFOrderResponse, error) {
+	var orderResponse MFOrderResponse
+	err := c.doEnvelope(http.MethodDelete, fmt.Sprintf(URICancelMFOrder, orderID), nil, nil, &orderResponse)
+	return orderResponse, err
 }
 
 // GetMFHoldings gets list of user mutualfund holdings.
@@ -203,4 +231,18 @@ func (c *Client) GetMFHoldings() (MFHoldings, error) {
 	var holdings MFHoldings
 	err := c.doEnvelope(http.MethodGet, URIGetMFHoldings, nil, nil, &holdings)
 	return holdings, err
+}
+
+// GetMFHoldingInfo get individual Holding info.
+func (c *Client) GetMFHoldingInfo(isin string) (MFHoldingBreakdown, error) {
+	var holdingBreakdown MFHoldingBreakdown
+	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetMFHoldingInfo, isin), nil, nil, &holdingBreakdown)
+	return holdingBreakdown, err
+}
+
+// GetMFAllottedISINs gets list of user mutualfund holdings.
+func (c *Client) GetMFAllottedISINs() (MFAllottedISINs, error) {
+	var isins MFAllottedISINs
+	err := c.doEnvelope(http.MethodGet, URIGetAllotedISINs, nil, nil, &isins)
+	return isins, err
 }
