@@ -151,6 +151,7 @@ var MockResponders = [][]string{
 
 	// DELETE endpoints
 	[]string{http.MethodDelete, URICancelOrder, "order_response.json"},
+	[]string{http.MethodDelete, URICancelMFSIP, "mf_order_response.json"},
 	[]string{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), "gtt_modify_order.json"},
 }
 
