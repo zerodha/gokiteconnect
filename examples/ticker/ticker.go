@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	kiteconnect "github.com/zerodhatech/gokiteconnect"
-	kiteticker "github.com/zerodhatech/gokiteconnect/ticker"
+	kiteconnect "github.com/zerodhatech/gokiteconnect/v3"
+	kiteticker "github.com/zerodhatech/gokiteconnect/v3/ticker"
 )
 
 const (
