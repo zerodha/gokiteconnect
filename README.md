@@ -2,7 +2,10 @@
 
 The official Go client for communicating with the Kite Connect API.
 
-Kite Connect is a set of REST-like APIs that expose many capabilities required to build a complete investment and trading platform. Execute orders in real time, manage user portfolio, stream live market data (WebSockets), and more, with the simple HTTP API collection.
+Kite Connect is a set of REST-like APIs that expose many capabilities required
+to build a complete investment and trading platform. Execute orders in real
+time, manage user portfolio, stream live market data (WebSockets), and more,
+with the simple HTTP API collection.
 
 Zerodha Technology (c) 2018. Licensed under the MIT License.
 
@@ -14,7 +17,7 @@ Zerodha Technology (c) 2018. Licensed under the MIT License.
 ## Installation
 
 ```
-go get github.com/zerodhatech/gokiteconnect
+go get github.com/zerodhatech/gokiteconnect/v3
 ```
 
 ## API usage
@@ -25,7 +28,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/zerodhatech/gokiteconnect"
+	kiteconnect "github.com/zerodhatech/gokiteconnect/v3"
 )
 
 const (
@@ -71,8 +74,8 @@ import (
 	"fmt"
 	"time"
 
-	kiteconnect "github.com/zerodhatech/gokiteconnect"
-	"github.com/zerodhatech/gokiteconnect/ticker"
+	kiteconnect "github.com/zerodhatech/gokiteconnect/v3"
+	"github.com/zerodhatech/gokiteconnect/v3/ticker"
 )
 
 var (
