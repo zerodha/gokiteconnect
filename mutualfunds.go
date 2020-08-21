@@ -87,6 +87,7 @@ type MFSIP struct {
 	InstalmentDay        int     `json:"instalment_day"`
 	CompletedInstalments int     `json:"completed_instalments"`
 	NextInstalment       string  `json:"next_instalment"`
+	TriggerPrice         float64 `json:"trigger_price"`
 	Tag                  string  `json:"tag"`
 }
 
@@ -121,6 +122,7 @@ type MFSIPParams struct {
 	Frequency     string  `json:"frequency" url:"frequency"`
 	InstalmentDay int     `json:"instalment_day" url:"instalment_day,omitempty"`
 	InitialAmount float64 `json:"initial_amount" url:"initial_amount,omitempty"`
+	TriggerPrice  float64 `json:"trigger_price" url:"trigger_price,omitempty"`
 	Tag           string  `json:"tag" url:"tag,omitempty"`
 }
 
@@ -145,6 +147,20 @@ func (c *Client) GetMFOrderInfo(OrderID string) (MFOrder, error) {
 	var orderInfo MFOrder
 	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetMFOrderInfo, OrderID), nil, nil, &orderInfo)
 	return orderInfo, err
+}
+
+// GetMFOrdersByDate gets list of mutualfund orders for a custom date range.
+func (c *Client) GetMFOrdersByDate(fromDate, toDate string) (MFOrders, error) {
+	var (
+		orders MFOrders
+	)
+	params := make(url.Values)
+	// from and to dates from request
+	params.Add("from", fromDate)
+	params.Add("to", toDate)
+
+	err := c.doEnvelope(http.MethodGet, URIGetMFOrders, params, nil, &orders)
+	return orders, err
 }
 
 // PlaceMFOrder places an mutualfund order.
