@@ -17,6 +17,7 @@ const (
 	InputError      = "InputException"
 	DataError       = "DataException"
 	NetworkError    = "NetworkException"
+	TPINAuthError   = "TPINAuthException"
 )
 
 // Error is the error type used for all API errors.
@@ -59,6 +60,8 @@ func NewError(etype string, message string, data interface{}) error {
 		err.Code = http.StatusGatewayTimeout
 	case NetworkError:
 		err.Code = http.StatusServiceUnavailable
+	case TPINAuthError:
+		err.Code = http.StatusPreconditionRequired
 	default:
 		err.Code = http.StatusInternalServerError
 		err.ErrorType = GeneralError
@@ -80,6 +83,8 @@ func GetErrorName(code int) string {
 		err = InputError
 	case http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		err = NetworkError
+	case http.StatusPreconditionRequired:
+		err = TPINAuthError
 	default:
 		err = GeneralError
 	}

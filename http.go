@@ -149,6 +149,9 @@ func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers h
 			return NewError(DataError, "Error parsing response.", nil)
 		}
 
+		if resp.Response.StatusCode == http.StatusPreconditionRequired {
+			return NewError(TPINAuthError, e.Message, e.Data)
+		}
 		return NewError(e.ErrorType, e.Message, e.Data)
 	}
 

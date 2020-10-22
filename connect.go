@@ -100,6 +100,7 @@ const (
 	URIGetPositions    string = "/portfolio/positions"
 	URIGetHoldings     string = "/portfolio/holdings"
 	URIConvertPosition string = "/portfolio/positions"
+	URITPINAuthReqID   string = "/portfolio/holdings/authorise"
 
 	// MF endpoints
 	URIGetMFOrders      string = "/mf/orders"

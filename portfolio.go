@@ -90,6 +90,11 @@ type ConvertPositionParams struct {
 	Quantity        string `url:"quantity"`
 }
 
+// TPINAuthoriseRequestID represents
+type TPINAuthoriseRequestID struct {
+	RequestID string `json:"request_id"`
+}
+
 // GetHoldings gets a list of holdings.
 func (c *Client) GetHoldings() (Holdings, error) {
 	var holdings Holdings
@@ -102,6 +107,18 @@ func (c *Client) GetPositions() (Positions, error) {
 	var positions Positions
 	err := c.doEnvelope(http.MethodGet, URIGetPositions, nil, nil, &positions)
 	return positions, err
+}
+
+// GetTPINAuthReqID gets requestID to invoke TPIN authorisation page for a given holding type (mf or eq)
+func (c *Client) GetTPINAuthReqID(holdingType string) (TPINAuthoriseRequestID, error) {
+	var (
+		reqID TPINAuthoriseRequestID
+		err   error
+	)
+	params := url.Values{}
+	params["type"] = []string{holdingType}
+	err = c.doEnvelope(http.MethodPost, URITPINAuthReqID, params, nil, &reqID)
+	return reqID, err
 }
 
 // ConvertPosition converts postion's product type.
