@@ -14,13 +14,14 @@ import (
 	"os"
 	"strings"
 	"time"
+	"bytes"
 )
 
 // HTTPClient represents an HTTP client.
 type HTTPClient interface {
-	Do(method, rURL string, params url.Values, headers http.Header) (HTTPResponse, error)
-	DoEnvelope(method, url string, params url.Values, headers http.Header, obj interface{}) error
-	DoJSON(method, url string, params url.Values, headers http.Header, obj interface{}) (HTTPResponse, error)
+	Do(method, rURL string, params interface{}, headers http.Header) (HTTPResponse, error)
+	DoEnvelope(method, url string, params interface{}, headers http.Header, obj interface{}) error
+	DoJSON(method, url string, params interface{}, headers http.Header, obj interface{}) (HTTPResponse, error)
 	GetClient() *httpClient
 }
 
@@ -73,7 +74,7 @@ func NewHTTPClient(h *http.Client, hLog *log.Logger, debug bool) HTTPClient {
 }
 
 // Do executes an HTTP request and returns the response.
-func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Header) (HTTPResponse, error) {
+func (h *httpClient) Do(method, rURL string, params interface{}, headers http.Header) (HTTPResponse, error) {
 	var (
 		resp       = HTTPResponse{}
 		postParams io.Reader
@@ -83,15 +84,19 @@ func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Hea
 	if params == nil {
 		params = url.Values{}
 	}
-
 	// Encode POST / PUT params.
 	if method == http.MethodPost || method == http.MethodPut {
-		postParams = strings.NewReader(params.Encode())
+		// Check input param field type
+		switch param := params.(type) {
+		case url.Values:
+			postParams = strings.NewReader(param.Encode())
+		case []byte:
+			postParams = bytes.NewReader(param)
+		}
 	}
-
 	req, err := http.NewRequest(method, rURL, postParams)
 	if err != nil {
-		h.hLog.Printf("Request preparation failed: %v", err)
+		h.hLog.Printf("Request preparation failed: %sv", err)
 		return resp, NewError(NetworkError, "Request preparation failed.", nil)
 	}
 
@@ -99,18 +104,27 @@ func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Hea
 		req.Header = headers
 	}
 
-	// If a content-type isn't set, set the default one.
+	// If a content-type isn't set, set the header type as per param data type
 	if req.Header.Get("Content-Type") == "" {
 		if method == http.MethodPost || method == http.MethodPut {
-			req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+			// Check input param field type
+			switch params.(type) {
+			case url.Values:
+				req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+			case []byte:
+				req.Header.Add("Content-Type", "application/json")
+			}
 		}
 	}
-
+	
 	// If the request method is GET or DELETE, add the params as QueryString.
 	if method == http.MethodGet || method == http.MethodDelete {
-		req.URL.RawQuery = params.Encode()
+		// Check input param field type
+		switch param := params.(type) {
+		case url.Values:
+			req.URL.RawQuery = param.Encode()
+		}
 	}
-
 	r, err := h.client.Do(req)
 	if err != nil {
 		h.hLog.Printf("Request failed: %v", err)
@@ -135,7 +149,7 @@ func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Hea
 }
 
 // DoEnvelope makes an HTTP request and parses the JSON response (fastglue envelop structure)
-func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers http.Header, obj interface{}) error {
+func (h *httpClient) DoEnvelope(method, url string, params interface{}, headers http.Header, obj interface{}) error {
 	resp, err := h.Do(method, url, params, headers)
 	if err != nil {
 		return err
@@ -165,7 +179,7 @@ func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers h
 }
 
 // DoJSON makes an HTTP request and parses the JSON response.
-func (h *httpClient) DoJSON(method, url string, params url.Values, headers http.Header, obj interface{}) (HTTPResponse, error) {
+func (h *httpClient) DoJSON(method, url string, params interface{}, headers http.Header, obj interface{}) (HTTPResponse, error) {
 	resp, err := h.Do(method, url, params, headers)
 	if err != nil {
 		return resp, err

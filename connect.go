@@ -131,6 +131,9 @@ const (
 	URIGetQuote string = "/quote"
 	URIGetLTP   string = "/quote/ltp"
 	URIGetOHLC  string = "/quote/ohlc"
+
+	// Order Margin computation
+	URIOrderMargin string = "/margins/orders"
 )
 
 // New creates a new Kite Connect client.
@@ -181,7 +184,7 @@ func (c *Client) GetLoginURL() string {
 	return fmt.Sprintf(loginURI, c.apiKey)
 }
 
-func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.Header, v interface{}) error {
+func (c *Client) doEnvelope(method, uri string, params interface{}, headers http.Header, v interface{}) error {
 	if params == nil {
 		params = url.Values{}
 	}
