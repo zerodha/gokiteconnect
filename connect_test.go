@@ -148,6 +148,7 @@ var MockResponders = [][]string{
 	[]string{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
 	[]string{http.MethodPost, URIPlaceMFSIP, "mf_order_response.json"},
 	[]string{http.MethodPost, URIPlaceGTT, "gtt_place_order.json"},
+	[]string{http.MethodPost, URIOrderMargins, "order_margins.json"},
 
 	// DELETE endpoints
 	[]string{http.MethodDelete, URICancelOrder, "order_response.json"},

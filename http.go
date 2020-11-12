@@ -5,6 +5,7 @@ package kiteconnect
 */
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"io/ioutil"
@@ -12,13 +13,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 )
 
 // HTTPClient represents an HTTP client.
 type HTTPClient interface {
 	Do(method, rURL string, params url.Values, headers http.Header) (HTTPResponse, error)
+	DoRaw(method, rURL string, reqBody []byte, headers http.Header) (HTTPResponse, error)
 	DoEnvelope(method, url string, params url.Values, headers http.Header, obj interface{}) error
 	DoJSON(method, url string, params url.Values, headers http.Header, obj interface{}) (HTTPResponse, error)
 	GetClient() *httpClient
@@ -72,24 +73,28 @@ func NewHTTPClient(h *http.Client, hLog *log.Logger, debug bool) HTTPClient {
 	}
 }
 
-// Do executes an HTTP request and returns the response.
 func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Header) (HTTPResponse, error) {
-	var (
-		resp       = HTTPResponse{}
-		postParams io.Reader
-		err        error
-	)
-
 	if params == nil {
 		params = url.Values{}
 	}
 
+	return h.DoRaw(method, rURL, []byte(params.Encode()), headers)
+}
+
+// Do executes an HTTP request and returns the response.
+func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Header) (HTTPResponse, error) {
+	var (
+		resp     = HTTPResponse{}
+		err      error
+		postBody io.Reader
+	)
+
 	// Encode POST / PUT params.
 	if method == http.MethodPost || method == http.MethodPut {
-		postParams = strings.NewReader(params.Encode())
+		postBody = bytes.NewReader(reqBody)
 	}
 
-	req, err := http.NewRequest(method, rURL, postParams)
+	req, err := http.NewRequest(method, rURL, postBody)
 	if err != nil {
 		h.hLog.Printf("Request preparation failed: %v", err)
 		return resp, NewError(NetworkError, "Request preparation failed.", nil)
@@ -108,7 +113,7 @@ func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Hea
 
 	// If the request method is GET or DELETE, add the params as QueryString.
 	if method == http.MethodGet || method == http.MethodDelete {
-		req.URL.RawQuery = params.Encode()
+		req.URL.RawQuery = string(reqBody)
 	}
 
 	r, err := h.client.Do(req)
@@ -141,11 +146,19 @@ func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers h
 		return err
 	}
 
+	err = readEnvelope(resp, obj)
+	if err != nil {
+		h.hLog.Printf("Error parsing JSON response: %v", err)
+	}
+
+	return err
+}
+
+func readEnvelope(resp HTTPResponse, obj interface{}) error {
 	// Successful request, but error envelope.
 	if resp.Response.StatusCode >= http.StatusBadRequest {
 		var e errorEnvelope
 		if err := json.Unmarshal(resp.Body, &e); err != nil {
-			h.hLog.Printf("Error parsing JSON response: %v", err)
 			return NewError(DataError, "Error parsing response.", nil)
 		}
 
@@ -157,7 +170,6 @@ func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers h
 	envl.Data = obj
 
 	if err := json.Unmarshal(resp.Body, &envl); err != nil {
-		h.hLog.Printf("Error parsing JSON response: %v | %s", err, resp.Body)
 		return NewError(DataError, "Error parsing response.", nil)
 	}
 

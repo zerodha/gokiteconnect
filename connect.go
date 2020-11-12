@@ -101,6 +101,8 @@ const (
 	URIGetHoldings     string = "/portfolio/holdings"
 	URIConvertPosition string = "/portfolio/positions"
 
+	URIOrderMargins string = "/margins/orders"
+
 	// MF endpoints
 	URIGetMFOrders      string = "/mf/orders"
 	URIGetMFOrderInfo   string = "/mf/orders/%s" // "/mf/orders/{order_id}"
@@ -221,4 +223,20 @@ func (c *Client) do(method, uri string, params url.Values, headers http.Header) 
 	}
 
 	return c.httpClient.Do(method, c.baseURI+uri, params, headers)
+}
+
+func (c *Client) doRaw(method, uri string, reqBody []byte, headers http.Header) (HTTPResponse, error) {
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+
+	headers.Add("X-Kite-Version", kiteHeaderVersion)
+	headers.Add("User-Agent", name+"/"+version)
+
+	if c.apiKey != "" && c.accessToken != "" {
+		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+		headers.Add("Authorization", authHeader)
+	}
+
+	return c.httpClient.DoRaw(method, c.baseURI+uri, reqBody, headers)
 }
