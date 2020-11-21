@@ -517,9 +517,7 @@ func (t *Ticker) Unsubscribe(tokens []uint32) error {
 
 	// Remove tokens from current subscriptions
 	for _, ts := range tokens {
-		if _, ok := t.subscribedTokens[ts]; ok {
-			delete(t.subscribedTokens, ts)
-		}
+		delete(t.subscribedTokens, ts)
 	}
 
 	return t.Conn.WriteMessage(websocket.TextMessage, out)
