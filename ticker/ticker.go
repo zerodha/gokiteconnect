@@ -426,7 +426,7 @@ func (t *Ticker) checkConnection(wg *sync.WaitGroup) {
 
 		// If last ping time is greater then timeout interval then close the
 		// existing connection and reconnect
-		if time.Now().Sub(t.lastPingTime) > dataTimeoutInterval {
+		if time.Since(t.lastPingTime) > dataTimeoutInterval {
 			// Close the current connection without waiting for close frame
 			if t.Conn != nil {
 				t.Conn.Close()
