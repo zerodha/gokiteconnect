@@ -41,10 +41,6 @@ type OrderMargins struct {
 	Total         float64 `json:"total"`
 }
 
-type orderMarginRequest struct {
-	Data []OrderMarginParam `json:"data"`
-}
-
 func (c *Client) GetOrderMargins(orderParams []OrderMarginParam) ([]OrderMargins, error) {
 	body, err := json.Marshal(orderParams)
 	if err != nil {
