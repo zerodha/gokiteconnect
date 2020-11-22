@@ -178,10 +178,8 @@ func TestNewError(t *testing.T) {
 			e := NewError(tt.args.etype, "Test Error", nil)
 			if err, ok := e.(Error); !ok {
 				t.Errorf("NewError() does not implement Error error = %v", e)
-			} else {
-				if err.Code != tt.want {
-					t.Errorf("NewError() error = %v, wantErr %v", err.Code, tt.want)
-				}
+			} else if err.Code != tt.want {
+				t.Errorf("NewError() error = %v, wantErr %v", err.Code, tt.want)
 			}
 		})
 	}
