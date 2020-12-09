@@ -1,8 +1,11 @@
 version = 1
 
+exclude_patterns = ["examples/**"]
+test_patterns = ["*_test.go"]
+
 [[analyzers]]
 name = "go"
 enabled = true
 
   [analyzers.meta]
-  import_paths = ["github.com/de-sh/gokiteconnect"]
+  import_paths = ["github.com/zerodha/gokiteconnect"]
