@@ -426,7 +426,7 @@ func (t *Ticker) checkConnection(wg *sync.WaitGroup) {
 
 		// If last ping time is greater then timeout interval then close the
 		// existing connection and reconnect
-		if time.Now().Sub(t.lastPingTime) > dataTimeoutInterval {
+		if time.Since(t.lastPingTime) > dataTimeoutInterval {
 			// Close the current connection without waiting for close frame
 			if t.Conn != nil {
 				t.Conn.Close()
@@ -517,9 +517,7 @@ func (t *Ticker) Unsubscribe(tokens []uint32) error {
 
 	// Remove tokens from current subscriptions
 	for _, ts := range tokens {
-		if _, ok := t.subscribedTokens[ts]; ok {
-			delete(t.subscribedTokens, ts)
-		}
+		delete(t.subscribedTokens, ts)
 	}
 
 	return t.Conn.WriteMessage(websocket.TextMessage, out)

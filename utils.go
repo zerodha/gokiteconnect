@@ -18,7 +18,7 @@ func (t *Time) UnmarshalJSON(b []byte) (err error) {
 	var pTime time.Time
 	s := strings.TrimSpace(strings.Trim(string(b), "\""))
 
-	if len(s) == 0 || s == "null" {
+	if s == "" || s == "null" {
 		t.Time = pTime
 		return nil
 	}
