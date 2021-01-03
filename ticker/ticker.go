@@ -487,14 +487,14 @@ func (t *Ticker) Close() error {
 	// maybe reset state (after Zerodha team finalises the change)
 	// https://github.com/zerodha/gokiteconnect/pull/28
 
-	err := t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-
-	if !err {
-		t.Conn = nil
-		t.isClosed = true
+	if err := t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+		return err
 	}
 
-	return err
+	t.Conn = nil
+	t.isClosed = true
+
+	return nil
 }
 
 // Subscribe subscribes tick for the given list of tokens.
