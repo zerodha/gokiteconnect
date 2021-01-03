@@ -83,6 +83,7 @@ type Ticker struct {
 	reconnectMaxDelay   time.Duration
 	connectTimeout      time.Duration
 
+	isClosed         bool
 	reconnectAttempt int
 
 	subscribedTokens map[uint32]Mode
@@ -281,6 +282,12 @@ func (t *Ticker) OnOrderUpdate(f func(order kiteconnect.Order)) {
 // Serve starts the connection to ticker server. Since its blocking its recommended to use it in go routine.
 func (t *Ticker) Serve() {
 	for {
+
+		// If closed by user
+		if t.isClosed {
+			return
+		}
+
 		// If reconnect attempt exceeds max then close the loop
 		if t.reconnectAttempt > t.reconnectMaxRetries {
 			t.triggerNoReconnect(t.reconnectAttempt)
@@ -476,7 +483,14 @@ func (t *Ticker) readMessage(wg *sync.WaitGroup) {
 
 // Close tries to close the connection gracefully. If the server doesn't close it
 func (t *Ticker) Close() error {
-	return t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	err := t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+
+	if !err {
+		t.Conn = nil
+		t.isClosed = true
+	}
+
+	return err
 }
 
 // Subscribe subscribes tick for the given list of tokens.
