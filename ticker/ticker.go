@@ -483,6 +483,10 @@ func (t *Ticker) readMessage(wg *sync.WaitGroup) {
 
 // Close tries to close the connection gracefully. If the server doesn't close it
 func (t *Ticker) Close() error {
+	// TODO handle ontriggerClose
+	// maybe reset state (after Zerodha team finalises the change)
+	// https://github.com/zerodha/gokiteconnect/pull/28
+
 	err := t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 
 	if !err {
