@@ -77,6 +77,7 @@ type HistoricalData struct {
 	Low    float64 `json:"Low"`
 	Close  float64 `json:"close"`
 	Volume int     `json:"volume"`
+	Oi     int     `json:"oi"`
 }
 
 type historicalDataReceived struct {
@@ -87,6 +88,7 @@ type historicalDataParams struct {
 	FromDate        string `url:"from"`
 	ToDate          string `url:"to"`
 	Continuous      int    `url:"continuous"`
+	Oi              int    `url:"oi"`
 	InstrumentToken int    `url:"instrument_token"`
 	Interval        string `url:"interval"`
 }
@@ -208,6 +210,7 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 			low    float64
 			close  float64
 			volume int
+			oi     int
 			ok     bool
 		)
 
@@ -238,6 +241,15 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 		}
 
 		volume = int(v)
+		// Did we get OI?
+		if len(i) > 6 {
+			// Assert oi
+			oit, ok := i[6].(float64)
+			if !ok {
+				return data, NewError(GeneralError, fmt.Sprintf("Error decoding response `oi`: %v", i[6]), nil)
+			}
+			oi = int(oit)
+		}
 
 		// Parse string to date
 		d, err := time.Parse("2006-01-02T15:04:05-0700", ds)
@@ -252,6 +264,7 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 			Low:    low,
 			Close:  close,
 			Volume: volume,
+			Oi:     oi,
 		})
 	}
 
@@ -259,7 +272,7 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 }
 
 // GetHistoricalData gets list of historical data.
-func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDate time.Time, toDate time.Time, continuous bool) ([]HistoricalData, error) {
+func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDate time.Time, toDate time.Time, continuous bool, Oi bool) ([]HistoricalData, error) {
 	var (
 		err       error
 		data      []HistoricalData
@@ -272,9 +285,14 @@ func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDat
 	inpParams.FromDate = fromDate.Format("2006-01-02 15:04:05")
 	inpParams.ToDate = toDate.Format("2006-01-02 15:04:05")
 	inpParams.Continuous = 0
+	inpParams.Oi = 0
 
 	if continuous {
 		inpParams.Continuous = 1
+	}
+
+	if Oi {
+		inpParams.Oi = 1
 	}
 
 	if params, err = query.Values(inpParams); err != nil {
