@@ -39,7 +39,7 @@ func (ts *TestSuite) TestGetLTP(t *testing.T) {
 
 func (ts *TestSuite) TestGetHistoricalData(t *testing.T) {
 	t.Parallel()
-	marketHistorical, err := ts.KiteConnect.GetHistoricalData(123, "myinterval", time.Unix(0, 0), time.Unix(1, 0), true)
+	marketHistorical, err := ts.KiteConnect.GetHistoricalData(123, "myinterval", time.Unix(0, 0), time.Unix(1, 0), true, false)
 	if err != nil {
 		t.Errorf("Error while fetching MF orders. %v", err)
 	}
