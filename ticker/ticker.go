@@ -83,7 +83,7 @@ type Ticker struct {
 	reconnectMaxDelay   time.Duration
 	connectTimeout      time.Duration
 
-	manualClosed bool
+	manuallyClosed bool
 
 	reconnectAttempt int
 
@@ -285,7 +285,7 @@ func (t *Ticker) Serve() {
 	for {
 
 		// If closed by user
-		if t.manualClosed {
+		if t.manuallyClosed {
 			return
 		}
 
@@ -438,7 +438,7 @@ func (t *Ticker) checkConnection(wg *sync.WaitGroup) {
 		time.Sleep(connectionCheckInterval)
 
 		// checkConnection runs in a separate goroutine. Safer to exit ASAP
-		if t.manualClosed {
+		if t.manuallyClosed {
 			wg.Done()
 			return
 		}
@@ -503,7 +503,7 @@ func (t *Ticker) Close() error {
 // which doesn't trigger reconnect
 func (t *Ticker) ManualClose() {
 	t.Conn.Close()
-	t.manualClosed = true
+	t.manuallyClosed = true
 }
 
 // Subscribe subscribes tick for the given list of tokens.
