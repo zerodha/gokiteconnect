@@ -83,7 +83,8 @@ type Ticker struct {
 	reconnectMaxDelay   time.Duration
 	connectTimeout      time.Duration
 
-	isClosed         bool
+	manualClosed bool
+
 	reconnectAttempt int
 
 	subscribedTokens map[uint32]Mode
@@ -284,7 +285,7 @@ func (t *Ticker) Serve() {
 	for {
 
 		// If closed by user
-		if t.isClosed {
+		if t.manualClosed {
 			return
 		}
 
@@ -332,7 +333,12 @@ func (t *Ticker) Serve() {
 		}
 
 		// Close the connection when its done.
-		defer t.Conn.Close()
+		defer func() {
+			// User could have manually closed it, nil check is necessary
+			if t.Conn != nil {
+				t.Conn.Close()
+			}
+		}()
 
 		// Assign the current connection to the instance.
 		t.Conn = conn
@@ -431,6 +437,12 @@ func (t *Ticker) checkConnection(wg *sync.WaitGroup) {
 		// Sleep before doing next check
 		time.Sleep(connectionCheckInterval)
 
+		// checkConnection runs in a separate goroutine. Safer to exit ASAP
+		if t.manualClosed {
+			wg.Done()
+			return
+		}
+
 		// If last ping time is greater then timeout interval then close the
 		// existing connection and reconnect
 		if time.Since(t.lastPingTime) > dataTimeoutInterval {
@@ -478,23 +490,20 @@ func (t *Ticker) readMessage(wg *sync.WaitGroup) {
 		} else if mType == websocket.TextMessage {
 			t.processTextMessage(msg)
 		}
+
 	}
 }
 
 // Close tries to close the connection gracefully. If the server doesn't close it
 func (t *Ticker) Close() error {
-	// TODO handle ontriggerClose
-	// maybe reset state (after Zerodha team finalises the change)
-	// https://github.com/zerodha/gokiteconnect/pull/28
+	return t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+}
 
-	if err := t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
-		return err
-	}
-
-	t.Conn = nil
-	t.isClosed = true
-
-	return nil
+// Graceful Manual Close
+// which doesn't trigger reconnect
+func (t *Ticker) ManualClose() {
+	t.Conn.Close()
+	t.manualClosed = true
 }
 
 // Subscribe subscribes tick for the given list of tokens.
