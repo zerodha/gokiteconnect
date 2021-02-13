@@ -502,7 +502,9 @@ func (t *Ticker) Close() error {
 // Graceful Manual Close
 // which doesn't trigger reconnect
 func (t *Ticker) ManualClose() {
-	t.Conn.Close()
+	if t.Conn != nil {
+		t.Conn.Close()
+	}
 	t.manuallyClosed = true
 }
 
