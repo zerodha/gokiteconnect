@@ -3,6 +3,8 @@ package kiteconnect
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func (ts *TestSuite) TestGetQuote(t *testing.T) {
@@ -39,7 +41,7 @@ func (ts *TestSuite) TestGetLTP(t *testing.T) {
 
 func (ts *TestSuite) TestGetHistoricalData(t *testing.T) {
 	t.Parallel()
-	marketHistorical, err := ts.KiteConnect.GetHistoricalData(123, "myinterval", time.Unix(0, 0), time.Unix(1, 0), true)
+	marketHistorical, err := ts.KiteConnect.GetHistoricalData(123, "myinterval", time.Unix(0, 0), time.Unix(1, 0), true, false)
 	if err != nil {
 		t.Errorf("Error while fetching MF orders. %v", err)
 	}
@@ -49,6 +51,18 @@ func (ts *TestSuite) TestGetHistoricalData(t *testing.T) {
 			t.Errorf("Unsorted candles returned. %v", err)
 			return
 		}
+	}
+}
+
+func (ts *TestSuite) TestGetHistoricalDataWithOI(t *testing.T) {
+	t.Parallel()
+	marketHistorical, err := ts.KiteConnect.GetHistoricalData(456, "myinterval", time.Unix(0, 0), time.Unix(1, 0), true, true)
+	require.Nil(t, err)
+	require.Equal(t, 6, len(marketHistorical))
+
+	for i := 0; i < len(marketHistorical)-1; i++ {
+		require.Greater(t, marketHistorical[i+1].Date.Unix(), marketHistorical[i].Date.Unix())
+		require.NotEqual(t, marketHistorical[i].OI, 0)
 	}
 }
 

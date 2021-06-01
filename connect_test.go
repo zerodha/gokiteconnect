@@ -18,6 +18,7 @@ import (
 const (
 	uriGetInstrumentsExchangeTest string = "/instruments/nse"
 	uriGetHistoricalTest          string = "/instruments/historical/123/myinterval"
+	uriGetHistoricalWithOITest    string = "/instruments/historical/456/myinterval"
 )
 
 // Test New Kite Connect instance
@@ -132,6 +133,7 @@ var MockResponders = [][]string{
 	[]string{http.MethodGet, URIGetMFInstruments, "mf_instruments.csv"},
 	[]string{http.MethodGet, uriGetInstrumentsExchangeTest, "instruments_nse.csv"},
 	[]string{http.MethodGet, uriGetHistoricalTest, "historical_minute.json"},
+	[]string{http.MethodGet, uriGetHistoricalWithOITest, "historical_oi.json"},
 	[]string{http.MethodGet, URIGetTriggerRange, "trigger_range.json"},
 	[]string{http.MethodGet, URIGetQuote, "quote.json"},
 	[]string{http.MethodGet, URIGetLTP, "ltp.json"},

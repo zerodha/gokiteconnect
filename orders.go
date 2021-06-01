@@ -18,12 +18,12 @@ type Order struct {
 	ParentOrderID           string                 `json:"parent_order_id"`
 	Status                  string                 `json:"status"`
 	StatusMessage           string                 `json:"status_message"`
+	StatusMessageRaw        string                 `json:"status_message_raw"`
 	OrderTimestamp          Time                   `json:"order_timestamp"`
 	ExchangeUpdateTimestamp Time                   `json:"exchange_update_timestamp"`
 	ExchangeTimestamp       Time                   `json:"exchange_timestamp"`
-	Meta                    map[string]interface{} `json:"meta"`
-	RejectedBy              string                 `json:"rejected_by"`
 	Variety                 string                 `json:"variety"`
+	Meta                    map[string]interface{} `json:"meta"`
 
 	Exchange        string `json:"exchange"`
 	TradingSymbol   string `json:"tradingsymbol"`
@@ -42,6 +42,9 @@ type Order struct {
 	FilledQuantity    float64 `json:"filled_quantity"`
 	PendingQuantity   float64 `json:"pending_quantity"`
 	CancelledQuantity float64 `json:"cancelled_quantity"`
+
+	Tag  string   `json:"tag"`
+	Tags []string `json:"tags"`
 }
 
 // Orders is a list of orders.
