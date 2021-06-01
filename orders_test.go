@@ -2,6 +2,8 @@ package kiteconnect
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func (ts *TestSuite) TestGetOrders(t *testing.T) {
@@ -10,11 +12,16 @@ func (ts *TestSuite) TestGetOrders(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error while fetching orders. %v", err)
 	}
-	for _, order := range orders {
-		if order.OrderID == "" {
-			t.Errorf("Error while fetching order id in orders. %v", err)
+	t.Run("test empty/unparsed orders", func(t *testing.T) {
+		for _, order := range orders {
+			require.NotEqual(t, "", order.OrderID)
 		}
-	}
+	})
+	t.Run("test tag parsing", func(t *testing.T) {
+		require.Equal(t, "", orders[0].Tag)
+		require.Equal(t, "connect test order1", orders[3].Tag)
+		require.Equal(t, []string{"connect test order2", "XXXXX"}, orders[4].Tags)
+	})
 }
 
 func (ts *TestSuite) TestGetTrades(t *testing.T) {
