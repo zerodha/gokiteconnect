@@ -11,13 +11,13 @@ Zerodha Technology (c) 2018. Licensed under the MIT License.
 
 ## Documentation
 
-- [Client API documentation - GoDoc](https://godoc.org/github.com/zerodhatech/gokiteconnect)
+- [Client API documentation - GoDoc](https://godoc.org/github.com/zerodha/gokiteconnect)
 - [Kite Connect HTTP API documentation](https://kite.trade/docs/connect/v3)
 
 ## Installation
 
 ```
-go get github.com/zerodhatech/gokiteconnect/v3
+go get github.com/zerodha/gokiteconnect/v3
 ```
 
 ## API usage
@@ -28,7 +28,7 @@ package main
 import (
 	"fmt"
 
-	kiteconnect "github.com/zerodhatech/gokiteconnect/v3"
+	kiteconnect "github.com/zerodha/gokiteconnect/v3"
 )
 
 const (
@@ -74,8 +74,8 @@ import (
 	"fmt"
 	"time"
 
-	kiteconnect "github.com/zerodhatech/gokiteconnect/v3"
-	"github.com/zerodhatech/gokiteconnect/v3/ticker"
+	kiteconnect "github.com/zerodha/gokiteconnect/v3"
+	"github.com/zerodha/gokiteconnect/v3/ticker"
 )
 
 var (
@@ -144,7 +144,7 @@ func main() {
 
 # Examples
 
-Check [examples folder](https://github.com/zerodhatech/gokiteconnect/tree/master/examples) for more examples.
+Check [examples folder](https://github.com/zerodha/gokiteconnect/tree/master/examples) for more examples.
 
 You can run the following after updating the API Keys in the examples:
 
@@ -161,4 +161,3 @@ go test -v
 ## Changelog
 
 [Check CHANGELOG.md](CHANGELOG.md)
-
