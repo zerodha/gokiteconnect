@@ -1,4 +1,4 @@
-module github.com/zerodhatech/gokiteconnect/v3
+module github.com/zerodha/gokiteconnect/v3
 
 go 1.14
 
