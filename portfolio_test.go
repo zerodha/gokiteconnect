@@ -50,7 +50,7 @@ func (ts *TestSuite) TestConvertPosition(t *testing.T) {
 		NewProduct:      "test",
 		PositionType:    "test",
 		TransactionType: "test",
-		Quantity:        "test",
+		Quantity:        1,
 	}
 	response, err := ts.KiteConnect.ConvertPosition(params)
 	if err != nil || response != true {

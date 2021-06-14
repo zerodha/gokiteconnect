@@ -87,7 +87,7 @@ type ConvertPositionParams struct {
 	NewProduct      string `url:"new_product"`
 	PositionType    string `url:"position_type"`
 	TransactionType string `url:"transaction_type"`
-	Quantity        string `url:"quantity"`
+	Quantity        int    `url:"quantity"`
 }
 
 // GetHoldings gets a list of holdings.
