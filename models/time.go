@@ -1,4 +1,4 @@
-package kiteconnect
+package models
 
 import (
 	"strings"
