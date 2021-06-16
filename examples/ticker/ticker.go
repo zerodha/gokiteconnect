@@ -5,6 +5,7 @@ import (
 	"time"
 
 	kiteconnect "github.com/zerodha/gokiteconnect/v3"
+	kitemodels "github.com/zerodha/gokiteconnect/v3/models"
 	kiteticker "github.com/zerodha/gokiteconnect/v3/ticker"
 )
 
@@ -37,7 +38,7 @@ func onConnect() {
 }
 
 // Triggered when tick is recevived
-func onTick(tick kiteticker.Tick) {
+func onTick(tick kitemodels.Tick) {
 	fmt.Println("Tick: ", tick)
 }
 

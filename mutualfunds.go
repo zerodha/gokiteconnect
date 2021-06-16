@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/google/go-querystring/query"
+	"github.com/zerodha/gokiteconnect/v3/models"
 )
 
 // MFHolding represents a individual mutualfund holding.
@@ -22,14 +23,14 @@ type MFHolding struct {
 
 // MFTrade represents a individual trades of a mutualfund holding.
 type MFTrade struct {
-	Fund              string  `json:"fund"`
-	Tradingsymbol     string  `json:"tradingsymbol"`
-	AveragePrice      float64 `json:"average_price"`
-	Variety           string  `json:"variety"`
-	ExchangeTimestamp Time    `json:"exchange_timestamp"`
-	Amount            float64 `json:"amount"`
-	Folio             string  `json:"folio"`
-	Quantity          float64 `json:"quantity"`
+	Fund              string      `json:"fund"`
+	Tradingsymbol     string      `json:"tradingsymbol"`
+	AveragePrice      float64     `json:"average_price"`
+	Variety           string      `json:"variety"`
+	ExchangeTimestamp models.Time `json:"exchange_timestamp"`
+	Amount            float64     `json:"amount"`
+	Folio             string      `json:"folio"`
+	Quantity          float64     `json:"quantity"`
 }
 
 // MFHoldingBreakdown represents a list of mutualfund holdings.
@@ -40,16 +41,16 @@ type MFHoldings []MFHolding
 
 // MFOrder represents a individual mutualfund order response.
 type MFOrder struct {
-	OrderID           string `json:"order_id"`
-	ExchangeOrderID   string `json:"exchange_order_id"`
-	Tradingsymbol     string `json:"tradingsymbol"`
-	Status            string `json:"status"`
-	StatusMessage     string `json:"status_message"`
-	Folio             string `json:"folio"`
-	Fund              string `json:"fund"`
-	OrderTimestamp    Time   `json:"order_timestamp"`
-	ExchangeTimestamp Time   `json:"exchange_timestamp"`
-	SettlementID      string `json:"settlement_id"`
+	OrderID           string      `json:"order_id"`
+	ExchangeOrderID   string      `json:"exchange_order_id"`
+	Tradingsymbol     string      `json:"tradingsymbol"`
+	Status            string      `json:"status"`
+	StatusMessage     string      `json:"status_message"`
+	Folio             string      `json:"folio"`
+	Fund              string      `json:"fund"`
+	OrderTimestamp    models.Time `json:"order_timestamp"`
+	ExchangeTimestamp models.Time `json:"exchange_timestamp"`
+	SettlementID      string      `json:"settlement_id"`
 
 	TransactionType string  `json:"transaction_type"`
 	Variety         string  `json:"variety"`
@@ -76,19 +77,19 @@ type MFSIP struct {
 	DividendType    string `json:"dividend_type"`
 	TransactionType string `json:"transaction_type"`
 
-	Status               string  `json:"status"`
-	SipType              string  `json:"sip_type"`
-	Created              Time    `json:"created"`
-	Frequency            string  `json:"frequency"`
-	InstalmentAmount     float64 `json:"instalment_amount"`
-	Instalments          int     `json:"instalments"`
-	LastInstalment       Time    `json:"last_instalment"`
-	PendingInstalments   int     `json:"pending_instalments"`
-	InstalmentDay        int     `json:"instalment_day"`
-	CompletedInstalments int     `json:"completed_instalments"`
-	NextInstalment       string  `json:"next_instalment"`
-	TriggerPrice         float64 `json:"trigger_price"`
-	Tag                  string  `json:"tag"`
+	Status               string      `json:"status"`
+	SipType              string      `json:"sip_type"`
+	Created              models.Time `json:"created"`
+	Frequency            string      `json:"frequency"`
+	InstalmentAmount     float64     `json:"instalment_amount"`
+	Instalments          int         `json:"instalments"`
+	LastInstalment       models.Time `json:"last_instalment"`
+	PendingInstalments   int         `json:"pending_instalments"`
+	InstalmentDay        int         `json:"instalment_day"`
+	CompletedInstalments int         `json:"completed_instalments"`
+	NextInstalment       string      `json:"next_instalment"`
+	TriggerPrice         float64     `json:"trigger_price"`
+	Tag                  string      `json:"tag"`
 }
 
 // MFSIPs represents a list of mutualfund SIPs.

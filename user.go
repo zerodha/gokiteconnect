@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+
+	"github.com/zerodha/gokiteconnect/v3/models"
 )
 
 // UserSession represents the response after a successful authentication.
@@ -12,9 +14,9 @@ type UserSession struct {
 	UserProfile
 	UserSessionTokens
 
-	APIKey      string `json:"api_key"`
-	PublicToken string `json:"public_token"`
-	LoginTime   Time   `json:"login_time"`
+	APIKey      string      `json:"api_key"`
+	PublicToken string      `json:"public_token"`
+	LoginTime   models.Time `json:"login_time"`
 }
 
 // UserSessionTokens represents response after renew access token.
