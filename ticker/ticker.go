@@ -2,6 +2,7 @@
 package kiteticker
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -36,6 +37,8 @@ type Ticker struct {
 	reconnectAttempt int
 
 	subscribedTokens map[uint32]Mode
+
+	cancel context.CancelFunc
 }
 
 // callbacks represents callbacks available in ticker.
@@ -225,89 +228,109 @@ func (t *Ticker) OnOrderUpdate(f func(order kiteconnect.Order)) {
 	t.callbacks.onOrderUpdate = f
 }
 
-// Serve starts the connection to ticker server. Since its blocking its recommended to use it in go routine.
+// Serve starts the connection to ticker server. Since its blocking its
+// recommended to use it in a go routine.
 func (t *Ticker) Serve() {
+	t.ServeWithContext(context.Background())
+}
+
+// ServeWithContext starts the connection to ticker server and additionally
+// accepts a context. Since its blocking its recommended to use it in a go
+// routine.
+func (t *Ticker) ServeWithContext(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	t.cancel = cancel
+
 	for {
-		// If reconnect attempt exceeds max then close the loop
-		if t.reconnectAttempt > t.reconnectMaxRetries {
-			t.triggerNoReconnect(t.reconnectAttempt)
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		// If its a reconnect then wait exponentially based on reconnect attempt
-		if t.reconnectAttempt > 0 {
-			nextDelay := time.Duration(math.Pow(2, float64(t.reconnectAttempt))) * time.Second
-			if nextDelay > t.reconnectMaxDelay {
-				nextDelay = t.reconnectMaxDelay
+		default:
+			// If reconnect attempt exceeds max then close the loop
+			if t.reconnectAttempt > t.reconnectMaxRetries {
+				t.triggerNoReconnect(t.reconnectAttempt)
+				return
 			}
 
-			t.triggerReconnect(t.reconnectAttempt, nextDelay)
+			// If its a reconnect then wait exponentially based on reconnect attempt
+			if t.reconnectAttempt > 0 {
+				nextDelay := time.Duration(math.Pow(2, float64(t.reconnectAttempt))) * time.Second
+				if nextDelay > t.reconnectMaxDelay {
+					nextDelay = t.reconnectMaxDelay
+				}
 
-			time.Sleep(nextDelay)
+				t.triggerReconnect(t.reconnectAttempt, nextDelay)
 
-			// Close the previous connection if exists
-			if t.Conn != nil {
-				t.Conn.Close()
+				time.Sleep(nextDelay)
+
+				// Close the previous connection if exists
+				if t.Conn != nil {
+					t.Conn.Close()
+				}
 			}
-		}
 
-		// Prepare ticker URL with required params.
-		q := t.url.Query()
-		q.Set("api_key", t.apiKey)
-		q.Set("access_token", t.accessToken)
-		t.url.RawQuery = q.Encode()
+			// Prepare ticker URL with required params.
+			q := t.url.Query()
+			q.Set("api_key", t.apiKey)
+			q.Set("access_token", t.accessToken)
+			t.url.RawQuery = q.Encode()
 
-		// create a dialer
-		d := websocket.DefaultDialer
-		d.HandshakeTimeout = t.connectTimeout
-		conn, _, err := d.Dial(t.url.String(), nil)
-		if err != nil {
-			t.triggerError(err)
+			// create a dialer
+			d := websocket.DefaultDialer
+			d.HandshakeTimeout = t.connectTimeout
+			conn, _, err := d.Dial(t.url.String(), nil)
+			if err != nil {
+				t.triggerError(err)
 
-			// If auto reconnect is enabled then try reconneting else return error
-			if t.autoReconnect {
-				t.reconnectAttempt++
-				continue
+				// If auto reconnect is enabled then try reconneting else return error
+				if t.autoReconnect {
+					t.reconnectAttempt++
+					continue
+				}
 			}
-		}
 
-		// Close the connection when its done.
-		defer t.Conn.Close()
+			// Close the connection when its done.
+			defer func() {
+				if t.Conn != nil {
+					t.Conn.Close()
+				}
+			}()
 
-		// Assign the current connection to the instance.
-		t.Conn = conn
+			// Assign the current connection to the instance.
+			t.Conn = conn
 
-		// Trigger connect callback.
-		t.triggerConnect()
+			// Trigger connect callback.
+			t.triggerConnect()
 
-		// Resubscribe to stored tokens
-		if t.reconnectAttempt > 0 {
-			t.Resubscribe()
-		}
+			// Resubscribe to stored tokens
+			if t.reconnectAttempt > 0 {
+				t.Resubscribe()
+			}
 
-		// Reset auto reconnect vars
-		t.reconnectAttempt = 0
+			// Reset auto reconnect vars
+			t.reconnectAttempt = 0
 
-		// Set current time as last ping time
-		t.lastPingTime = time.Now()
+			// Set current time as last ping time
+			t.lastPingTime = time.Now()
 
-		// Set on close handler
-		t.Conn.SetCloseHandler(t.handleClose)
+			// Set on close handler
+			t.Conn.SetCloseHandler(t.handleClose)
 
-		var wg sync.WaitGroup
+			var wg sync.WaitGroup
 
-		// Receive ticker data in a go routine.
-		wg.Add(1)
-		go t.readMessage(&wg)
-
-		// Run watcher to check last ping time and reconnect if required
-		if t.autoReconnect {
+			// Receive ticker data in a go routine.
 			wg.Add(1)
-			go t.checkConnection(&wg)
-		}
+			go t.readMessage(ctx, &wg)
 
-		// Wait for go routines to finish before doing next reconnect
-		wg.Wait()
+			// Run watcher to check last ping time and reconnect if required
+			if t.autoReconnect {
+				wg.Add(1)
+				go t.checkConnection(ctx, &wg)
+			}
+
+			// Wait for go routines to finish before doing next reconnect
+			wg.Wait()
+		}
 	}
 }
 
@@ -366,57 +389,67 @@ func (t *Ticker) triggerOrderUpdate(order kiteconnect.Order) {
 }
 
 // Periodically check for last ping time and initiate reconnect if applicable.
-func (t *Ticker) checkConnection(wg *sync.WaitGroup) {
+func (t *Ticker) checkConnection(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
-		// Sleep before doing next check
-		time.Sleep(connectionCheckInterval)
-
-		// If last ping time is greater then timeout interval then close the
-		// existing connection and reconnect
-		if time.Since(t.lastPingTime) > dataTimeoutInterval {
-			// Close the current connection without waiting for close frame
-			if t.Conn != nil {
-				t.Conn.Close()
-			}
-
-			// Increase reconnect attempt for next reconnection
-			t.reconnectAttempt++
-			// Mark it as done in wait group
-			wg.Done()
+		select {
+		case <-ctx.Done():
 			return
+		default:
+			// Sleep before doing next check
+			time.Sleep(connectionCheckInterval)
+
+			// If last ping time is greater then timeout interval then close the
+			// existing connection and reconnect
+			if time.Since(t.lastPingTime) > dataTimeoutInterval {
+				// Close the current connection without waiting for close frame
+				if t.Conn != nil {
+					t.Conn.Close()
+				}
+
+				// Increase reconnect attempt for next reconnection
+				t.reconnectAttempt++
+				// Mark it as done in wait group
+				return
+			}
 		}
 	}
 }
 
 // readMessage reads the data in a loop.
-func (t *Ticker) readMessage(wg *sync.WaitGroup) {
+func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
-		mType, msg, err := t.Conn.ReadMessage()
-		if err != nil {
-			t.triggerError(fmt.Errorf("Error reading data: %v", err))
-			wg.Done()
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		// Update last ping time to check for connection
-		t.lastPingTime = time.Now()
-
-		// Trigger message.
-		t.triggerMessage(mType, msg)
-
-		// If binary message then parse and send tick.
-		if mType == websocket.BinaryMessage {
-			ticks, err := t.parseBinary(msg)
+		default:
+			mType, msg, err := t.Conn.ReadMessage()
 			if err != nil {
-				t.triggerError(fmt.Errorf("Error parsing data received: %v", err))
+				t.triggerError(fmt.Errorf("Error reading data: %v", err))
+				return
 			}
 
-			// Trigger individual tick.
-			for _, tick := range ticks {
-				t.triggerTick(tick)
+			// Update last ping time to check for connection
+			t.lastPingTime = time.Now()
+
+			// Trigger message.
+			t.triggerMessage(mType, msg)
+
+			// If binary message then parse and send tick.
+			if mType == websocket.BinaryMessage {
+				ticks, err := t.parseBinary(msg)
+				if err != nil {
+					t.triggerError(fmt.Errorf("Error parsing data received: %v", err))
+				}
+
+				// Trigger individual tick.
+				for _, tick := range ticks {
+					t.triggerTick(tick)
+				}
+			} else if mType == websocket.TextMessage {
+				t.processTextMessage(msg)
 			}
-		} else if mType == websocket.TextMessage {
-			t.processTextMessage(msg)
 		}
 	}
 }
@@ -424,6 +457,13 @@ func (t *Ticker) readMessage(wg *sync.WaitGroup) {
 // Close tries to close the connection gracefully. If the server doesn't close it
 func (t *Ticker) Close() error {
 	return t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+}
+
+// Stop the ticker instance and all the goroutines it has spawned.
+func (t *Ticker) Stop() {
+	if t.cancel != nil {
+		t.cancel()
+	}
 }
 
 // Subscribe subscribes tick for the given list of tokens.
