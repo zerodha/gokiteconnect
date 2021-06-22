@@ -29,6 +29,7 @@ const (
 	requestTimeout time.Duration = 7000 * time.Millisecond
 	baseURI        string        = "https://api.kite.trade"
 	loginURI       string        = "https://kite.trade/connect/login?api_key=%s&v=3"
+	kiteBaseURI    string        = "https://kite.zerodha.com"
 	// Kite connect header version
 	kiteHeaderVersion string = "3"
 )
