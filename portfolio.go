@@ -122,3 +122,41 @@ func (c *Client) ConvertPosition(positionParams ConvertPositionParams) (bool, er
 
 	return b, err
 }
+
+// HoldingsAuthParams represents the input params for initiating holdings authorization
+type HoldingsAuthParams struct {
+	ISIN     string
+	Quantity float64
+}
+
+// HoldingsAuthParams represents the response from initiating holdings authorization
+type HoldingsAuthResp struct {
+	RequestID string `json:"request_id"`
+}
+
+// InitiateHoldingsAuth initiates the holdings authorization flow. It accepts an optional
+// list of HoldingsAuthParams which can be used to specify a set of ISINs with their
+// respective quantities. Since, the isin and quantity pairs here are optional, you can
+// provide holdingAuthParams as nil. If they're provided, authorisation is sought only
+// for those instruments and otherwise, the entire holdings is presented for
+// authorisation. The response contains request_id, which can then be used to
+// redirect the user to the following URL in a webivew or a popup.
+//
+// https://kite.zerodha.com/connect/portfolio/authorise/holdings/:api_key/:request_id
+func (c *Client) InitiateHoldingsAuth(holdingAuthParams []HoldingsAuthParams) (HoldingsAuthResp, error) {
+	var (
+		params = make(url.Values)
+	)
+
+	for _, hap := range holdingAuthParams {
+		params.Add("isin", hap.ISIN)
+		params.Add("quantity", fmt.Sprintf("%f", hap.Quantity))
+	}
+
+	var resp HoldingsAuthResp
+	if err := c.doEnvelope(http.MethodPost, URIInitHoldingsAuth, params, nil, &resp); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
+}

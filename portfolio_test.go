@@ -57,3 +57,25 @@ func (ts *TestSuite) TestConvertPosition(t *testing.T) {
 		t.Errorf("Error while converting position. %v", err)
 	}
 }
+
+func (ts *TestSuite) TestInitiateHoldingsAuth(t *testing.T) {
+	t.Parallel()
+	params := []HoldingsAuthParams{
+		{
+			ISIN:     "INE002A01018",
+			Quantity: 50,
+		},
+		{
+			ISIN:     "INE009A01021",
+			Quantity: 50,
+		},
+	}
+	response, err := ts.KiteConnect.InitiateHoldingsAuth(params)
+	if err != nil {
+		t.Errorf("Error while initiating holdings auth. %v", err)
+	}
+
+	if response.RequestID != "na8QgCeQm05UHG6NL9sAGRzdfSF64UdB" {
+		t.Errorf("Error while parsing holdings auth response")
+	}
+}
