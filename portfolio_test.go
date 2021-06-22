@@ -1,6 +1,7 @@
 package kiteconnect
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -77,5 +78,9 @@ func (ts *TestSuite) TestInitiateHoldingsAuth(t *testing.T) {
 
 	if response.RequestID != "na8QgCeQm05UHG6NL9sAGRzdfSF64UdB" {
 		t.Errorf("Error while parsing holdings auth response")
+	}
+
+	if !strings.Contains(response.RedirectURL, kiteBaseURI) {
+		t.Errorf("Incorrect response URL")
 	}
 }

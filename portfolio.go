@@ -131,7 +131,8 @@ type HoldingsAuthParams struct {
 
 // HoldingsAuthParams represents the response from initiating holdings authorization
 type HoldingsAuthResp struct {
-	RequestID string `json:"request_id"`
+	RequestID   string `json:"request_id"`
+	RedirectURL string
 }
 
 // InitiateHoldingsAuth initiates the holdings authorization flow. It accepts an optional
@@ -139,10 +140,8 @@ type HoldingsAuthResp struct {
 // respective quantities. Since, the isin and quantity pairs here are optional, you can
 // provide holdingAuthParams as nil. If they're provided, authorisation is sought only
 // for those instruments and otherwise, the entire holdings is presented for
-// authorisation. The response contains request_id, which can then be used to
-// redirect the user to the following URL in a webivew or a popup.
-//
-// https://kite.zerodha.com/connect/portfolio/authorise/holdings/:api_key/:request_id
+// authorisation. The response contains RequestID which can then be used to
+// redirect the user in a web view. The client adds the formed RedirectURL as well.
 func (c *Client) InitiateHoldingsAuth(holdingAuthParams []HoldingsAuthParams) (HoldingsAuthResp, error) {
 	var (
 		params = make(url.Values)
@@ -158,5 +157,12 @@ func (c *Client) InitiateHoldingsAuth(holdingAuthParams []HoldingsAuthParams) (H
 		return resp, err
 	}
 
+	// Form and set the URL in the response.
+	resp.RedirectURL = genHolAuthURL(c.apiKey, resp.RequestID)
+
 	return resp, nil
+}
+
+func genHolAuthURL(apiKey, reqID string) string {
+	return kiteBaseURI + "/connect/portfolio/authorize/holdings/" + apiKey + "/" + reqID
 }
