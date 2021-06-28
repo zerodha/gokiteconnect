@@ -6,7 +6,9 @@ import (
 )
 
 // Time is custom time format used in all responses
-type Time time.Time
+type Time struct {
+	time.Time
+}
 
 // List of known time formats
 var (
@@ -15,17 +17,20 @@ var (
 )
 
 // UnmarshalJSON parses JSON time string with custom time formats
-func (t *Time) UnmarshalJSON(b []byte) (err error) {
-	var pTime time.Time
+func (t *Time) UnmarshalJSON(b []byte) error {
+	var (
+		pTime time.Time
+		err   error
+	)
 
 	s := strings.TrimSpace(strings.Trim(string(b), "\""))
 	if s == "" || s == "null" {
-		*t = Time(pTime)
+		t.Time = pTime
 		return nil
 	}
 
 	// Load IST location.
-	loc, err := time.LoadLocation("IST")
+	loc, err := time.LoadLocation("Asia/Kolkata")
 	if err != nil {
 		return err
 	}
@@ -48,13 +53,17 @@ func (t *Time) UnmarshalJSON(b []byte) (err error) {
 		}
 	}
 
-	*t = Time(pTime)
+	t.Time = pTime
 	return nil
 }
 
 // UnmarshalCSV converts CSV string field internal date
-func (t *Time) UnmarshalCSV(s string) (err error) {
-	var pTime time.Time
+func (t *Time) UnmarshalCSV(s string) error {
+	var (
+		pTime time.Time
+		err   error
+	)
+
 	s = strings.TrimSpace(s)
 	for _, l := range ctLayouts {
 		pTime, err = time.Parse(l, s)
