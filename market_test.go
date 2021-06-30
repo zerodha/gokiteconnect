@@ -93,6 +93,12 @@ func (ts *TestSuite) TestGetInstruments(t *testing.T) {
 		if mInstr.InstrumentToken == 0 {
 			t.Errorf("Incorrect data loaded. %v", err)
 		}
+
+		if mInstr.InstrumentToken == 12074242 {
+			if mInstr.Expiry.Year() != 2018 {
+				t.Errorf("Incorrectly parsed timestamp for instruments")
+			}
+		}
 	}
 }
 
