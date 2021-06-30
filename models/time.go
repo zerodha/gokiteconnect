@@ -18,7 +18,9 @@ var (
 
 // UnmarshalJSON parses JSON time string with custom time formats
 func (t *Time) UnmarshalJSON(b []byte) error {
-	pTime, err := parseTime(string(b))
+	s := strings.TrimSpace(strings.Trim(string(b), "\""))
+
+	pTime, err := parseTime(s)
 	if err != nil {
 		return err
 	}
@@ -29,6 +31,8 @@ func (t *Time) UnmarshalJSON(b []byte) error {
 
 // UnmarshalCSV converts CSV string field internal date
 func (t *Time) UnmarshalCSV(s string) error {
+	s = strings.TrimSpace(s)
+
 	pTime, err := parseTime(s)
 	if err != nil {
 		return err
@@ -38,13 +42,12 @@ func (t *Time) UnmarshalCSV(s string) error {
 	return nil
 }
 
-func parseTime(ts string) (time.Time, error) {
+func parseTime(s string) (time.Time, error) {
 	var (
 		pTime time.Time
 		err   error
 	)
 
-	s := strings.TrimSpace(strings.Trim(ts, "\""))
 	if s == "" || s == "null" {
 		return pTime, nil
 	}
