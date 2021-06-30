@@ -8,6 +8,16 @@ import (
 	"github.com/google/go-querystring/query"
 )
 
+const (
+	HolAuthTypeMF     = "mf"
+	HolAuthTypeEquity = "equity"
+
+	HolAuthTransferTypePreTrade  = "pre"
+	HolAuthTransferTypePostTrade = "post"
+	HolAuthTransferTypeOffMarket = "off"
+	HolAuthTransferTypeGift      = "gift"
+)
+
 // Holding is an individual holdings response.
 type Holding struct {
 	Tradingsymbol   string `json:"tradingsymbol"`
@@ -121,4 +131,72 @@ func (c *Client) ConvertPosition(positionParams ConvertPositionParams) (bool, er
 	}
 
 	return b, err
+}
+
+// HoldingsAuthInstruments represents the instruments and respective quantities for
+// use within the holdings auth initialization.
+type HoldingsAuthInstruments struct {
+	ISIN     string
+	Quantity float64
+}
+
+// HoldingAuthParams represents the inputs for initiating holdings authorization.
+type HoldingAuthParams struct {
+	Type         string
+	TransferType string
+	ExecDate     string
+
+	// Instruments are optional
+	Instruments []HoldingsAuthInstruments
+}
+
+// HoldingsAuthParams represents the response from initiating holdings authorization
+type HoldingsAuthResp struct {
+	RequestID   string `json:"request_id"`
+	RedirectURL string
+}
+
+// InitiateHoldingsAuth initiates the holdings authorization flow. It accepts an optional
+// list of HoldingsAuthInstruments which can be used to specify a set of ISINs with their
+// respective quantities. Since, the isin and quantity pairs here are optional, you can
+// provide it as nil. If they're provided, authorisation is sought only
+// for those instruments and otherwise, the entire holdings is presented for
+// authorisation. The response contains the RequestID which can then be used to
+// redirect the user in a web view. The client forms and returns the
+// formed RedirectURL as well.
+func (c *Client) InitiateHoldingsAuth(haps HoldingAuthParams) (HoldingsAuthResp, error) {
+	var (
+		params = make(url.Values)
+	)
+
+	if haps.Type != "" {
+		params.Set("type", haps.Type)
+	}
+
+	if haps.TransferType != "" {
+		params.Set("transfer_type", haps.TransferType)
+	}
+
+	if haps.ExecDate != "" {
+		params.Set("exec_date", haps.ExecDate)
+	}
+
+	for _, hap := range haps.Instruments {
+		params.Add("isin", hap.ISIN)
+		params.Add("quantity", fmt.Sprintf("%f", hap.Quantity))
+	}
+
+	var resp HoldingsAuthResp
+	if err := c.doEnvelope(http.MethodPost, URIInitHoldingsAuth, params, nil, &resp); err != nil {
+		return resp, err
+	}
+
+	// Form and set the URL in the response.
+	resp.RedirectURL = genHolAuthURL(c.apiKey, resp.RequestID)
+
+	return resp, nil
+}
+
+func genHolAuthURL(apiKey, reqID string) string {
+	return kiteBaseURI + "/connect/portfolio/authorize/holdings/" + apiKey + "/" + reqID
 }
