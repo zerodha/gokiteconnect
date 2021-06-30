@@ -8,6 +8,16 @@ import (
 	"github.com/google/go-querystring/query"
 )
 
+const (
+	HolAuthTypeMF     = "mf"
+	HolAuthTypeEquity = "equity"
+
+	HolAuthTransferTypePreTrade  = "pre"
+	HolAuthTransferTypePostTrade = "post"
+	HolAuthTransferTypeOffMarket = "off"
+	HolAuthTransferTypeGift      = "gift"
+)
+
 // Holding is an individual holdings response.
 type Holding struct {
 	Tradingsymbol   string `json:"tradingsymbol"`
