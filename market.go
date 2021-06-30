@@ -8,7 +8,7 @@ import (
 
 	"github.com/gocarina/gocsv"
 	"github.com/google/go-querystring/query"
-	"github.com/zerodha/gokiteconnect/v3/models"
+	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
 type quoteParams struct {
