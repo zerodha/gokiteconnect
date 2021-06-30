@@ -7,7 +7,7 @@ to build a complete investment and trading platform. Execute orders in real
 time, manage user portfolio, stream live market data (WebSockets), and more,
 with the simple HTTP API collection.
 
-Zerodha Technology (c) 2018. Licensed under the MIT License.
+Zerodha Technology (c) 2021. Licensed under the MIT License.
 
 ## Documentation
 
@@ -17,7 +17,7 @@ Zerodha Technology (c) 2018. Licensed under the MIT License.
 ## Installation
 
 ```
-go get github.com/zerodha/gokiteconnect/v3
+go get github.com/zerodha/gokiteconnect/v4
 ```
 
 ## API usage
@@ -28,7 +28,7 @@ package main
 import (
 	"fmt"
 
-	kiteconnect "github.com/zerodha/gokiteconnect/v3"
+	kiteconnect "github.com/zerodha/gokiteconnect/v4"
 )
 
 const (
@@ -74,8 +74,8 @@ import (
 	"fmt"
 	"time"
 
-	kiteconnect "github.com/zerodha/gokiteconnect/v3"
-	"github.com/zerodha/gokiteconnect/v3/ticker"
+	kiteconnect "github.com/zerodha/gokiteconnect/v4"
+	"github.com/zerodha/gokiteconnect/v4/ticker"
 )
 
 var (
@@ -158,7 +158,3 @@ go run examples/connect/basic/connect.go
 git submodule update --init --recursive
 go test -v
 ```
-
-## Changelog
-
-[Check CHANGELOG.md](CHANGELOG.md)
