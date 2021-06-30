@@ -1,6 +1,7 @@
 package models
 
 import (
+	"errors"
 	"strings"
 	"time"
 )
@@ -62,19 +63,17 @@ func parseTime(s string) (time.Time, error) {
 	for _, l := range ctLayouts {
 		pTime, err = time.ParseInLocation(l, s, loc)
 		if err == nil && !pTime.IsZero() {
-			break
+			return pTime, nil
 		}
 	}
 
 	// If pattern not found then iterate and parse layouts with zone.
-	if pTime.IsZero() {
-		for _, l := range ctZonedLayouts {
-			pTime, err = time.Parse(l, s)
-			if err == nil && !pTime.IsZero() {
-				break
-			}
+	for _, l := range ctZonedLayouts {
+		pTime, err = time.Parse(l, s)
+		if err == nil && !pTime.IsZero() {
+			return pTime, nil
 		}
 	}
 
-	return pTime, err
+	return pTime, errors.New("unknown time format")
 }
