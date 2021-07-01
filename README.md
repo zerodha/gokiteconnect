@@ -155,5 +155,6 @@ go run examples/connect/basic/connect.go
 ## Run unit tests
 
 ```
+git submodule update --init --recursive
 go test -v
 ```
