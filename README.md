@@ -154,6 +154,14 @@ go run examples/connect/basic/connect.go
 
 ## Run unit tests
 
+#### Fetch mock responses for testcases
+
+This needs to be run initially
+
+```
+git submodule update --init --recursive
+```
+
 ```
 git submodule update --init --recursive
 go test -v
