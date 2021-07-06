@@ -3,9 +3,10 @@ package kiteconnect
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 )
 
-// OrderMarginParam represents a position in the Margin Calculator API
+// OrderMarginParam represents an order in the Margin Calculator API
 type OrderMarginParam struct {
 	Exchange        string  `json:"exchange"`
 	Tradingsymbol   string  `json:"tradingsymbol"`
@@ -41,8 +42,26 @@ type OrderMargins struct {
 	Total         float64 `json:"total"`
 }
 
-func (c *Client) GetOrderMargins(orderParams []OrderMarginParam) ([]OrderMargins, error) {
-	body, err := json.Marshal(orderParams)
+// BasketMargins represents response from the Margin Calculator API for Basket orders
+type BasketMargins struct {
+	Initial OrderMargins   `json:"initial"`
+	Final   OrderMargins   `json:"final"`
+	Orders  []OrderMargins `json:"orders"`
+}
+
+type GetMarginParams struct {
+	OrderParams []OrderMarginParam
+	Compact     bool
+}
+
+type GetBasketParams struct {
+	OrderParams       []OrderMarginParam
+	Compact           bool
+	ConsiderPositions bool
+}
+
+func (c *Client) GetOrderMargins(marparam GetMarginParams) ([]OrderMargins, error) {
+	body, err := json.Marshal(marparam.OrderParams)
 	if err != nil {
 		return []OrderMargins{}, err
 	}
@@ -50,7 +69,12 @@ func (c *Client) GetOrderMargins(orderParams []OrderMarginParam) ([]OrderMargins
 	var headers http.Header = map[string][]string{}
 	headers.Add("Content-Type", "application/json")
 
-	resp, err := c.doRaw(http.MethodPost, URIOrderMargins, body, headers)
+	uri := URIOrderMargins
+	if marparam.Compact {
+		uri += "?mode=compact"
+	}
+
+	resp, err := c.doRaw(http.MethodPost, uri, body, headers)
 	if err != nil {
 		return []OrderMargins{}, err
 	}
@@ -58,6 +82,41 @@ func (c *Client) GetOrderMargins(orderParams []OrderMarginParam) ([]OrderMargins
 	var out []OrderMargins
 	if err := readEnvelope(resp, &out); err != nil {
 		return []OrderMargins{}, err
+	}
+
+	return out, nil
+}
+
+func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BasketMargins, error) {
+	body, err := json.Marshal(baskparam.OrderParams)
+	if err != nil {
+		return BasketMargins{}, err
+	}
+
+	var headers http.Header = map[string][]string{}
+	headers.Add("Content-Type", "application/json")
+
+	uri := URIBasketMargins
+	v := url.Values{}
+
+	if baskparam.Compact {
+		v.Set("mode", "compact")
+	}
+	if baskparam.ConsiderPositions {
+		v.Set("consider_positions", "true")
+	}
+	if qp := v.Encode(); qp != "" {
+		uri += "?" + qp
+	}
+
+	resp, err := c.doRaw(http.MethodPost, uri, body, headers)
+	if err != nil {
+		return BasketMargins{}, err
+	}
+
+	var out BasketMargins
+	if err := readEnvelope(resp, &out); err != nil {
+		return BasketMargins{}, err
 	}
 
 	return out, nil
