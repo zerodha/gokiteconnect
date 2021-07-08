@@ -17,9 +17,9 @@ func (ts *TestSuite) TestGetOrderMargins(t *testing.T) {
 		TriggerPrice:    0,
 	}
 
-	orderResponse, err := ts.KiteConnect.GetOrderMargins(kiteconnect.GetMarginParams{
+	orderResponse, err := ts.KiteConnect.GetOrderMargins(ts.kiteconnect.GetMarginParams{
 		OrderParams: []OrderMarginParam{params},
-		Compact:     true
+		Compact:     true,
 	})
 	if err != nil {
 		t.Errorf("Error while getting order margins: %v", err)
@@ -49,17 +49,16 @@ func (ts *TestSuite) TestGetBasketMargins(t *testing.T) {
 		TriggerPrice:    0,
 	}
 
-	orderResponse, err := ts.KiteConnect.GetBasketMargins(kiteconnect.GetBasketParams{
+	orderResponseBasket, err := ts.KiteConnect.GetBasketMargins(ts.kiteconnect.GetBasketParams{
 		OrderParams:       []OrderMarginParam{params},
 		Compact:           true,
-		ConsiderPositions: true
+		ConsiderPositions: true,
 	})
 	if err != nil {
 		t.Errorf("Error while getting basket order margins: %v", err)
 	}
 
-	if len(orderResponse) != 1 {
-		t.Errorf("Incorrect response, expected len(orderResponse) to be 0, got: %v", len(orderResponse))
+	if len(orderResponseBasket) != 1 {
+		t.Errorf("Incorrect response, expected len(orderResponseBasket) to be 0, got: %v", len(orderResponseBasket))
 	}
 }
-
