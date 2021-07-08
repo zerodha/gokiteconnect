@@ -35,36 +35,44 @@ func (e Error) Error() string {
 // NewError creates and returns a new instace of Error
 // with custom error metadata.
 func NewError(etype string, message string, data interface{}) error {
-	err := Error{}
-	err.Message = message
-	err.ErrorType = etype
-	err.Data = data
+	var (
+		code = http.StatusInternalServerError
+	)
 
 	switch etype {
 	case GeneralError:
-		err.Code = http.StatusInternalServerError
+		code = http.StatusInternalServerError
 	case TokenError:
-		err.Code = http.StatusForbidden
+		code = http.StatusForbidden
 	case PermissionError:
-		err.Code = http.StatusForbidden
+		code = http.StatusForbidden
 	case UserError:
-		err.Code = http.StatusForbidden
+		code = http.StatusForbidden
 	case TwoFAError:
-		err.Code = http.StatusForbidden
+		code = http.StatusForbidden
 	case OrderError:
-		err.Code = http.StatusBadRequest
+		code = http.StatusBadRequest
 	case InputError:
-		err.Code = http.StatusBadRequest
+		code = http.StatusBadRequest
 	case DataError:
-		err.Code = http.StatusGatewayTimeout
+		code = http.StatusGatewayTimeout
 	case NetworkError:
-		err.Code = http.StatusServiceUnavailable
+		code = http.StatusServiceUnavailable
 	default:
-		err.Code = http.StatusInternalServerError
-		err.ErrorType = GeneralError
+		code = http.StatusInternalServerError
+		etype = GeneralError
 	}
 
-	return err
+	return newError(etype, message, code, data)
+}
+
+func newError(etype, message string, code int, data interface{}) Error {
+	return Error{
+		Message:   message,
+		ErrorType: etype,
+		Data:      data,
+		Code:      code,
+	}
 }
 
 // GetErrorName returns an error name given an HTTP code.
