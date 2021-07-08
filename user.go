@@ -2,6 +2,7 @@ package kiteconnect
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -35,16 +36,17 @@ type Bank struct {
 
 // UserProfile represents a user's personal and financial profile.
 type UserProfile struct {
-	UserName      string   `json:"user_name"`
-	UserShortName string   `json:"user_shortname"`
-	AvatarURL     string   `json:"avatar_url"`
-	UserType      string   `json:"user_type"`
-	Email         string   `json:"email"`
-	Phone         string   `json:"phone"`
-	Broker        string   `json:"broker"`
-	Products      []string `json:"products"`
-	OrderTypes    []string `json:"order_types"`
-	Exchanges     []string `json:"exchanges"`
+	UserName      string           `json:"user_name"`
+	UserShortName string           `json:"user_shortname"`
+	AvatarURL     string           `json:"avatar_url"`
+	UserType      string           `json:"user_type"`
+	Email         string           `json:"email"`
+	Phone         string           `json:"phone"`
+	Broker        string           `json:"broker"`
+	Meta          *json.RawMessage `json:"meta"`
+	Products      []string         `json:"products"`
+	OrderTypes    []string         `json:"order_types"`
+	Exchanges     []string         `json:"exchanges"`
 }
 
 // Margins represents the user margins for a segment.
