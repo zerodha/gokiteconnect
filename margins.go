@@ -3,6 +3,7 @@ package kiteconnect
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 )
 
 // OrderMarginParam represents an order in the Margin Calculator API
@@ -48,8 +49,19 @@ type BaksetMargins struct {
 	Orders  []OrderMargins `json:"orders"`
 }
 
-func (c *Client) GetOrderMargins(orderParams []OrderMarginParam, compactMode bool) ([]OrderMargins, error) {
-	body, err := json.Marshal(orderParams)
+type GetMarginParams struct {
+	OrderParams []OrderMarginParam
+	Compact     bool
+}
+
+type GetBasketParams struct {
+	OrderParams       []OrderMarginParam
+	Compact           bool
+	ConsiderPositions bool
+}
+
+func (c *Client) GetOrderMargins(marparam GetMarginParams) ([]OrderMargins, error) {
+	body, err := json.Marshal(marparam.OrderParams)
 	if err != nil {
 		return []OrderMargins{}, err
 	}
@@ -58,7 +70,7 @@ func (c *Client) GetOrderMargins(orderParams []OrderMarginParam, compactMode boo
 	headers.Add("Content-Type", "application/json")
 
 	uri := URIOrderMargins
-	if compactMode {
+	if marparam.Compact {
 		uri += "?mode=compact"
 	}
 
@@ -75,8 +87,8 @@ func (c *Client) GetOrderMargins(orderParams []OrderMarginParam, compactMode boo
 	return out, nil
 }
 
-func (c *Client) GetBasketMargins(orderParams []OrderMarginParam, considerPositions bool, compactMode bool) (BaksetMargins, error) {
-	body, err := json.Marshal(orderParams)
+func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BaksetMargins, error) {
+	body, err := json.Marshal(baskparam.OrderParams)
 	if err != nil {
 		return BaksetMargins{}, err
 	}
@@ -85,16 +97,16 @@ func (c *Client) GetBasketMargins(orderParams []OrderMarginParam, considerPositi
 	headers.Add("Content-Type", "application/json")
 
 	uri := URIBasketMargins
-	if compactMode || considerPositions {
-		uri += "?"
+	v := url.Values{}
+
+	if baskparam.Compact {
+		v.Set("mode", "compact")
 	}
-	if considerPositions {
-		uri += "consider_positions=true"
+	if baskparam.ConsiderPositions {
+		v.Set("consider_positions", "true")
 	}
-	if compactMode && considerPositions {
-		uri += "&mode=compact"
-	} else if compactMode {
-		uri += "mode=compact"
+	if qp := v.Encode(); qp != "" {
+		uri += "?" + qp
 	}
 
 	resp, err := c.doRaw(http.MethodPost, uri, body, headers)
