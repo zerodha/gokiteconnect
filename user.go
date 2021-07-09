@@ -33,6 +33,11 @@ type Bank struct {
 	Account string `json:"account"`
 }
 
+// UserMeta contains meta data of the user.
+type UserMeta struct {
+	DematConsent string `json:"demat_consent"`
+}
+
 // UserProfile represents a user's personal and financial profile.
 type UserProfile struct {
 	UserName      string   `json:"user_name"`
@@ -42,6 +47,7 @@ type UserProfile struct {
 	Email         string   `json:"email"`
 	Phone         string   `json:"phone"`
 	Broker        string   `json:"broker"`
+	Meta          UserMeta `json:"meta"`
 	Products      []string `json:"products"`
 	OrderTypes    []string `json:"order_types"`
 	Exchanges     []string `json:"exchanges"`
