@@ -69,6 +69,9 @@ type MFOrders []MFOrder
 // MFAllottedISINs represents a list of all ISINs in which atleast one allotment is present.
 type MFAllottedISINs []string
 
+// MFSIPStepUp represents stepup date and percentage for SIPs.
+type MFSIPStepUp map[string]int
+
 // MFSIP represents a individual mutualfund SIP response.
 type MFSIP struct {
 	ID              string `json:"sip_id"`
@@ -89,6 +92,7 @@ type MFSIP struct {
 	CompletedInstalments int         `json:"completed_instalments"`
 	NextInstalment       string      `json:"next_instalment"`
 	TriggerPrice         float64     `json:"trigger_price"`
+	StepUp               MFSIPStepUp `json:"step_up"`
 	Tag                  string      `json:"tag"`
 }
 
@@ -124,6 +128,8 @@ type MFSIPParams struct {
 	InstalmentDay int     `json:"instalment_day" url:"instalment_day,omitempty"`
 	InitialAmount float64 `json:"initial_amount" url:"initial_amount,omitempty"`
 	TriggerPrice  float64 `json:"trigger_price" url:"trigger_price,omitempty"`
+	StepUp        string  `json:"step_up" url:"step_up,omitempty"`
+	SipType       string  `form:"sip_type,omitempty"`
 	Tag           string  `json:"tag" url:"tag,omitempty"`
 }
 
@@ -133,6 +139,7 @@ type MFSIPModifyParams struct {
 	Frequency     string  `json:"frequency" url:"frequency,omitempty"`
 	InstalmentDay int     `json:"instalment_day" url:"instalment_day,omitempty"`
 	Instalments   int     `json:"instalments" url:"instalments,omitempty"`
+	StepUp        string  `json:"step_up" url:"step_up,omitempty"`
 	Status        string  `json:"status" url:"status,omitempty"`
 }
 
