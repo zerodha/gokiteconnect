@@ -162,7 +162,7 @@ func readEnvelope(resp HTTPResponse, obj interface{}) error {
 			return NewError(DataError, "Error parsing response.", nil)
 		}
 
-		return NewError(e.ErrorType, e.Message, e.Data)
+		return newError(e.ErrorType, e.Message, resp.Response.StatusCode, e.Data)
 	}
 
 	// We now unmarshal the body.
