@@ -601,7 +601,7 @@ func (t *Ticker) parseBinary(inp []byte) ([]models.Tick, error) {
 	var ticks []models.Tick
 
 	for _, pkt := range pkts {
-		tick, err := t.parsePacket(pkt)
+		tick, err := parsePacket(pkt)
 		if err != nil {
 			return nil, err
 		}
@@ -632,7 +632,7 @@ func (t *Ticker) splitPackets(inp []byte) [][]byte {
 }
 
 // Parse parses a tick byte array into a tick struct.
-func (t *Ticker) parsePacket(b []byte) (models.Tick, error) {
+func parsePacket(b []byte) (models.Tick, error) {
 	var (
 		tk         = binary.BigEndian.Uint32(b[0:4])
 		seg        = tk & 0xFF
@@ -647,15 +647,15 @@ func (t *Ticker) parsePacket(b []byte) (models.Tick, error) {
 			InstrumentToken: tk,
 			IsTradable:      isTradable,
 			IsIndex:         isIndex,
-			LastPrice:       t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8]))),
+			LastPrice:       convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8]))),
 		}, nil
 	}
 
 	// Parse index mode full and mode quote data
 	if len(b) == modeQuoteIndexPacketLength || len(b) == modeFullIndexLength {
 		var (
-			lastPrice  = t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8])))
-			closePrice = t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[20:24])))
+			lastPrice  = convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8])))
+			closePrice = convertPrice(seg, float64(binary.BigEndian.Uint32(b[20:24])))
 		)
 
 		tick := models.Tick{
@@ -666,9 +666,9 @@ func (t *Ticker) parsePacket(b []byte) (models.Tick, error) {
 			LastPrice:       lastPrice,
 			NetChange:       lastPrice - closePrice,
 			OHLC: models.OHLC{
-				High:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[8:12]))),
-				Low:   t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
-				Open:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[16:20]))),
+				High:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[8:12]))),
+				Low:   convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
+				Open:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[16:20]))),
 				Close: closePrice,
 			}}
 
@@ -683,8 +683,8 @@ func (t *Ticker) parsePacket(b []byte) (models.Tick, error) {
 
 	// Parse mode quote.
 	var (
-		lastPrice  = t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8])))
-		closePrice = t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[40:44])))
+		lastPrice  = convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8])))
+		closePrice = convertPrice(seg, float64(binary.BigEndian.Uint32(b[40:44])))
 	)
 
 	// Mode quote data.
@@ -695,14 +695,14 @@ func (t *Ticker) parsePacket(b []byte) (models.Tick, error) {
 		IsIndex:            isIndex,
 		LastPrice:          lastPrice,
 		LastTradedQuantity: binary.BigEndian.Uint32(b[8:12]),
-		AverageTradePrice:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
+		AverageTradePrice:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
 		VolumeTraded:       binary.BigEndian.Uint32(b[16:20]),
 		TotalBuyQuantity:   binary.BigEndian.Uint32(b[20:24]),
 		TotalSellQuantity:  binary.BigEndian.Uint32(b[24:28]),
 		OHLC: models.OHLC{
-			Open:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[28:32]))),
-			High:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[32:36]))),
-			Low:   t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[36:40]))),
+			Open:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[28:32]))),
+			High:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[32:36]))),
+			Low:   convertPrice(seg, float64(binary.BigEndian.Uint32(b[36:40]))),
 			Close: closePrice,
 		},
 	}
@@ -727,13 +727,13 @@ func (t *Ticker) parsePacket(b []byte) (models.Tick, error) {
 		for i := 0; i < depthItems; i++ {
 			tick.Depth.Buy[i] = models.DepthItem{
 				Quantity: binary.BigEndian.Uint32(b[buyPos : buyPos+4]),
-				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[buyPos+4:buyPos+8]))),
+				Price:    convertPrice(seg, float64(binary.BigEndian.Uint32(b[buyPos+4:buyPos+8]))),
 				Orders:   uint32(binary.BigEndian.Uint16(b[buyPos+8 : buyPos+10])),
 			}
 
 			tick.Depth.Sell[i] = models.DepthItem{
 				Quantity: binary.BigEndian.Uint32(b[sellPos : sellPos+4]),
-				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[sellPos+4:sellPos+8]))),
+				Price:    convertPrice(seg, float64(binary.BigEndian.Uint32(b[sellPos+4:sellPos+8]))),
 				Orders:   uint32(binary.BigEndian.Uint16(b[sellPos+8 : sellPos+10])),
 			}
 
@@ -747,7 +747,7 @@ func (t *Ticker) parsePacket(b []byte) (models.Tick, error) {
 
 // convertPrice converts prices of stocks from paise to rupees
 // with varying decimals based on the segment.
-func (t *Ticker) convertPrice(seg uint32, val float64) float64 {
+func convertPrice(seg uint32, val float64) float64 {
 	if seg == NseCD {
 		return val / 10000000.0
 	}
