@@ -1,7 +1,6 @@
 package kiteconnect
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -70,6 +69,9 @@ type MFOrders []MFOrder
 // MFAllottedISINs represents a list of all ISINs in which atleast one allotment is present.
 type MFAllottedISINs []string
 
+// MFSIPStepUp represents stepup date and percentage for SIPs.
+type MFSIPStepUp map[string]int
+
 // MFSIP represents a individual mutualfund SIP response.
 type MFSIP struct {
 	ID              string `json:"sip_id"`
@@ -78,20 +80,20 @@ type MFSIP struct {
 	DividendType    string `json:"dividend_type"`
 	TransactionType string `json:"transaction_type"`
 
-	Status               string           `json:"status"`
-	SipType              string           `json:"sip_type"`
-	Created              models.Time      `json:"created"`
-	Frequency            string           `json:"frequency"`
-	InstalmentAmount     float64          `json:"instalment_amount"`
-	Instalments          int              `json:"instalments"`
-	LastInstalment       models.Time      `json:"last_instalment"`
-	PendingInstalments   int              `json:"pending_instalments"`
-	InstalmentDay        int              `json:"instalment_day"`
-	CompletedInstalments int              `json:"completed_instalments"`
-	NextInstalment       string           `json:"next_instalment"`
-	TriggerPrice         float64          `json:"trigger_price"`
-	StepUp               *json.RawMessage `json:"step_up"`
-	Tag                  string           `json:"tag"`
+	Status               string      `json:"status"`
+	SipType              string      `json:"sip_type"`
+	Created              models.Time `json:"created"`
+	Frequency            string      `json:"frequency"`
+	InstalmentAmount     float64     `json:"instalment_amount"`
+	Instalments          int         `json:"instalments"`
+	LastInstalment       models.Time `json:"last_instalment"`
+	PendingInstalments   int         `json:"pending_instalments"`
+	InstalmentDay        int         `json:"instalment_day"`
+	CompletedInstalments int         `json:"completed_instalments"`
+	NextInstalment       string      `json:"next_instalment"`
+	TriggerPrice         float64     `json:"trigger_price"`
+	StepUp               MFSIPStepUp `json:"step_up"`
+	Tag                  string      `json:"tag"`
 }
 
 // MFSIPs represents a list of mutualfund SIPs.
