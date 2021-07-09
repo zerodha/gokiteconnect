@@ -2,7 +2,6 @@ package kiteconnect
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,19 +33,24 @@ type Bank struct {
 	Account string `json:"account"`
 }
 
+// UserMeta contains meta data of the user.
+type UserMeta struct {
+	DematConsent string `json:"demat_consent"`
+}
+
 // UserProfile represents a user's personal and financial profile.
 type UserProfile struct {
-	UserName      string           `json:"user_name"`
-	UserShortName string           `json:"user_shortname"`
-	AvatarURL     string           `json:"avatar_url"`
-	UserType      string           `json:"user_type"`
-	Email         string           `json:"email"`
-	Phone         string           `json:"phone"`
-	Broker        string           `json:"broker"`
-	Meta          *json.RawMessage `json:"meta"`
-	Products      []string         `json:"products"`
-	OrderTypes    []string         `json:"order_types"`
-	Exchanges     []string         `json:"exchanges"`
+	UserName      string   `json:"user_name"`
+	UserShortName string   `json:"user_shortname"`
+	AvatarURL     string   `json:"avatar_url"`
+	UserType      string   `json:"user_type"`
+	Email         string   `json:"email"`
+	Phone         string   `json:"phone"`
+	Broker        string   `json:"broker"`
+	Meta          UserMeta `json:"meta"`
+	Products      []string `json:"products"`
+	OrderTypes    []string `json:"order_types"`
+	Exchanges     []string `json:"exchanges"`
 }
 
 // Margins represents the user margins for a segment.
