@@ -42,8 +42,8 @@ type OrderMargins struct {
 	Total         float64 `json:"total"`
 }
 
-// BaksetMargins represents response from the Margin Calculator API for Basket orders
-type BaksetMargins struct {
+// BasketMargins represents response from the Margin Calculator API for Basket orders
+type BasketMargins struct {
 	Initial OrderMargins   `json:"initial"`
 	Final   OrderMargins   `json:"final"`
 	Orders  []OrderMargins `json:"orders"`
@@ -87,10 +87,10 @@ func (c *Client) GetOrderMargins(marparam GetMarginParams) ([]OrderMargins, erro
 	return out, nil
 }
 
-func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BaksetMargins, error) {
+func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BasketMargins, error) {
 	body, err := json.Marshal(baskparam.OrderParams)
 	if err != nil {
-		return BaksetMargins{}, err
+		return BasketMargins{}, err
 	}
 
 	var headers http.Header = map[string][]string{}
@@ -111,12 +111,12 @@ func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BaksetMargins, err
 
 	resp, err := c.doRaw(http.MethodPost, uri, body, headers)
 	if err != nil {
-		return BaksetMargins{}, err
+		return BasketMargins{}, err
 	}
 
-	var out BaksetMargins
+	var out BasketMargins
 	if err := readEnvelope(resp, &out); err != nil {
-		return BaksetMargins{}, err
+		return BasketMargins{}, err
 	}
 
 	return out, nil
