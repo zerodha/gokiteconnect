@@ -148,7 +148,9 @@ func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers h
 
 	err = readEnvelope(resp, obj)
 	if err != nil {
-		h.hLog.Printf("Error parsing JSON response: %v", err)
+		if _, ok := err.(Error); !ok {
+			h.hLog.Printf("Error parsing JSON response: %v", err)
+		}
 	}
 
 	return err
