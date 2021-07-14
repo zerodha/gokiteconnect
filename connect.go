@@ -103,7 +103,8 @@ const (
 	URIInitHoldingsAuth string = "/portfolio/holdings/authorise"
 	URIConvertPosition  string = "/portfolio/positions"
 
-	URIOrderMargins string = "/margins/orders"
+	URIOrderMargins  string = "/margins/orders"
+	URIBasketMargins string = "/margins/basket"
 
 	// MF endpoints
 	URIGetMFOrders      string = "/mf/orders"
