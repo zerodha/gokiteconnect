@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+
+	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
 // GTTType represents the available GTT order types.
@@ -40,9 +42,9 @@ type GTT struct {
 	ID        int          `json:"id"`
 	UserID    string       `json:"user_id"`
 	Type      GTTType      `json:"type" url:""`
-	CreatedAt Time         `json:"created_at"`
-	UpdatedAt Time         `json:"updated_at"`
-	ExpiresAt Time         `json:"expires_at"`
+	CreatedAt models.Time  `json:"created_at"`
+	UpdatedAt models.Time  `json:"updated_at"`
+	ExpiresAt models.Time  `json:"expires_at"`
 	Status    string       `json:"status"`
 	Condition GTTCondition `json:"condition"`
 	Orders    []Order      `json:"orders"`

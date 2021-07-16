@@ -2,6 +2,7 @@
 package kiteticker
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -11,62 +12,12 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	kiteconnect "github.com/zerodha/gokiteconnect/v3"
+	kiteconnect "github.com/zerodha/gokiteconnect/v4"
+	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
-// OHLC represents OHLC packets.
-type OHLC struct {
-	InstrumentToken uint32
-	Open            float64
-	High            float64
-	Low             float64
-	Close           float64
-}
-
-// LTP represents OHLC packets.
-type LTP struct {
-	InstrumentToken uint32
-	LastPrice       float64
-}
-
-// DepthItem represents a single market depth entry.
-type DepthItem struct {
-	Price    float64
-	Quantity uint32
-	Orders   uint32
-}
-
-// Depth represents a group of buy/sell market depths.
-type Depth struct {
-	Buy  [5]DepthItem
-	Sell [5]DepthItem
-}
-
-// Tick represents a single packet in the market feed.
-type Tick struct {
-	Mode            Mode
-	InstrumentToken uint32
-	IsTradable      bool
-	IsIndex         bool
-
-	Timestamp          kiteconnect.Time
-	LastTradeTime      kiteconnect.Time
-	LastPrice          float64
-	LastTradedQuantity uint32
-	TotalBuyQuantity   uint32
-	TotalSellQuantity  uint32
-	VolumeTraded       uint32
-	TotalBuy           uint32
-	TotalSell          uint32
-	AverageTradePrice  float64
-	OI                 uint32
-	OIDayHigh          uint32
-	OIDayLow           uint32
-	NetChange          float64
-
-	OHLC  OHLC
-	Depth Depth
-}
+// Mode represents available ticker modes.
+type Mode string
 
 // Ticker is a Kite connect ticker instance.
 type Ticker struct {
@@ -86,14 +37,13 @@ type Ticker struct {
 	reconnectAttempt int
 
 	subscribedTokens map[uint32]Mode
-}
 
-// Mode represents available ticker modes.
-type Mode string
+	cancel context.CancelFunc
+}
 
 // callbacks represents callbacks available in ticker.
 type callbacks struct {
-	onTick        func(Tick)
+	onTick        func(models.Tick)
 	onMessage     func(int, []byte)
 	onNoReconnect func(int)
 	onReconnect   func(int, time.Duration)
@@ -269,7 +219,7 @@ func (t *Ticker) OnNoReconnect(f func(attempt int)) {
 }
 
 // OnTick callback.
-func (t *Ticker) OnTick(f func(tick Tick)) {
+func (t *Ticker) OnTick(f func(tick models.Tick)) {
 	t.callbacks.onTick = f
 }
 
@@ -278,89 +228,109 @@ func (t *Ticker) OnOrderUpdate(f func(order kiteconnect.Order)) {
 	t.callbacks.onOrderUpdate = f
 }
 
-// Serve starts the connection to ticker server. Since its blocking its recommended to use it in go routine.
+// Serve starts the connection to ticker server. Since its blocking its
+// recommended to use it in a go routine.
 func (t *Ticker) Serve() {
+	t.ServeWithContext(context.Background())
+}
+
+// ServeWithContext starts the connection to ticker server and additionally
+// accepts a context. Since its blocking its recommended to use it in a go
+// routine.
+func (t *Ticker) ServeWithContext(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	t.cancel = cancel
+
 	for {
-		// If reconnect attempt exceeds max then close the loop
-		if t.reconnectAttempt > t.reconnectMaxRetries {
-			t.triggerNoReconnect(t.reconnectAttempt)
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		// If its a reconnect then wait exponentially based on reconnect attempt
-		if t.reconnectAttempt > 0 {
-			nextDelay := time.Duration(math.Pow(2, float64(t.reconnectAttempt))) * time.Second
-			if nextDelay > t.reconnectMaxDelay {
-				nextDelay = t.reconnectMaxDelay
+		default:
+			// If reconnect attempt exceeds max then close the loop
+			if t.reconnectAttempt > t.reconnectMaxRetries {
+				t.triggerNoReconnect(t.reconnectAttempt)
+				return
 			}
 
-			t.triggerReconnect(t.reconnectAttempt, nextDelay)
+			// If its a reconnect then wait exponentially based on reconnect attempt
+			if t.reconnectAttempt > 0 {
+				nextDelay := time.Duration(math.Pow(2, float64(t.reconnectAttempt))) * time.Second
+				if nextDelay > t.reconnectMaxDelay {
+					nextDelay = t.reconnectMaxDelay
+				}
 
-			time.Sleep(nextDelay)
+				t.triggerReconnect(t.reconnectAttempt, nextDelay)
 
-			// Close the previous connection if exists
-			if t.Conn != nil {
-				t.Conn.Close()
+				time.Sleep(nextDelay)
+
+				// Close the previous connection if exists
+				if t.Conn != nil {
+					t.Conn.Close()
+				}
 			}
-		}
 
-		// Prepare ticker URL with required params.
-		q := t.url.Query()
-		q.Set("api_key", t.apiKey)
-		q.Set("access_token", t.accessToken)
-		t.url.RawQuery = q.Encode()
+			// Prepare ticker URL with required params.
+			q := t.url.Query()
+			q.Set("api_key", t.apiKey)
+			q.Set("access_token", t.accessToken)
+			t.url.RawQuery = q.Encode()
 
-		// create a dialer
-		d := websocket.DefaultDialer
-		d.HandshakeTimeout = t.connectTimeout
-		conn, _, err := d.Dial(t.url.String(), nil)
-		if err != nil {
-			t.triggerError(err)
+			// create a dialer
+			d := websocket.DefaultDialer
+			d.HandshakeTimeout = t.connectTimeout
+			conn, _, err := d.Dial(t.url.String(), nil)
+			if err != nil {
+				t.triggerError(err)
 
-			// If auto reconnect is enabled then try reconneting else return error
-			if t.autoReconnect {
-				t.reconnectAttempt++
-				continue
+				// If auto reconnect is enabled then try reconneting else return error
+				if t.autoReconnect {
+					t.reconnectAttempt++
+					continue
+				}
 			}
-		}
 
-		// Close the connection when its done.
-		defer t.Conn.Close()
+			// Close the connection when its done.
+			defer func() {
+				if t.Conn != nil {
+					t.Conn.Close()
+				}
+			}()
 
-		// Assign the current connection to the instance.
-		t.Conn = conn
+			// Assign the current connection to the instance.
+			t.Conn = conn
 
-		// Trigger connect callback.
-		t.triggerConnect()
+			// Trigger connect callback.
+			t.triggerConnect()
 
-		// Resubscribe to stored tokens
-		if t.reconnectAttempt > 0 {
-			t.Resubscribe()
-		}
+			// Resubscribe to stored tokens
+			if t.reconnectAttempt > 0 {
+				t.Resubscribe()
+			}
 
-		// Reset auto reconnect vars
-		t.reconnectAttempt = 0
+			// Reset auto reconnect vars
+			t.reconnectAttempt = 0
 
-		// Set current time as last ping time
-		t.lastPingTime = time.Now()
+			// Set current time as last ping time
+			t.lastPingTime = time.Now()
 
-		// Set on close handler
-		t.Conn.SetCloseHandler(t.handleClose)
+			// Set on close handler
+			t.Conn.SetCloseHandler(t.handleClose)
 
-		var wg sync.WaitGroup
+			var wg sync.WaitGroup
 
-		// Receive ticker data in a go routine.
-		wg.Add(1)
-		go t.readMessage(&wg)
-
-		// Run watcher to check last ping time and reconnect if required
-		if t.autoReconnect {
+			// Receive ticker data in a go routine.
 			wg.Add(1)
-			go t.checkConnection(&wg)
-		}
+			go t.readMessage(ctx, &wg)
 
-		// Wait for go routines to finish before doing next reconnect
-		wg.Wait()
+			// Run watcher to check last ping time and reconnect if required
+			if t.autoReconnect {
+				wg.Add(1)
+				go t.checkConnection(ctx, &wg)
+			}
+
+			// Wait for go routines to finish before doing next reconnect
+			wg.Wait()
+		}
 	}
 }
 
@@ -406,7 +376,7 @@ func (t *Ticker) triggerMessage(messageType int, message []byte) {
 	}
 }
 
-func (t *Ticker) triggerTick(tick Tick) {
+func (t *Ticker) triggerTick(tick models.Tick) {
 	if t.callbacks.onTick != nil {
 		t.callbacks.onTick(tick)
 	}
@@ -419,57 +389,67 @@ func (t *Ticker) triggerOrderUpdate(order kiteconnect.Order) {
 }
 
 // Periodically check for last ping time and initiate reconnect if applicable.
-func (t *Ticker) checkConnection(wg *sync.WaitGroup) {
+func (t *Ticker) checkConnection(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
-		// Sleep before doing next check
-		time.Sleep(connectionCheckInterval)
-
-		// If last ping time is greater then timeout interval then close the
-		// existing connection and reconnect
-		if time.Since(t.lastPingTime) > dataTimeoutInterval {
-			// Close the current connection without waiting for close frame
-			if t.Conn != nil {
-				t.Conn.Close()
-			}
-
-			// Increase reconnect attempt for next reconnection
-			t.reconnectAttempt++
-			// Mark it as done in wait group
-			wg.Done()
+		select {
+		case <-ctx.Done():
 			return
+		default:
+			// Sleep before doing next check
+			time.Sleep(connectionCheckInterval)
+
+			// If last ping time is greater then timeout interval then close the
+			// existing connection and reconnect
+			if time.Since(t.lastPingTime) > dataTimeoutInterval {
+				// Close the current connection without waiting for close frame
+				if t.Conn != nil {
+					t.Conn.Close()
+				}
+
+				// Increase reconnect attempt for next reconnection
+				t.reconnectAttempt++
+				// Mark it as done in wait group
+				return
+			}
 		}
 	}
 }
 
 // readMessage reads the data in a loop.
-func (t *Ticker) readMessage(wg *sync.WaitGroup) {
+func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
-		mType, msg, err := t.Conn.ReadMessage()
-		if err != nil {
-			t.triggerError(fmt.Errorf("Error reading data: %v", err))
-			wg.Done()
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		// Update last ping time to check for connection
-		t.lastPingTime = time.Now()
-
-		// Trigger message.
-		t.triggerMessage(mType, msg)
-
-		// If binary message then parse and send tick.
-		if mType == websocket.BinaryMessage {
-			ticks, err := t.parseBinary(msg)
+		default:
+			mType, msg, err := t.Conn.ReadMessage()
 			if err != nil {
-				t.triggerError(fmt.Errorf("Error parsing data received: %v", err))
+				t.triggerError(fmt.Errorf("Error reading data: %v", err))
+				return
 			}
 
-			// Trigger individual tick.
-			for _, tick := range ticks {
-				t.triggerTick(tick)
+			// Update last ping time to check for connection
+			t.lastPingTime = time.Now()
+
+			// Trigger message.
+			t.triggerMessage(mType, msg)
+
+			// If binary message then parse and send tick.
+			if mType == websocket.BinaryMessage {
+				ticks, err := t.parseBinary(msg)
+				if err != nil {
+					t.triggerError(fmt.Errorf("Error parsing data received: %v", err))
+				}
+
+				// Trigger individual tick.
+				for _, tick := range ticks {
+					t.triggerTick(tick)
+				}
+			} else if mType == websocket.TextMessage {
+				t.processTextMessage(msg)
 			}
-		} else if mType == websocket.TextMessage {
-			t.processTextMessage(msg)
 		}
 	}
 }
@@ -477,6 +457,13 @@ func (t *Ticker) readMessage(wg *sync.WaitGroup) {
 // Close tries to close the connection gracefully. If the server doesn't close it
 func (t *Ticker) Close() error {
 	return t.Conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+}
+
+// Stop the ticker instance and all the goroutines it has spawned.
+func (t *Ticker) Stop() {
+	if t.cancel != nil {
+		t.cancel()
+	}
 }
 
 // Subscribe subscribes tick for the given list of tokens.
@@ -609,12 +596,12 @@ func (t *Ticker) processTextMessage(inp []byte) {
 }
 
 // parseBinary parses the packets to ticks.
-func (t *Ticker) parseBinary(inp []byte) ([]Tick, error) {
+func (t *Ticker) parseBinary(inp []byte) ([]models.Tick, error) {
 	pkts := t.splitPackets(inp)
-	var ticks []Tick
+	var ticks []models.Tick
 
 	for _, pkt := range pkts {
-		tick, err := t.parsePacket(pkt)
+		tick, err := parsePacket(pkt)
 		if err != nil {
 			return nil, err
 		}
@@ -645,7 +632,7 @@ func (t *Ticker) splitPackets(inp []byte) [][]byte {
 }
 
 // Parse parses a tick byte array into a tick struct.
-func (t *Ticker) parsePacket(b []byte) (Tick, error) {
+func parsePacket(b []byte) (models.Tick, error) {
 	var (
 		tk         = binary.BigEndian.Uint32(b[0:4])
 		seg        = tk & 0xFF
@@ -655,40 +642,40 @@ func (t *Ticker) parsePacket(b []byte) (Tick, error) {
 
 	// Mode LTP parsing
 	if len(b) == modeLTPLength {
-		return Tick{
-			Mode:            ModeLTP,
+		return models.Tick{
+			Mode:            string(ModeLTP),
 			InstrumentToken: tk,
 			IsTradable:      isTradable,
 			IsIndex:         isIndex,
-			LastPrice:       t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8]))),
+			LastPrice:       convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8]))),
 		}, nil
 	}
 
 	// Parse index mode full and mode quote data
 	if len(b) == modeQuoteIndexPacketLength || len(b) == modeFullIndexLength {
 		var (
-			lastPrice  = t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8])))
-			closePrice = t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[20:24])))
+			lastPrice  = convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8])))
+			closePrice = convertPrice(seg, float64(binary.BigEndian.Uint32(b[20:24])))
 		)
 
-		tick := Tick{
-			Mode:            ModeQuote,
+		tick := models.Tick{
+			Mode:            string(ModeQuote),
 			InstrumentToken: tk,
 			IsTradable:      isTradable,
 			IsIndex:         isIndex,
 			LastPrice:       lastPrice,
 			NetChange:       lastPrice - closePrice,
-			OHLC: OHLC{
-				High:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[8:12]))),
-				Low:   t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
-				Open:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[16:20]))),
+			OHLC: models.OHLC{
+				High:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[8:12]))),
+				Low:   convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
+				Open:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[16:20]))),
 				Close: closePrice,
 			}}
 
 		// On mode full set timestamp
 		if len(b) == modeFullIndexLength {
-			tick.Mode = ModeFull
-			tick.Timestamp = kiteconnect.Time{time.Unix(int64(binary.BigEndian.Uint32(b[28:32])), 0)}
+			tick.Mode = string(ModeFull)
+			tick.Timestamp = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[28:32])), 0)}
 		}
 
 		return tick, nil
@@ -696,38 +683,38 @@ func (t *Ticker) parsePacket(b []byte) (Tick, error) {
 
 	// Parse mode quote.
 	var (
-		lastPrice  = t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8])))
-		closePrice = t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[40:44])))
+		lastPrice  = convertPrice(seg, float64(binary.BigEndian.Uint32(b[4:8])))
+		closePrice = convertPrice(seg, float64(binary.BigEndian.Uint32(b[40:44])))
 	)
 
 	// Mode quote data.
-	tick := Tick{
-		Mode:               ModeQuote,
+	tick := models.Tick{
+		Mode:               string(ModeQuote),
 		InstrumentToken:    tk,
 		IsTradable:         isTradable,
 		IsIndex:            isIndex,
 		LastPrice:          lastPrice,
 		LastTradedQuantity: binary.BigEndian.Uint32(b[8:12]),
-		AverageTradePrice:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
+		AverageTradePrice:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
 		VolumeTraded:       binary.BigEndian.Uint32(b[16:20]),
 		TotalBuyQuantity:   binary.BigEndian.Uint32(b[20:24]),
 		TotalSellQuantity:  binary.BigEndian.Uint32(b[24:28]),
-		OHLC: OHLC{
-			Open:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[28:32]))),
-			High:  t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[32:36]))),
-			Low:   t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[36:40]))),
+		OHLC: models.OHLC{
+			Open:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[28:32]))),
+			High:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[32:36]))),
+			Low:   convertPrice(seg, float64(binary.BigEndian.Uint32(b[36:40]))),
 			Close: closePrice,
 		},
 	}
 
 	// Parse full mode.
 	if len(b) == modeFullLength {
-		tick.Mode = ModeFull
-		tick.LastTradeTime = kiteconnect.Time{time.Unix(int64(binary.BigEndian.Uint32(b[44:48])), 0)}
+		tick.Mode = string(ModeFull)
+		tick.LastTradeTime = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[44:48])), 0)}
 		tick.OI = binary.BigEndian.Uint32(b[48:52])
 		tick.OIDayHigh = binary.BigEndian.Uint32(b[52:56])
 		tick.OIDayLow = binary.BigEndian.Uint32(b[56:60])
-		tick.Timestamp = kiteconnect.Time{time.Unix(int64(binary.BigEndian.Uint32(b[60:64])), 0)}
+		tick.Timestamp = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[60:64])), 0)}
 		tick.NetChange = lastPrice - closePrice
 
 		// Depth Information.
@@ -738,15 +725,15 @@ func (t *Ticker) parsePacket(b []byte) (Tick, error) {
 		)
 
 		for i := 0; i < depthItems; i++ {
-			tick.Depth.Buy[i] = DepthItem{
+			tick.Depth.Buy[i] = models.DepthItem{
 				Quantity: binary.BigEndian.Uint32(b[buyPos : buyPos+4]),
-				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[buyPos+4:buyPos+8]))),
+				Price:    convertPrice(seg, float64(binary.BigEndian.Uint32(b[buyPos+4:buyPos+8]))),
 				Orders:   uint32(binary.BigEndian.Uint16(b[buyPos+8 : buyPos+10])),
 			}
 
-			tick.Depth.Sell[i] = DepthItem{
+			tick.Depth.Sell[i] = models.DepthItem{
 				Quantity: binary.BigEndian.Uint32(b[sellPos : sellPos+4]),
-				Price:    t.convertPrice(seg, float64(binary.BigEndian.Uint32(b[sellPos+4:sellPos+8]))),
+				Price:    convertPrice(seg, float64(binary.BigEndian.Uint32(b[sellPos+4:sellPos+8]))),
 				Orders:   uint32(binary.BigEndian.Uint16(b[sellPos+8 : sellPos+10])),
 			}
 
@@ -760,7 +747,7 @@ func (t *Ticker) parsePacket(b []byte) (Tick, error) {
 
 // convertPrice converts prices of stocks from paise to rupees
 // with varying decimals based on the segment.
-func (t *Ticker) convertPrice(seg uint32, val float64) float64 {
+func convertPrice(seg uint32, val float64) float64 {
 	if seg == NseCD {
 		return val / 10000000.0
 	}

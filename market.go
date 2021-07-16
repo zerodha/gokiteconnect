@@ -8,6 +8,7 @@ import (
 
 	"github.com/gocarina/gocsv"
 	"github.com/google/go-querystring/query"
+	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
 type quoteParams struct {
@@ -16,51 +17,30 @@ type quoteParams struct {
 
 // Quote represents the full quote response.
 type Quote map[string]struct {
-	InstrumentToken int     `json:"instrument_token"`
-	Timestamp       Time    `json:"timestamp"`
-	LastPrice       float64 `json:"last_price"`
-	LastQuantity    int     `json:"last_quantity"`
-	LastTradeTime   Time    `json:"last_trade_time"`
-	AveragePrice    float64 `json:"average_price"`
-	Volume          int     `json:"volume"`
-	BuyQuantity     int     `json:"buy_quantity"`
-	SellQuantity    int     `json:"sell_quantity"`
-	OHLC            struct {
-		Open  float64 `json:"open"`
-		High  float64 `json:"high"`
-		Low   float64 `json:"low"`
-		Close float64 `json:"close"`
-	} `json:"ohlc"`
-	NetChange         float64 `json:"net_change"`
-	OI                float64 `json:"oi"`
-	OIDayHigh         float64 `json:"oi_day_high"`
-	OIDayLow          float64 `json:"oi_day_low"`
-	LowerCircuitLimit float64 `json:"lower_circuit_limit"`
-	UpperCircuitLimit float64 `json:"upper_circuit_limit"`
-	Depth             struct {
-		Buy []struct {
-			Price    float64 `json:"price"`
-			Quantity int     `json:"quantity"`
-			Orders   int     `json:"orders"`
-		} `json:"buy"`
-		Sell []struct {
-			Price    float64 `json:"price"`
-			Quantity int     `json:"quantity"`
-			Orders   int     `json:"orders"`
-		} `json:"sell"`
-	} `json:"depth"`
+	InstrumentToken   int          `json:"instrument_token"`
+	Timestamp         models.Time  `json:"timestamp"`
+	LastPrice         float64      `json:"last_price"`
+	LastQuantity      int          `json:"last_quantity"`
+	LastTradeTime     models.Time  `json:"last_trade_time"`
+	AveragePrice      float64      `json:"average_price"`
+	Volume            int          `json:"volume"`
+	BuyQuantity       int          `json:"buy_quantity"`
+	SellQuantity      int          `json:"sell_quantity"`
+	OHLC              models.OHLC  `json:"ohlc"`
+	NetChange         float64      `json:"net_change"`
+	OI                float64      `json:"oi"`
+	OIDayHigh         float64      `json:"oi_day_high"`
+	OIDayLow          float64      `json:"oi_day_low"`
+	LowerCircuitLimit float64      `json:"lower_circuit_limit"`
+	UpperCircuitLimit float64      `json:"upper_circuit_limit"`
+	Depth             models.Depth `json:"depth"`
 }
 
 // QuoteOHLC represents OHLC quote response.
 type QuoteOHLC map[string]struct {
-	InstrumentToken int     `json:"instrument_token"`
-	LastPrice       float64 `json:"last_price"`
-	OHLC            struct {
-		Open  float64 `json:"open"`
-		High  float64 `json:"high"`
-		Low   float64 `json:"low"`
-		Close float64 `json:"close"`
-	} `json:"ohlc"`
+	InstrumentToken int         `json:"instrument_token"`
+	LastPrice       float64     `json:"last_price"`
+	OHLC            models.OHLC `json:"ohlc"`
 }
 
 // QuoteLTP represents last price quote response.
@@ -71,13 +51,13 @@ type QuoteLTP map[string]struct {
 
 // HistoricalData represents individual historical data response.
 type HistoricalData struct {
-	Date   Time    `json:"date"`
-	Open   float64 `json:"open"`
-	High   float64 `json:"high"`
-	Low    float64 `json:"Low"`
-	Close  float64 `json:"close"`
-	Volume int     `json:"volume"`
-	OI     int     `json:"oi"`
+	Date   models.Time `json:"date"`
+	Open   float64     `json:"open"`
+	High   float64     `json:"high"`
+	Low    float64     `json:"Low"`
+	Close  float64     `json:"close"`
+	Volume int         `json:"volume"`
+	OI     int         `json:"oi"`
 }
 
 type historicalDataReceived struct {
@@ -95,18 +75,18 @@ type historicalDataParams struct {
 
 // Instrument represents individual instrument response.
 type Instrument struct {
-	InstrumentToken int     `csv:"instrument_token"`
-	ExchangeToken   int     `csv:"exchange_token"`
-	Tradingsymbol   string  `csv:"tradingsymbol"`
-	Name            string  `csv:"name"`
-	LastPrice       float64 `csv:"last_price"`
-	Expiry          Time    `csv:"expiry"`
-	StrikePrice     float64 `csv:"strike"`
-	TickSize        float64 `csv:"tick_size"`
-	LotSize         float64 `csv:"lot_size"`
-	InstrumentType  string  `csv:"instrument_type"`
-	Segment         string  `csv:"segment"`
-	Exchange        string  `csv:"exchange"`
+	InstrumentToken int         `csv:"instrument_token"`
+	ExchangeToken   int         `csv:"exchange_token"`
+	Tradingsymbol   string      `csv:"tradingsymbol"`
+	Name            string      `csv:"name"`
+	LastPrice       float64     `csv:"last_price"`
+	Expiry          models.Time `csv:"expiry"`
+	StrikePrice     float64     `csv:"strike"`
+	TickSize        float64     `csv:"tick_size"`
+	LotSize         float64     `csv:"lot_size"`
+	InstrumentType  string      `csv:"instrument_type"`
+	Segment         string      `csv:"segment"`
+	Exchange        string      `csv:"exchange"`
 }
 
 // Instruments represents list of instruments.
@@ -119,18 +99,18 @@ type MFInstrument struct {
 	LastPrice     float64 `csv:"last_price"`
 	AMC           string  `csv:"amc"`
 
-	PurchaseAllowed                 bool    `csv:"purchase_allowed"`
-	RedemtpionAllowed               bool    `csv:"redemption_allowed"`
-	MinimumPurchaseAmount           float64 `csv:"minimum_purchase_amount"`
-	PurchaseAmountMultiplier        float64 `csv:"purchase_amount_multiplier"`
-	MinimumAdditionalPurchaseAmount float64 `csv:"additional_purchase_multiple"`
-	MinimumRedemptionQuantity       float64 `csv:"minimum_redemption_quantity"`
-	RedemptionQuantityMultiplier    float64 `csv:"redemption_quantity_multiplier"`
-	DividendType                    string  `csv:"dividend_type"`
-	SchemeType                      string  `csv:"scheme_type"`
-	Plan                            string  `csv:"plan"`
-	SettlementType                  string  `csv:"settlement_type"`
-	LastPriceDate                   Time    `csv:"last_price_date"`
+	PurchaseAllowed                 bool        `csv:"purchase_allowed"`
+	RedemtpionAllowed               bool        `csv:"redemption_allowed"`
+	MinimumPurchaseAmount           float64     `csv:"minimum_purchase_amount"`
+	PurchaseAmountMultiplier        float64     `csv:"purchase_amount_multiplier"`
+	MinimumAdditionalPurchaseAmount float64     `csv:"additional_purchase_multiple"`
+	MinimumRedemptionQuantity       float64     `csv:"minimum_redemption_quantity"`
+	RedemptionQuantityMultiplier    float64     `csv:"redemption_quantity_multiplier"`
+	DividendType                    string      `csv:"dividend_type"`
+	SchemeType                      string      `csv:"scheme_type"`
+	Plan                            string      `csv:"plan"`
+	SettlementType                  string      `csv:"settlement_type"`
+	LastPriceDate                   models.Time `csv:"last_price_date"`
 }
 
 // MFInstruments represents list of mutualfund instruments.
@@ -258,7 +238,7 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 		}
 
 		data = append(data, HistoricalData{
-			Date:   Time{d},
+			Date:   models.Time{d},
 			Open:   open,
 			High:   high,
 			Low:    low,

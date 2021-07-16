@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/google/go-querystring/query"
+	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
 // Order represents a individual order response.
@@ -19,9 +20,9 @@ type Order struct {
 	Status                  string                 `json:"status"`
 	StatusMessage           string                 `json:"status_message"`
 	StatusMessageRaw        string                 `json:"status_message_raw"`
-	OrderTimestamp          Time                   `json:"order_timestamp"`
-	ExchangeUpdateTimestamp Time                   `json:"exchange_update_timestamp"`
-	ExchangeTimestamp       Time                   `json:"exchange_timestamp"`
+	OrderTimestamp          models.Time            `json:"order_timestamp"`
+	ExchangeUpdateTimestamp models.Time            `json:"exchange_update_timestamp"`
+	ExchangeTimestamp       models.Time            `json:"exchange_timestamp"`
 	Variety                 string                 `json:"variety"`
 	Meta                    map[string]interface{} `json:"meta"`
 
@@ -78,18 +79,18 @@ type OrderResponse struct {
 
 // Trade represents an individual trade response.
 type Trade struct {
-	AveragePrice      float64 `json:"average_price"`
-	Quantity          float64 `json:"quantity"`
-	TradeID           string  `json:"trade_id"`
-	Product           string  `json:"product"`
-	FillTimestamp     Time    `json:"fill_timestamp"`
-	ExchangeTimestamp Time    `json:"exchange_timestamp"`
-	ExchangeOrderID   string  `json:"exchange_order_id"`
-	OrderID           string  `json:"order_id"`
-	TransactionType   string  `json:"transaction_type"`
-	TradingSymbol     string  `json:"tradingsymbol"`
-	Exchange          string  `json:"exchange"`
-	InstrumentToken   uint32  `json:"instrument_token"`
+	AveragePrice      float64     `json:"average_price"`
+	Quantity          float64     `json:"quantity"`
+	TradeID           string      `json:"trade_id"`
+	Product           string      `json:"product"`
+	FillTimestamp     models.Time `json:"fill_timestamp"`
+	ExchangeTimestamp models.Time `json:"exchange_timestamp"`
+	ExchangeOrderID   string      `json:"exchange_order_id"`
+	OrderID           string      `json:"order_id"`
+	TransactionType   string      `json:"transaction_type"`
+	TradingSymbol     string      `json:"tradingsymbol"`
+	Exchange          string      `json:"exchange"`
+	InstrumentToken   uint32      `json:"instrument_token"`
 }
 
 // Trades is a list of trades.
