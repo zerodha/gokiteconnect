@@ -142,7 +142,7 @@ func main() {
 }
 ```
 
-# Examples
+## Examples
 
 Check [examples folder](https://github.com/zerodha/gokiteconnect/tree/master/examples) for more examples.
 
@@ -152,7 +152,7 @@ You can run the following after updating the API Keys in the examples:
 go run examples/connect/basic/connect.go
 ```
 
-## Run unit tests
+## Development
 
 #### Fetch mock responses for testcases
 
@@ -161,6 +161,8 @@ This needs to be run initially
 ```
 git submodule update --init --recursive
 ```
+
+#### Run unit tests
 
 ```
 go test -v
