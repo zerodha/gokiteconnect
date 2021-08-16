@@ -1,6 +1,7 @@
 package kiteconnect
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -140,5 +141,30 @@ func (ts *TestSuite) TestExitOrder(t *testing.T) {
 	}
 	if orderResponse.OrderID == "" {
 		t.Errorf("No order id returned. Error %v", err)
+	}
+}
+
+func (ts *TestSuite) TestIssue64(t *testing.T) {
+	t.Parallel()
+	orders, err := ts.KiteConnect.GetOrders()
+	if err != nil {
+		t.Errorf("Error while fetching orders. %v", err)
+	}
+
+	// Check if marshal followed by unmarshall correctly parses timestamps
+	ord := orders[0]
+	js, err := json.Marshal(ord)
+	if err != nil {
+		t.Errorf("Error while marshalling order. %v", err)
+	}
+
+	var outOrd Order
+	err = json.Unmarshal(js, &outOrd)
+	if err != nil {
+		t.Errorf("Error while unmarshalling order. %v", err)
+	}
+
+	if !ord.ExchangeTimestamp.Equal(outOrd.ExchangeTimestamp.Time) {
+		t.Errorf("Incorrect timestamp parsing.\nwant:\t%v\ngot:\t%v", ord.ExchangeTimestamp, outOrd.ExchangeTimestamp)
 	}
 }
