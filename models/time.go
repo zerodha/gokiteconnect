@@ -14,7 +14,7 @@ type Time struct {
 // List of known time formats
 var (
 	ctLayouts      = []string{"2006-01-02", "2006-01-02 15:04:05"}
-	ctZonedLayouts = []string{"2006-01-02T15:04:05-0700"}
+	ctZonedLayouts = []string{"2006-01-02T15:04:05-0700", time.RFC3339}
 )
 
 // UnmarshalJSON parses JSON time string with custom time formats
