@@ -59,6 +59,10 @@ const (
 	ValidityDay = "DAY"
 	ValidityIOC = "IOC"
 
+	// Position Type
+	PositionTypeDay       = "day"
+	PositionTypeOvernight = "overnight"
+
 	// Transaction type
 	TransactionTypeBuy  = "BUY"
 	TransactionTypeSell = "SELL"

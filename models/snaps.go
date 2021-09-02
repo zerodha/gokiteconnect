@@ -29,6 +29,7 @@ type Tick struct {
 	IsTradable      bool
 	IsIndex         bool
 
+	// Timestamp represents Exchange timestamp
 	Timestamp          Time
 	LastTradeTime      Time
 	LastPrice          float64
