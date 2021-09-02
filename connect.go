@@ -25,7 +25,7 @@ type Client struct {
 
 const (
 	name           string        = "gokiteconnect"
-	version        string        = "3.0.0"
+	version        string        = "4.0.2"
 	requestTimeout time.Duration = 7000 * time.Millisecond
 	baseURI        string        = "https://api.kite.trade"
 	loginURI       string        = "https://kite.trade/connect/login?api_key=%s&v=3"
