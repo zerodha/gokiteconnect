@@ -748,9 +748,13 @@ func parsePacket(b []byte) (models.Tick, error) {
 // convertPrice converts prices of stocks from paise to rupees
 // with varying decimals based on the segment.
 func convertPrice(seg uint32, val float64) float64 {
-	if seg == NseCD {
+	switch seg {
+	case NseCD:
 		return val / 10000000.0
+	case BseCD:
+		return val / 10000.0
+	default:
+		return val / 100.0
 	}
-
-	return val / 100.0
 }
+
