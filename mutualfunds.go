@@ -129,7 +129,7 @@ type MFSIPParams struct {
 	InitialAmount float64 `json:"initial_amount" url:"initial_amount,omitempty"`
 	TriggerPrice  float64 `json:"trigger_price" url:"trigger_price,omitempty"`
 	StepUp        string  `json:"step_up" url:"step_up,omitempty"`
-	SipType       string  `form:"sip_type,omitempty"`
+	SipType       string  `json:"sip_type" url:"sip_type,omitempty"`
 	Tag           string  `json:"tag" url:"tag,omitempty"`
 }
 
