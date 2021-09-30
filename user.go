@@ -64,10 +64,12 @@ type Margins struct {
 
 // AvailableMargins represents the available margins from the margins response for a single segment.
 type AvailableMargins struct {
-	AdHocMargin   float64 `json:"adhoc_margin"`
-	Cash          float64 `json:"cash"`
-	Collateral    float64 `json:"collateral"`
-	IntradayPayin float64 `json:"intraday_payin"`
+	AdHocMargin    float64 `json:"adhoc_margin"`
+	Cash           float64 `json:"cash"`
+	Collateral     float64 `json:"collateral"`
+	IntradayPayin  float64 `json:"intraday_payin"`
+	LiveBalance    float64 `json:"live_balance"`
+	OpeningBalance float64 `json:"opening_balance"`
 }
 
 // UsedMargins represents the used margins from the margins response for a single segment.
