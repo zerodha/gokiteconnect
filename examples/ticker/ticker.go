@@ -35,6 +35,12 @@ func onConnect() {
 	if err != nil {
 		fmt.Println("err: ", err)
 	}
+	// Set subscription mode for given list of tokens
+	// Default mode is Quote
+	err = ticker.SetMode(kiteticker.ModeFull, []uint32{53718535})
+	if err != nil {
+		fmt.Println("err: ", err)
+	}
 }
 
 // Triggered when tick is recevived
