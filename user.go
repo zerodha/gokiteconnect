@@ -85,6 +85,7 @@ type UsedMargins struct {
 	Turnover         float64 `json:"turnover"`
 	LiquidCollateral float64 `json:"liquid_collateral"`
 	StockCollateral  float64 `json:"stock_collateral"`
+	Delivery         float64 `json:"delivery"`
 }
 
 // AllMargins contains both equity and commodity margins.
