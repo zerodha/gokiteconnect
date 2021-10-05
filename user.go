@@ -40,12 +40,12 @@ type UserMeta struct {
 
 // UserProfile represents a user's personal and financial profile.
 type UserProfile struct {
+	UserID        string   `json:"user_id"`
 	UserName      string   `json:"user_name"`
 	UserShortName string   `json:"user_shortname"`
 	AvatarURL     string   `json:"avatar_url"`
 	UserType      string   `json:"user_type"`
 	Email         string   `json:"email"`
-	Phone         string   `json:"phone"`
 	Broker        string   `json:"broker"`
 	Meta          UserMeta `json:"meta"`
 	Products      []string `json:"products"`
@@ -74,15 +74,18 @@ type AvailableMargins struct {
 
 // UsedMargins represents the used margins from the margins response for a single segment.
 type UsedMargins struct {
-	Debits        float64 `json:"debits"`
-	Exposure      float64 `json:"exposure"`
-	M2MRealised   float64 `json:"m2m_realised"`
-	M2MUnrealised float64 `json:"m2m_unrealised"`
-	OptionPremium float64 `json:"option_premium"`
-	Payout        float64 `json:"payout"`
-	Span          float64 `json:"span"`
-	HoldingSales  float64 `json:"holding_sales"`
-	Turnover      float64 `json:"turnover"`
+	Debits           float64 `json:"debits"`
+	Exposure         float64 `json:"exposure"`
+	M2MRealised      float64 `json:"m2m_realised"`
+	M2MUnrealised    float64 `json:"m2m_unrealised"`
+	OptionPremium    float64 `json:"option_premium"`
+	Payout           float64 `json:"payout"`
+	Span             float64 `json:"span"`
+	HoldingSales     float64 `json:"holding_sales"`
+	Turnover         float64 `json:"turnover"`
+	LiquidCollateral float64 `json:"liquid_collateral"`
+	StockCollateral  float64 `json:"stock_collateral"`
+	Delivery         float64 `json:"delivery"`
 }
 
 // AllMargins contains both equity and commodity margins.
