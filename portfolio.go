@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/google/go-querystring/query"
+	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
 const (
@@ -26,13 +27,18 @@ type Holding struct {
 	ISIN            string `json:"isin"`
 	Product         string `json:"product"`
 
-	Price              float64 `json:"price"`
-	Quantity           int     `json:"quantity"`
-	T1Quantity         int     `json:"t1_quantity"`
-	RealisedQuantity   int     `json:"realised_quantity"`
-	CollateralQuantity int     `json:"collateral_quantity"`
-	CollateralType     string  `json:"collateral_type"`
+	Price              float64     `json:"price"`
+	UsedQuantity       int         `json:"used_quantity"`
+	Quantity           int         `json:"quantity"`
+	T1Quantity         int         `json:"t1_quantity"`
+	RealisedQuantity   int         `json:"realised_quantity"`
+	AuthorisedQuantity int         `json:"authorised_quantity"`
+	AuthorisedDate     models.Time `json:"authorised_date"`
+	OpeningQuantity    int         `json:"opening_quantity"`
+	CollateralQuantity int         `json:"collateral_quantity"`
+	CollateralType     string      `json:"collateral_type"`
 
+	Discrepancy         bool    `json:"discrepancy"`
 	AveragePrice        float64 `json:"average_price"`
 	LastPrice           float64 `json:"last_price"`
 	ClosePrice          float64 `json:"close_price"`
