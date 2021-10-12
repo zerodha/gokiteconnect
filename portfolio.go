@@ -38,7 +38,7 @@ type Holding struct {
 	CollateralQuantity int         `json:"collateral_quantity"`
 	CollateralType     string      `json:"collateral_type"`
 
-	discrepancy         bool    `json:"discrepancy"`
+	Discrepancy         bool    `json:"discrepancy"`
 	AveragePrice        float64 `json:"average_price"`
 	LastPrice           float64 `json:"last_price"`
 	ClosePrice          float64 `json:"close_price"`
