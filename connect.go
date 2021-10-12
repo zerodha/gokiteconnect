@@ -74,6 +74,7 @@ const (
 	ExchangeNFO = "NFO"
 	ExchangeBFO = "BFO"
 	ExchangeCDS = "CDS"
+	ExchangeBCD = "BCD"
 
 	// Margins segments
 	MarginsEquity    = "equity"
