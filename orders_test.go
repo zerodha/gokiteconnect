@@ -123,11 +123,8 @@ func (ts *TestSuite) TestCancelOrder(t *testing.T) {
 	parentOrderID := "test"
 
 	orderResponse, err := ts.KiteConnect.CancelOrder("test", "test", &parentOrderID)
-	if err != nil {
-		t.Errorf("Error while placing order. %v", err)
-	}
-	if orderResponse.OrderID == "" {
-		t.Errorf("No order id returned. Error %v", err)
+	if err != nil || orderResponse.OrderID == "" {
+		t.Errorf("Error while placing cancel order. %v", err)
 	}
 }
 
