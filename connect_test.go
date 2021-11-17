@@ -141,7 +141,7 @@ var MockResponders = [][]string{
 
 	// PUT endpoints
 	[]string{http.MethodPut, URIModifyMFSIP, "mf_sip_info.json"},
-	[]string{http.MethodPut, URIModifyOrder, "order_response.json"},
+	[]string{http.MethodPut, URIModifyOrder, "order_modify.json"},
 	[]string{http.MethodPut, URIConvertPosition, "positions.json"},
 	[]string{http.MethodPut, fmt.Sprintf(URIModifyGTT, 123), "gtt_modify_order.json"},
 
@@ -158,6 +158,7 @@ var MockResponders = [][]string{
 	[]string{http.MethodDelete, URICancelOrder, "order_response.json"},
 	[]string{http.MethodDelete, URICancelMFSIP, "mf_order_response.json"},
 	[]string{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), "gtt_modify_order.json"},
+	[]string{http.MethodDelete, URIUserSessionInvalidate, "session_logout.json"},
 }
 
 // Test only function prefix with this

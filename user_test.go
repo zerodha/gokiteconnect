@@ -35,3 +35,11 @@ func (ts *TestSuite) TestGetUserSegmentMargins(t *testing.T) {
 		t.Errorf("Incorrect segment margin values.")
 	}
 }
+
+func (ts *TestSuite) TestInvalidateAccessToken(t *testing.T) {
+	t.Parallel()
+	sessionLogout, err := ts.KiteConnect.InvalidateAccessToken()
+	if err != nil || !sessionLogout == true {
+		t.Errorf("Error while invalidating user session. Error: %v", err)
+	}
+}
