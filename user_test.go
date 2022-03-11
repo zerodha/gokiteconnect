@@ -7,7 +7,7 @@ import (
 func (ts *TestSuite) TestGetUserProfile(t *testing.T) {
 	t.Parallel()
 	profile, err := ts.KiteConnect.GetUserProfile()
-	if err != nil || profile.Email == "" {
+	if err != nil || profile.Email == "" || profile.UserID == "" {
 		t.Errorf("Error while reading user profile. Error: %v", err)
 	}
 }
