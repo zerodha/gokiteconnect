@@ -255,7 +255,7 @@ func (t *Ticker) ServeWithContext(ctx context.Context) {
 			// If its a reconnect then wait exponentially based on reconnect attempt
 			if t.reconnectAttempt > 0 {
 				nextDelay := time.Duration(math.Pow(2, float64(t.reconnectAttempt))) * time.Second
-				if nextDelay > t.reconnectMaxDelay {
+				if nextDelay > t.reconnectMaxDelay || nextDelay <= 0 {
 					nextDelay = t.reconnectMaxDelay
 				}
 
