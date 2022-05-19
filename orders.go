@@ -60,6 +60,7 @@ type OrderParams struct {
 	Exchange        string `url:"exchange,omitempty"`
 	Tradingsymbol   string `url:"tradingsymbol,omitempty"`
 	Validity        string `url:"validity,omitempty"`
+	ValidityTTL     int    `url:"validity_ttl,omitempty"`
 	Product         string `url:"product,omitempty"`
 	OrderType       string `url:"order_type,omitempty"`
 	TransactionType string `url:"transaction_type,omitempty"`
@@ -72,6 +73,9 @@ type OrderParams struct {
 	Squareoff        float64 `url:"squareoff,omitempty"`
 	Stoploss         float64 `url:"stoploss,omitempty"`
 	TrailingStoploss float64 `url:"trailing_stoploss,omitempty"`
+
+	IcebergLegs int `url:"iceberg_legs,omitempty"`
+	IcebergQty  int `url:"iceberg_quantity,omitempty"`
 
 	Tag string `json:"tag" url:"tag,omitempty"`
 }
