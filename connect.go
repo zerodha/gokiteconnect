@@ -41,6 +41,7 @@ const (
 	VarietyAMO     = "amo"
 	VarietyBO      = "bo"
 	VarietyCO      = "co"
+	VarietyIceberg = "iceberg"
 
 	// Products
 	ProductBO   = "BO"
@@ -58,6 +59,7 @@ const (
 	// Validities
 	ValidityDay = "DAY"
 	ValidityIOC = "IOC"
+	ValidityTTL = "TTL"
 
 	// Position Type
 	PositionTypeDay       = "day"

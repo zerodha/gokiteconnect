@@ -33,6 +33,7 @@ type Order struct {
 	OrderType         string  `json:"order_type"`
 	TransactionType   string  `json:"transaction_type"`
 	Validity          string  `json:"validity"`
+	ValidityTTL       int     `json:"validity_ttl"`
 	Product           string  `json:"product"`
 	Quantity          float64 `json:"quantity"`
 	DisclosedQuantity float64 `json:"disclosed_quantity"`
@@ -43,6 +44,9 @@ type Order struct {
 	FilledQuantity    float64 `json:"filled_quantity"`
 	PendingQuantity   float64 `json:"pending_quantity"`
 	CancelledQuantity float64 `json:"cancelled_quantity"`
+
+	IcebergLegs int `json:"iceberg_legs"`
+	IcebergQty  int `json:"iceberg_quantity"`
 
 	Tag  string   `json:"tag"`
 	Tags []string `json:"tags"`
