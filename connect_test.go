@@ -148,7 +148,7 @@ var MockResponders = [][]string{
 	// POST endpoints
 	[]string{http.MethodPost, URIPlaceOrder, "order_response.json"},
 	[]string{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
-	[]string{http.MethodPost, URIPlaceMFSIP, "mf_order_response.json"},
+	[]string{http.MethodPost, URIPlaceMFSIP, "mf_sip_place.json"},
 	[]string{http.MethodPost, URIPlaceGTT, "gtt_place_order.json"},
 	[]string{http.MethodPost, URIOrderMargins, "order_margins.json"},
 	[]string{http.MethodPost, URIBasketMargins, "basket_margins.json"},
@@ -156,7 +156,7 @@ var MockResponders = [][]string{
 
 	// DELETE endpoints
 	[]string{http.MethodDelete, URICancelOrder, "order_response.json"},
-	[]string{http.MethodDelete, URICancelMFSIP, "mf_order_response.json"},
+	[]string{http.MethodDelete, URICancelMFSIP, "mf_sip_cancel.json"},
 	[]string{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), "gtt_modify_order.json"},
 	[]string{http.MethodDelete, URIUserSessionInvalidate, "session_logout.json"},
 }
