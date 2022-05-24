@@ -45,9 +45,6 @@ type Order struct {
 	PendingQuantity   float64 `json:"pending_quantity"`
 	CancelledQuantity float64 `json:"cancelled_quantity"`
 
-	IcebergLegs int `json:"iceberg_legs"`
-	IcebergQty  int `json:"iceberg_quantity"`
-
 	Tag  string   `json:"tag"`
 	Tags []string `json:"tags"`
 }
