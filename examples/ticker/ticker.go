@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	kiteconnect "github.com/zerodha/gokiteconnect/v4"
@@ -9,9 +11,10 @@ import (
 	kiteticker "github.com/zerodha/gokiteconnect/v4/ticker"
 )
 
-const (
-	apiKey    string = "my_api_key"
-	apiSecret string = "my_api_secret"
+var (
+	apiKey    string = getEnv("KITE_API_KEY", "my_api_key")
+	apiSecret string = getEnv("KITE_API_SECRET", "my_api_secret")
+	instToken int    = getEnvInt("KITE_INSTRUMENT_TOKEN", 408065)
 )
 
 var (
@@ -31,13 +34,14 @@ func onClose(code int, reason string) {
 // Triggered when connection is established and ready to send and accept data
 func onConnect() {
 	fmt.Println("Connected")
+	fmt.Println("Subscribing to", instToken)
 	err := ticker.Subscribe([]uint32{53718535})
 	if err != nil {
 		fmt.Println("err: ", err)
 	}
 	// Set subscription mode for given list of tokens
 	// Default mode is Quote
-	err = ticker.SetMode(kiteticker.ModeFull, []uint32{53718535})
+	err = ticker.SetMode(kiteticker.ModeFull, []uint32{uint32(instToken)})
 	if err != nil {
 		fmt.Println("err: ", err)
 	}
@@ -73,6 +77,7 @@ func main() {
 	// Obtained request token after Kite Connect login flow
 	// simulated here by scanning from stdin
 	var requestToken string
+	fmt.Println("Enter request token:")
 	fmt.Scanf("%s\n", &requestToken)
 
 	// Get user details and access token
@@ -96,4 +101,24 @@ func main() {
 
 	// Start the connection
 	ticker.Serve()
+}
+
+// getEnv returns the value of the environment variable provided.
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+// getEnvInt returns the value of the environment variable provided converted as int.
+func getEnvInt(key string, fallback int) int {
+	if value, ok := os.LookupEnv(key); ok {
+		i, err := strconv.Atoi(value)
+		if err != nil {
+			return fallback
+		}
+		return i
+	}
+	return fallback
 }
