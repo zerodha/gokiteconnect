@@ -83,6 +83,10 @@ var (
 	ticker *kiteticker.Ticker
 )
 
+var (
+	instToken = []uint32{408065, 112129}
+)
+
 // Triggered when any error is raised
 func onError(err error) {
 	fmt.Println("Error: ", err)
@@ -96,10 +100,17 @@ func onClose(code int, reason string) {
 // Triggered when connection is established and ready to send and accept data
 func onConnect() {
 	fmt.Println("Connected")
-	err := ticker.Subscribe([]uint32{53718535})
+	err := ticker.Subscribe(instToken)
 	if err != nil {
 		fmt.Println("err: ", err)
 	}
+	// Set subscription mode for the subscribed token
+	// Default mode is Quote
+	err = ticker.SetMode(kiteticker.ModeFull, instToken)
+	if err != nil {
+		fmt.Println("err: ", err)
+	}
+
 }
 
 // Triggered when tick is recevived

@@ -35,7 +35,7 @@ func onClose(code int, reason string) {
 func onConnect() {
 	fmt.Println("Connected")
 	fmt.Println("Subscribing to", instToken)
-	err := ticker.Subscribe([]uint32{53718535})
+	err := ticker.Subscribe([]uint32{uint32(instToken)})
 	if err != nil {
 		fmt.Println("err: ", err)
 	}
