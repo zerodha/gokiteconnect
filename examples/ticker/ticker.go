@@ -14,7 +14,7 @@ import (
 var (
 	apiKey    string = getEnv("KITE_API_KEY", "my_api_key")
 	apiSecret string = getEnv("KITE_API_SECRET", "my_api_secret")
-	instToken int    = getEnvInt("KITE_INSTRUMENT_TOKEN", 408065)
+	instToken uint32 = getEnvUint32("KITE_INSTRUMENT_TOKEN", 408065)
 )
 
 var (
@@ -35,13 +35,13 @@ func onClose(code int, reason string) {
 func onConnect() {
 	fmt.Println("Connected")
 	fmt.Println("Subscribing to", instToken)
-	err := ticker.Subscribe([]uint32{uint32(instToken)})
+	err := ticker.Subscribe([]uint32{instToken})
 	if err != nil {
 		fmt.Println("err: ", err)
 	}
 	// Set subscription mode for given list of tokens
 	// Default mode is Quote
-	err = ticker.SetMode(kiteticker.ModeFull, []uint32{uint32(instToken)})
+	err = ticker.SetMode(kiteticker.ModeFull, []uint32{instToken})
 	if err != nil {
 		fmt.Println("err: ", err)
 	}
@@ -111,14 +111,14 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-// getEnvInt returns the value of the environment variable provided converted as int.
-func getEnvInt(key string, fallback int) int {
+// getEnvUint32 returns the value of the environment variable provided converted as Uint32.
+func getEnvUint32(key string, fallback int) uint32 {
 	if value, ok := os.LookupEnv(key); ok {
 		i, err := strconv.Atoi(value)
 		if err != nil {
-			return fallback
+			return uint32(fallback)
 		}
-		return i
+		return uint32(i)
 	}
-	return fallback
+	return uint32(fallback)
 }
