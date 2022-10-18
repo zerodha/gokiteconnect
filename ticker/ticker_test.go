@@ -2,7 +2,7 @@ package kiteticker
 
 import (
 	"encoding/base64"
-	"io/ioutil"
+	"os"
 	"testing"
 	"time"
 
@@ -96,7 +96,7 @@ func TestParseTick(t *testing.T) {
 	}
 
 	for _, tc := range tt {
-		tick, err := parsePacket([]byte(tc.pkt))
+		tick, err := parsePacket(tc.pkt)
 		require.Nil(t, err)
 
 		require.Equal(t, tc.expTick, tick)
@@ -104,7 +104,7 @@ func TestParseTick(t *testing.T) {
 }
 
 func loadPacket(t *testing.T, fname string) []byte {
-	file, err := ioutil.ReadFile(fname)
+	file, err := os.ReadFile(fname)
 	require.Nil(t, err)
 
 	pkt, err := base64.StdEncoding.DecodeString(string(file))

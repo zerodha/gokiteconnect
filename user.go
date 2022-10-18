@@ -2,6 +2,7 @@ package kiteconnect
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -22,9 +23,7 @@ type UserSession struct {
 
 // UserSessionTokens represents response after renew access token.
 type UserSessionTokens struct {
-	UserID       string `json:"user_id"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
+	AccessToken string `json:"access_token"`
 }
 
 // Bank represents the details of a single bank account entry on a user's file.
@@ -100,16 +99,17 @@ type AllMargins struct {
 // Do the token exchange with the `requestToken` obtained after the login flow,
 // and retrieve the `accessToken` required for all subsequent requests. The
 // response contains not just the `accessToken`, but metadata for the user who has authenticated.
-func (c *Client) GenerateSession(requestToken string, apiSecret string) (UserSession, error) {
+func (c *Client) GenerateSession(requestToken, apiSecret string) (UserSession, error) {
 	// Get SHA256 checksum
 	h := sha256.New()
 	h.Write([]byte(c.apiKey + requestToken + apiSecret))
 
 	// construct url values
-	params := url.Values{}
+	params := make(url.Values, 3)
 	params.Add("api_key", c.apiKey)
 	params.Add("request_token", requestToken)
-	params.Set("checksum", fmt.Sprintf("%x", h.Sum(nil)))
+
+	params.Set("checksum", hex.EncodeToString(h.Sum(nil)))
 
 	var session UserSession
 	err := c.doEnvelope(http.MethodPost, URIUserSession, params, nil, &session)
@@ -122,14 +122,13 @@ func (c *Client) GenerateSession(requestToken string, apiSecret string) (UserSes
 	return session, err
 }
 
-func (c *Client) invalidateToken(tokenType string, token string) (bool, error) {
-	var b bool
-
+func (c *Client) invalidateToken(tokenType, token string) (bool, error) {
 	// construct url values
-	params := url.Values{}
+	params := make(url.Values, 2)
 	params.Add("api_key", c.apiKey)
 	params.Add(tokenType, token)
 
+	var b bool
 	err := c.doEnvelope(http.MethodDelete, URIUserSessionInvalidate, params, nil, nil)
 	if err == nil {
 		b = true
@@ -144,16 +143,16 @@ func (c *Client) InvalidateAccessToken() (bool, error) {
 }
 
 // RenewAccessToken renews expired access token using valid refresh token.
-func (c *Client) RenewAccessToken(refreshToken string, apiSecret string) (UserSessionTokens, error) {
+func (c *Client) RenewAccessToken(refreshToken, apiSecret string) (UserSessionTokens, error) {
 	// Get SHA256 checksum
 	h := sha256.New()
 	h.Write([]byte(c.apiKey + refreshToken + apiSecret))
 
 	// construct url values
-	params := url.Values{}
+	params := make(url.Values, 3)
 	params.Add("api_key", c.apiKey)
 	params.Add("refresh_token", refreshToken)
-	params.Set("checksum", fmt.Sprintf("%x", h.Sum(nil)))
+	params.Set("checksum", hex.EncodeToString(h.Sum(nil)))
 
 	var session UserSessionTokens
 	err := c.doEnvelope(http.MethodPost, URIUserSessionRenew, params, nil, &session)

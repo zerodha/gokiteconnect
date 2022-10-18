@@ -73,12 +73,15 @@ type GTTSingleLegTrigger struct {
 func (t *GTTSingleLegTrigger) TriggerValues() []float64 {
 	return []float64{t.TriggerValue}
 }
+
 func (t *GTTSingleLegTrigger) LimitPrices() []float64 {
 	return []float64{t.LimitPrice}
 }
+
 func (t *GTTSingleLegTrigger) Quantities() []float64 {
 	return []float64{t.Quantity}
 }
+
 func (t *GTTSingleLegTrigger) Type() GTTType {
 	return GTTTypeSingle
 }
@@ -92,12 +95,15 @@ type GTTOneCancelsOtherTrigger struct {
 func (t *GTTOneCancelsOtherTrigger) TriggerValues() []float64 {
 	return []float64{t.Lower.TriggerValue, t.Upper.TriggerValue}
 }
+
 func (t *GTTOneCancelsOtherTrigger) LimitPrices() []float64 {
 	return []float64{t.Lower.LimitPrice, t.Upper.LimitPrice}
 }
+
 func (t *GTTOneCancelsOtherTrigger) Quantities() []float64 {
 	return []float64{t.Lower.Quantity, t.Upper.Quantity}
 }
+
 func (t *GTTOneCancelsOtherTrigger) Type() GTTType {
 	return GTTTypeOCO
 }
@@ -113,8 +119,7 @@ type GTTParams struct {
 }
 
 func newGTT(o GTTParams) GTT {
-	var orders Orders
-
+	orders := make(Orders, 0, len(o.Trigger.TriggerValues()))
 	for i := range o.Trigger.TriggerValues() {
 		orders = append(orders, Order{
 			Exchange:        o.Exchange,
@@ -146,7 +151,6 @@ type GTTResponse struct {
 // PlaceGTT constructs and places a GTT order using GTTParams.
 func (c *Client) PlaceGTT(o GTTParams) (GTTResponse, error) {
 	var (
-		params    = url.Values{}
 		gtt       = newGTT(o)
 		orderResp GTTResponse
 	)
@@ -161,6 +165,7 @@ func (c *Client) PlaceGTT(o GTTParams) (GTTResponse, error) {
 		return orderResp, fmt.Errorf("error while parsing orders: %v", err)
 	}
 
+	params := make(url.Values, 3)
 	params.Add("type", string(gtt.Type))
 	params.Add("condition", string(condition))
 	params.Add("orders", string(orders))
@@ -172,7 +177,6 @@ func (c *Client) PlaceGTT(o GTTParams) (GTTResponse, error) {
 // ModifyGTT modifies the condition or orders inside an already created GTT order.
 func (c *Client) ModifyGTT(triggerID int, o GTTParams) (GTTResponse, error) {
 	var (
-		params    = url.Values{}
 		gtt       = newGTT(o)
 		orderResp GTTResponse
 	)
@@ -187,6 +191,7 @@ func (c *Client) ModifyGTT(triggerID int, o GTTParams) (GTTResponse, error) {
 		return orderResp, fmt.Errorf("error while parsing orders: %v", err)
 	}
 
+	params := make(url.Values, 3)
 	params.Add("type", string(gtt.Type))
 	params.Add("condition", string(condition))
 	params.Add("orders", string(orders))

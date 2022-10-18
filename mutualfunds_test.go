@@ -109,10 +109,10 @@ func (ts *TestSuite) TestCancelMFSIP(t *testing.T) {
 	t.Parallel()
 	sipResponse, err := ts.KiteConnect.CancelMFSIP("test")
 	if err != nil {
-		t.Errorf("Error while cancelling MF SIP order. %v", err)
+		t.Errorf("Error while canceling MF SIP order. %v", err)
 	}
 	if sipResponse.SIPID == "" {
-		t.Errorf("No SIP id returned while cancelling MF SIP Order. Error %v", err)
+		t.Errorf("No SIP id returned while canceling MF SIP Order. Error %v", err)
 	}
 }
 

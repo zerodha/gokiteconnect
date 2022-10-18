@@ -1,6 +1,7 @@
 package models
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"time"
@@ -19,8 +20,7 @@ var (
 
 // UnmarshalJSON parses JSON time string with custom time formats
 func (t *Time) UnmarshalJSON(b []byte) error {
-	s := strings.TrimSpace(strings.Trim(string(b), "\""))
-
+	s := string(bytes.TrimSpace(bytes.Trim(b, "\"")))
 	pTime, err := parseTime(s)
 	if err != nil {
 		return err
@@ -33,7 +33,6 @@ func (t *Time) UnmarshalJSON(b []byte) error {
 // UnmarshalCSV converts CSV string field internal date
 func (t *Time) UnmarshalCSV(s string) error {
 	s = strings.TrimSpace(s)
-
 	pTime, err := parseTime(s)
 	if err != nil {
 		return err

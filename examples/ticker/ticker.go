@@ -17,9 +17,7 @@ var (
 	instToken uint32 = getEnvUint32("KITE_INSTRUMENT_TOKEN", 408065)
 )
 
-var (
-	ticker *kiteticker.Ticker
-)
+var ticker *kiteticker.Ticker
 
 // Triggered when any error is raised
 func onError(err error) {

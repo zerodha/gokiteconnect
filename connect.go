@@ -200,7 +200,7 @@ func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.
 
 	// Send custom headers set
 	if headers == nil {
-		headers = map[string][]string{}
+		headers = make(map[string][]string, 2)
 	}
 
 	// Add Kite Connect version to header
@@ -221,7 +221,7 @@ func (c *Client) do(method, uri string, params url.Values, headers http.Header) 
 	}
 
 	if headers == nil {
-		headers = map[string][]string{}
+		headers = make(map[string][]string, 2)
 	}
 
 	headers.Add("X-Kite-Version", kiteHeaderVersion)
@@ -237,7 +237,7 @@ func (c *Client) do(method, uri string, params url.Values, headers http.Header) 
 
 func (c *Client) doRaw(method, uri string, reqBody []byte, headers http.Header) (HTTPResponse, error) {
 	if headers == nil {
-		headers = map[string][]string{}
+		headers = make(map[string][]string, 2)
 	}
 
 	headers.Add("X-Kite-Version", kiteHeaderVersion)

@@ -159,14 +159,12 @@ func (c *Client) GetMFOrderInfo(OrderID string) (MFOrder, error) {
 
 // GetMFOrdersByDate gets list of mutualfund orders for a custom date range.
 func (c *Client) GetMFOrdersByDate(fromDate, toDate string) (MFOrders, error) {
-	var (
-		orders MFOrders
-	)
-	params := make(url.Values)
+	params := make(url.Values, 2)
 	// from and to dates from request
 	params.Add("from", fromDate)
 	params.Add("to", toDate)
 
+	var orders MFOrders
 	err := c.doEnvelope(http.MethodGet, URIGetMFOrders, params, nil, &orders)
 	return orders, err
 }
@@ -235,9 +233,7 @@ func (c *Client) ModifyMFSIP(sipID string, sipParams MFSIPModifyParams) (MFSIPRe
 
 // CancelMFSIP cancels an mutualfund SIP.
 func (c *Client) CancelMFSIP(sipID string) (MFSIPResponse, error) {
-	var (
-		sipResponse MFSIPResponse
-	)
+	var sipResponse MFSIPResponse
 
 	err := c.doEnvelope(http.MethodDelete, fmt.Sprintf(URICancelMFSIP, sipID), nil, nil, &sipResponse)
 	return sipResponse, err

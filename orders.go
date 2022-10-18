@@ -146,7 +146,7 @@ func (c *Client) PlaceOrder(variety string, orderParams OrderParams) (OrderRespo
 }
 
 // ModifyOrder modifies an order.
-func (c *Client) ModifyOrder(variety string, orderID string, orderParams OrderParams) (OrderResponse, error) {
+func (c *Client) ModifyOrder(variety, orderID string, orderParams OrderParams) (OrderResponse, error) {
 	var (
 		orderResponse OrderResponse
 		params        url.Values
@@ -162,7 +162,7 @@ func (c *Client) ModifyOrder(variety string, orderID string, orderParams OrderPa
 }
 
 // CancelOrder cancels/exits an order.
-func (c *Client) CancelOrder(variety string, orderID string, parentOrderID *string) (OrderResponse, error) {
+func (c *Client) CancelOrder(variety, orderID string, parentOrderID *string) (OrderResponse, error) {
 	var (
 		orderResponse OrderResponse
 		params        url.Values
@@ -179,6 +179,6 @@ func (c *Client) CancelOrder(variety string, orderID string, parentOrderID *stri
 }
 
 // ExitOrder is an alias for CancelOrder which is used to cancel/exit an order.
-func (c *Client) ExitOrder(variety string, orderID string, parentOrderID *string) (OrderResponse, error) {
+func (c *Client) ExitOrder(variety, orderID string, parentOrderID *string) (OrderResponse, error) {
 	return c.CancelOrder(variety, orderID, parentOrderID)
 }

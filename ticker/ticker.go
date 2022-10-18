@@ -109,7 +109,6 @@ const (
 	modeLTPLength              = 8
 	modeQuoteIndexPacketLength = 28
 	modeFullIndexLength        = 32
-	modeQuoteLength            = 44
 	modeFullLength             = 184
 
 	// Message types
@@ -132,13 +131,11 @@ const (
 	dataTimeoutInterval time.Duration = 5000 * time.Millisecond
 )
 
-var (
-	// Default ticker url.
-	tickerURL = url.URL{Scheme: "wss", Host: "ws.kite.trade"}
-)
+// Default ticker url.
+var tickerURL = url.URL{Scheme: "wss", Host: "ws.kite.trade"}
 
 // New creates a new ticker instance.
-func New(apiKey string, accessToken string) *Ticker {
+func New(apiKey, accessToken string) *Ticker {
 	ticker := &Ticker{
 		apiKey:              apiKey,
 		accessToken:         accessToken,
@@ -476,6 +473,7 @@ func (t *Ticker) Subscribe(tokens []uint32) error {
 		Type: "subscribe",
 		Val:  tokens,
 	})
+
 	if err != nil {
 		return err
 	}
@@ -498,6 +496,7 @@ func (t *Ticker) Unsubscribe(tokens []uint32) error {
 		Type: "unsubscribe",
 		Val:  tokens,
 	})
+
 	if err != nil {
 		return err
 	}
@@ -536,9 +535,9 @@ func (t *Ticker) SetMode(mode Mode, tokens []uint32) error {
 func (t *Ticker) Resubscribe() error {
 	var tokens []uint32
 	modes := map[Mode][]uint32{
-		ModeFull:  []uint32{},
-		ModeQuote: []uint32{},
-		ModeLTP:   []uint32{},
+		ModeFull:  {},
+		ModeQuote: {},
+		ModeLTP:   {},
 	}
 
 	// Make a map of mode and corresponding tokens
@@ -598,7 +597,7 @@ func (t *Ticker) processTextMessage(inp []byte) {
 // parseBinary parses the packets to ticks.
 func (t *Ticker) parseBinary(inp []byte) ([]models.Tick, error) {
 	pkts := t.splitPackets(inp)
-	var ticks []models.Tick
+	ticks := make([]models.Tick, 0, len(pkts))
 
 	for _, pkt := range pkts {
 		tick, err := parsePacket(pkt)
@@ -670,7 +669,8 @@ func parsePacket(b []byte) (models.Tick, error) {
 				Low:   convertPrice(seg, float64(binary.BigEndian.Uint32(b[12:16]))),
 				Open:  convertPrice(seg, float64(binary.BigEndian.Uint32(b[16:20]))),
 				Close: closePrice,
-			}}
+			},
+		}
 
 		// On mode full set timestamp
 		if len(b) == modeFullIndexLength {
@@ -757,4 +757,3 @@ func convertPrice(seg uint32, val float64) float64 {
 		return val / 100.0
 	}
 }
-

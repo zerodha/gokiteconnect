@@ -34,10 +34,8 @@ func (e Error) Error() string {
 
 // NewError creates and returns a new instace of Error
 // with custom error metadata.
-func NewError(etype string, message string, data interface{}) error {
-	var (
-		code = http.StatusInternalServerError
-	)
+func NewError(etype, message string, data interface{}) error {
+	var code int
 
 	switch etype {
 	case GeneralError:

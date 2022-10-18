@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/google/go-querystring/query"
 	"github.com/zerodha/gokiteconnect/v4/models"
@@ -122,16 +123,12 @@ func (c *Client) GetPositions() (Positions, error) {
 
 // ConvertPosition converts postion's product type.
 func (c *Client) ConvertPosition(positionParams ConvertPositionParams) (bool, error) {
-	var (
-		b      bool
-		err    error
-		params url.Values
-	)
-
-	if params, err = query.Values(positionParams); err != nil {
+	params, err := query.Values(positionParams)
+	if err != nil {
 		return false, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
+	var b bool
 	if err = c.doEnvelope(http.MethodPut, URIConvertPosition, params, nil, nil); err == nil {
 		b = true
 	}
@@ -171,9 +168,7 @@ type HoldingsAuthResp struct {
 // redirect the user in a web view. The client forms and returns the
 // formed RedirectURL as well.
 func (c *Client) InitiateHoldingsAuth(haps HoldingAuthParams) (HoldingsAuthResp, error) {
-	var (
-		params = make(url.Values)
-	)
+	params := make(url.Values, len(haps.Instruments)+3)
 
 	if haps.Type != "" {
 		params.Set("type", haps.Type)
@@ -189,7 +184,10 @@ func (c *Client) InitiateHoldingsAuth(haps HoldingAuthParams) (HoldingsAuthResp,
 
 	for _, hap := range haps.Instruments {
 		params.Add("isin", hap.ISIN)
-		params.Add("quantity", fmt.Sprintf("%f", hap.Quantity))
+
+		// NOTE: Why prec for FormatFloat is 6?
+		// https://github.com/golang/go/issues/46118#issuecomment-839537854
+		params.Add("quantity", strconv.FormatFloat(hap.Quantity, 'f', 6, 64))
 	}
 
 	var resp HoldingsAuthResp

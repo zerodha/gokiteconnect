@@ -6,9 +6,9 @@ package kiteconnect
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -85,7 +85,6 @@ func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Hea
 func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Header) (HTTPResponse, error) {
 	var (
 		resp     = HTTPResponse{}
-		err      error
 		postBody io.Reader
 	)
 
@@ -94,7 +93,7 @@ func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Hea
 		postBody = bytes.NewReader(reqBody)
 	}
 
-	req, err := http.NewRequest(method, rURL, postBody)
+	req, err := http.NewRequestWithContext(context.TODO(), method, rURL, postBody)
 	if err != nil {
 		h.hLog.Printf("Request preparation failed: %v", err)
 		return resp, NewError(NetworkError, "Request preparation failed.", nil)
@@ -124,7 +123,7 @@ func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Hea
 
 	defer r.Body.Close()
 
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.hLog.Printf("Unable to read response: %v", err)
 		return resp, NewError(DataError, "Error reading response.", nil)

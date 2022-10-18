@@ -118,18 +118,11 @@ type MFInstruments []MFInstrument
 
 // GetQuote gets map of quotes for given instruments in the format of `exchange:tradingsymbol`.
 func (c *Client) GetQuote(instruments ...string) (Quote, error) {
-	var (
-		err     error
-		quotes  Quote
-		params  url.Values
-		qParams quoteParams
-	)
+	qParams := quoteParams{Instruments: instruments}
 
-	qParams = quoteParams{
-		Instruments: instruments,
-	}
-
-	if params, err = query.Values(qParams); err != nil {
+	var quotes Quote
+	params, err := query.Values(qParams)
+	if err != nil {
 		return quotes, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
@@ -139,18 +132,13 @@ func (c *Client) GetQuote(instruments ...string) (Quote, error) {
 
 // GetLTP gets map of LTP quotes for given instruments in the format of `exchange:tradingsymbol`.
 func (c *Client) GetLTP(instruments ...string) (QuoteLTP, error) {
-	var (
-		err     error
-		quotes  QuoteLTP
-		params  url.Values
-		qParams quoteParams
-	)
-
-	qParams = quoteParams{
+	qParams := quoteParams{
 		Instruments: instruments,
 	}
 
-	if params, err = query.Values(qParams); err != nil {
+	var quotes QuoteLTP
+	params, err := query.Values(qParams)
+	if err != nil {
 		return quotes, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
@@ -160,18 +148,13 @@ func (c *Client) GetLTP(instruments ...string) (QuoteLTP, error) {
 
 // GetOHLC gets map of OHLC quotes for given instruments in the format of `exchange:tradingsymbol`.
 func (c *Client) GetOHLC(instruments ...string) (QuoteOHLC, error) {
-	var (
-		err     error
-		quotes  QuoteOHLC
-		params  url.Values
-		qParams quoteParams
-	)
-
-	qParams = quoteParams{
+	qParams := quoteParams{
 		Instruments: instruments,
 	}
 
-	if params, err = query.Values(qParams); err != nil {
+	var quotes QuoteOHLC
+	params, err := query.Values(qParams)
+	if err != nil {
 		return quotes, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
@@ -180,7 +163,10 @@ func (c *Client) GetOHLC(instruments ...string) (QuoteOHLC, error) {
 }
 
 func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalData, error) {
-	var data []HistoricalData
+	var (
+		data = make([]HistoricalData, 0, len(inp.Candles))
+		ok   bool
+	)
 
 	for _, i := range inp.Candles {
 		var (
@@ -191,8 +177,10 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 			close  float64
 			volume int
 			OI     int
-			ok     bool
 		)
+
+		// To avoid no further bound checks i.e., for: i[{0,1,2,3,4,5}]. Aids compiler optimization.
+		_ = i[5]
 
 		if ds, ok = i[0].(string); !ok {
 			return data, NewError(GeneralError, fmt.Sprintf("Error decoding response `date`: %v", i[0]), nil)
@@ -252,20 +240,15 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 }
 
 // GetHistoricalData gets list of historical data.
-func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDate time.Time, toDate time.Time, continuous bool, OI bool) ([]HistoricalData, error) {
-	var (
-		err       error
-		data      []HistoricalData
-		params    url.Values
-		inpParams historicalDataParams
-	)
-
-	inpParams.InstrumentToken = instrumentToken
-	inpParams.Interval = interval
-	inpParams.FromDate = fromDate.Format("2006-01-02 15:04:05")
-	inpParams.ToDate = toDate.Format("2006-01-02 15:04:05")
-	inpParams.Continuous = 0
-	inpParams.OI = 0
+func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDate, toDate time.Time, continuous, OI bool) ([]HistoricalData, error) {
+	inpParams := historicalDataParams{
+		InstrumentToken: instrumentToken,
+		Interval:        interval,
+		FromDate:        fromDate.Format("2006-01-02 15:04:05"),
+		ToDate:          toDate.Format("2006-01-02 15:04:05"),
+		Continuous:      0,
+		OI:              0,
+	}
 
 	if continuous {
 		inpParams.Continuous = 1
@@ -275,26 +258,23 @@ func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDat
 		inpParams.OI = 1
 	}
 
-	if params, err = query.Values(inpParams); err != nil {
-		return data, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
+	params, err := query.Values(inpParams)
+	if err != nil {
+		return nil, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
 	var resp historicalDataReceived
 	if err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetHistorical, instrumentToken, interval), params, nil, &resp); err != nil {
-		return data, err
+		return nil, err
 	}
 
 	return c.formatHistoricalData(resp)
 }
 
 func (c *Client) parseInstruments(data interface{}, url string, params url.Values) error {
-	var (
-		err  error
-		resp HTTPResponse
-	)
-
 	// Get CSV response
-	if resp, err = c.do(http.MethodGet, url, params, nil); err != nil {
+	resp, err := c.do(http.MethodGet, url, params, nil)
+	if err != nil {
 		return err
 	}
 

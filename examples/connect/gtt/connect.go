@@ -17,9 +17,7 @@ func main() {
 	// Create a new Kite connect instance
 	kc := kiteconnect.New(apiKey)
 
-	var (
-		requestToken string
-	)
+	var requestToken string
 
 	// Login URL from which request token can be obtained
 	log.Println(kc.GetLoginURL())
