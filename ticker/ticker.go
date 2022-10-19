@@ -238,6 +238,11 @@ func (t *Ticker) Serve() {
 func (t *Ticker) ServeWithContext(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	t.cancel = cancel
+	defer func() {
+		if t.Conn != nil {
+			t.Conn.Close()
+		}
+	}()
 
 	for {
 		select {
@@ -273,14 +278,14 @@ func (t *Ticker) ServeWithContext(ctx context.Context) {
 			q.Set("access_token", t.accessToken)
 			t.url.RawQuery = q.Encode()
 
-			// create a dialer
+			// Create a dialer
 			d := websocket.DefaultDialer
 			d.HandshakeTimeout = t.connectTimeout
 			conn, _, err := d.Dial(t.url.String(), nil)
 			if err != nil {
 				t.triggerError(err)
 
-				// If auto reconnect is enabled then try reconneting else return error
+				// If auto reconnect is enabled then try reconneting else return error.
 				if t.autoReconnect {
 					t.reconnectAttempt++
 					continue
@@ -293,15 +298,15 @@ func (t *Ticker) ServeWithContext(ctx context.Context) {
 			// Trigger connect callback.
 			t.triggerConnect()
 
-			// Resubscribe to stored tokens
+			// Resubscribe to stored tokens.
 			if t.reconnectAttempt > 0 {
 				t.Resubscribe()
 			}
 
-			// Reset auto reconnect vars
+			// Reset auto reconnect vars.
 			t.reconnectAttempt = 0
 
-			// Set current time as last ping time
+			// Set current time as last ping time.
 			t.lastPingTime = time.Now()
 
 			// Set on close handler
@@ -529,7 +534,7 @@ func (t *Ticker) SetMode(mode Mode, tokens []uint32) error {
 
 // Resubscribe resubscribes to the current stored subscriptions
 func (t *Ticker) Resubscribe() error {
-	var tokens []uint32
+	tokens := make([]uint32, 0, len(t.subscribedTokens))
 	modes := map[Mode][]uint32{
 		ModeFull:  {},
 		ModeQuote: {},
@@ -600,7 +605,6 @@ func (t *Ticker) parseBinary(inp []byte) ([]models.Tick, error) {
 		if err != nil {
 			return nil, err
 		}
-
 		ticks = append(ticks, tick)
 	}
 
@@ -609,13 +613,12 @@ func (t *Ticker) parseBinary(inp []byte) ([]models.Tick, error) {
 
 // splitPackets splits packet dump to individual tick packet.
 func (t *Ticker) splitPackets(inp []byte) [][]byte {
-	var pkts [][]byte
 	if len(inp) < 2 {
-		return pkts
+		return nil
 	}
 
 	pktLen := binary.BigEndian.Uint16(inp[0:2])
-
+	pkts := make([][]byte, 0, int(pktLen))
 	j := 2
 	for i := 0; i < int(pktLen); i++ {
 		pLen := binary.BigEndian.Uint16(inp[j : j+2])
