@@ -194,10 +194,6 @@ func (c *Client) GetLoginURL() string {
 }
 
 func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.Header, v interface{}) error {
-	if params == nil {
-		params = url.Values{}
-	}
-
 	// Send custom headers set
 	if headers == nil {
 		headers = make(map[string][]string, 2)
@@ -216,10 +212,6 @@ func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.
 }
 
 func (c *Client) do(method, uri string, params url.Values, headers http.Header) (HTTPResponse, error) {
-	if params == nil {
-		params = url.Values{}
-	}
-
 	if headers == nil {
 		headers = make(map[string][]string, 2)
 	}

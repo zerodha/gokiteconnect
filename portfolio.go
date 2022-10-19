@@ -168,7 +168,7 @@ type HoldingsAuthResp struct {
 // redirect the user in a web view. The client forms and returns the
 // formed RedirectURL as well.
 func (c *Client) InitiateHoldingsAuth(haps HoldingAuthParams) (HoldingsAuthResp, error) {
-	params := make(url.Values, len(haps.Instruments)+3)
+	params := make(url.Values, (len(haps.Instruments)*2)+3)
 
 	if haps.Type != "" {
 		params.Set("type", haps.Type)
@@ -197,10 +197,9 @@ func (c *Client) InitiateHoldingsAuth(haps HoldingAuthParams) (HoldingsAuthResp,
 
 	// Form and set the URL in the response.
 	resp.RedirectURL = genHolAuthURL(c.apiKey, resp.RequestID)
-
 	return resp, nil
 }
 
 func genHolAuthURL(apiKey, reqID string) string {
-	return kiteBaseURI + "/connect/portfolio/authorize/holdings/" + apiKey + "/" + reqID
+	return fmt.Sprintf("%s/connect/portfolio/authorize/holdings/%s/%s", kiteBaseURI, apiKey, reqID)
 }

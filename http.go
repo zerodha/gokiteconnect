@@ -58,10 +58,10 @@ func NewHTTPClient(h *http.Client, hLog *log.Logger, debug bool) HTTPClient {
 
 	if h == nil {
 		h = &http.Client{
-			Timeout: time.Duration(5) * time.Second,
+			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost:   10,
-				ResponseHeaderTimeout: time.Second * time.Duration(5),
+				ResponseHeaderTimeout: 5 * time.Second,
 			},
 		}
 	}
@@ -120,7 +120,6 @@ func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Hea
 		h.hLog.Printf("Request failed: %v", err)
 		return resp, NewError(NetworkError, "Request failed.", nil)
 	}
-
 	defer r.Body.Close()
 
 	body, err := io.ReadAll(r.Body)
@@ -166,10 +165,11 @@ func readEnvelope(resp HTTPResponse, obj interface{}) error {
 		return newError(e.ErrorType, e.Message, resp.Response.StatusCode, e.Data)
 	}
 
-	// We now unmarshal the body.
-	envl := envelope{}
-	envl.Data = obj
+	envl := envelope{
+		Data: obj,
+	}
 
+	// We now unmarshal the body.
 	if err := json.Unmarshal(resp.Body, &envl); err != nil {
 		return NewError(DataError, "Error parsing response.", nil)
 	}

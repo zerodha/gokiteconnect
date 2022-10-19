@@ -108,7 +108,6 @@ func (c *Client) GenerateSession(requestToken, apiSecret string) (UserSession, e
 	params := make(url.Values, 3)
 	params.Add("api_key", c.apiKey)
 	params.Add("request_token", requestToken)
-
 	params.Set("checksum", hex.EncodeToString(h.Sum(nil)))
 
 	var session UserSession
