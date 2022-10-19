@@ -139,8 +139,8 @@ func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Hea
 }
 
 // DoEnvelope makes an HTTP request and parses the JSON response (fastglue envelop structure)
-func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers http.Header, obj interface{}) error {
-	resp, err := h.Do(method, url, params, headers)
+func (h *httpClient) DoEnvelope(method, rURL string, params url.Values, headers http.Header, obj interface{}) error {
+	resp, err := h.Do(method, rURL, params, headers)
 	if err != nil {
 		return err
 	}
@@ -178,8 +178,8 @@ func readEnvelope(resp HTTPResponse, obj interface{}) error {
 }
 
 // DoJSON makes an HTTP request and parses the JSON response.
-func (h *httpClient) DoJSON(method, url string, params url.Values, headers http.Header, obj interface{}) (HTTPResponse, error) {
-	resp, err := h.Do(method, url, params, headers)
+func (h *httpClient) DoJSON(method, rURL string, params url.Values, headers http.Header, obj interface{}) (HTTPResponse, error) {
+	resp, err := h.Do(method, rURL, params, headers)
 	if err != nil {
 		return resp, err
 	}

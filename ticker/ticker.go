@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -286,13 +287,6 @@ func (t *Ticker) ServeWithContext(ctx context.Context) {
 				}
 			}
 
-			// Close the connection when its done.
-			defer func() {
-				if t.Conn != nil {
-					t.Conn.Close()
-				}
-			}()
-
 			// Assign the current connection to the instance.
 			t.Conn = conn
 
@@ -327,6 +321,10 @@ func (t *Ticker) ServeWithContext(ctx context.Context) {
 
 			// Wait for go routines to finish before doing next reconnect
 			wg.Wait()
+
+			if t.Conn != nil {
+				t.Conn.Close()
+			}
 		}
 	}
 }
@@ -473,7 +471,6 @@ func (t *Ticker) Subscribe(tokens []uint32) error {
 		Type: "subscribe",
 		Val:  tokens,
 	})
-
 	if err != nil {
 		return err
 	}
@@ -496,7 +493,6 @@ func (t *Ticker) Unsubscribe(tokens []uint32) error {
 		Type: "unsubscribe",
 		Val:  tokens,
 	})
-
 	if err != nil {
 		return err
 	}
@@ -578,7 +574,7 @@ func (t *Ticker) processTextMessage(inp []byte) {
 
 	if msg.Type == messageError {
 		// Trigger text error
-		t.triggerError(fmt.Errorf(msg.Data.(string)))
+		t.triggerError(errors.New(msg.Data.(string)))
 	} else if msg.Type == messageOrder {
 		// Parse order update data
 		order := struct {

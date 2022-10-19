@@ -151,9 +151,9 @@ func (c *Client) GetMFOrders() (MFOrders, error) {
 }
 
 // GetMFOrderInfo get individual mutualfund order info.
-func (c *Client) GetMFOrderInfo(OrderID string) (MFOrder, error) {
+func (c *Client) GetMFOrderInfo(orderID string) (MFOrder, error) {
 	var orderInfo MFOrder
-	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetMFOrderInfo, OrderID), nil, nil, &orderInfo)
+	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetMFOrderInfo, orderID), nil, nil, &orderInfo)
 	return orderInfo, err
 }
 

@@ -148,9 +148,7 @@ func (c *Client) GetLTP(instruments ...string) (QuoteLTP, error) {
 
 // GetOHLC gets map of OHLC quotes for given instruments in the format of `exchange:tradingsymbol`.
 func (c *Client) GetOHLC(instruments ...string) (QuoteOHLC, error) {
-	qParams := quoteParams{
-		Instruments: instruments,
-	}
+	qParams := quoteParams{Instruments: instruments}
 
 	var quotes QuoteOHLC
 	params, err := query.Values(qParams)
@@ -240,12 +238,12 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 }
 
 // GetHistoricalData gets list of historical data.
-func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDate, toDate time.Time, continuous, OI bool) ([]HistoricalData, error) {
+func (c *Client) GetHistoricalData(instrumentToken int, interval string, dateFrom, dateTo time.Time, continuous, oi bool) ([]HistoricalData, error) {
 	inpParams := historicalDataParams{
 		InstrumentToken: instrumentToken,
 		Interval:        interval,
-		FromDate:        fromDate.Format("2006-01-02 15:04:05"),
-		ToDate:          toDate.Format("2006-01-02 15:04:05"),
+		FromDate:        dateFrom.Format("2006-01-02 15:04:05"),
+		ToDate:          dateTo.Format("2006-01-02 15:04:05"),
 		Continuous:      0,
 		OI:              0,
 	}
@@ -254,7 +252,7 @@ func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDat
 		inpParams.Continuous = 1
 	}
 
-	if OI {
+	if oi {
 		inpParams.OI = 1
 	}
 
@@ -271,9 +269,9 @@ func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDat
 	return c.formatHistoricalData(resp)
 }
 
-func (c *Client) parseInstruments(data interface{}, url string, params url.Values) error {
+func (c *Client) parseInstruments(data interface{}, uri string, params url.Values) error {
 	// Get CSV response
-	resp, err := c.do(http.MethodGet, url, params, nil)
+	resp, err := c.do(http.MethodGet, uri, params, nil)
 	if err != nil {
 		return err
 	}

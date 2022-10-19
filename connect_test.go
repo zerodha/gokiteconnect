@@ -45,9 +45,7 @@ func TestClientSetters(t *testing.T) {
 	customTimeout := 1000 * time.Millisecond
 	customAccessToken := "someaccesstoken"
 	customHTTPClientTimeout := time.Duration(2000)
-	customHTTPClient := &http.Client{
-		Timeout: customHTTPClientTimeout,
-	}
+	customHTTPClient := &http.Client{Timeout: customHTTPClientTimeout}
 
 	// Check if default debug is false
 	if client.debug != false || client.httpClient.GetClient().debug != false {

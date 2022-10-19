@@ -116,16 +116,16 @@ func (c *Client) GetTrades() (Trades, error) {
 }
 
 // GetOrderHistory gets history of an individual order.
-func (c *Client) GetOrderHistory(OrderID string) ([]Order, error) {
+func (c *Client) GetOrderHistory(orderID string) ([]Order, error) {
 	var orderHistory []Order
-	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetOrderHistory, OrderID), nil, nil, &orderHistory)
+	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetOrderHistory, orderID), nil, nil, &orderHistory)
 	return orderHistory, err
 }
 
 // GetOrderTrades gets list of trades executed for a particular order.
-func (c *Client) GetOrderTrades(OrderID string) ([]Trade, error) {
+func (c *Client) GetOrderTrades(orderID string) ([]Trade, error) {
 	var orderTrades []Trade
-	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetOrderTrades, OrderID), nil, nil, &orderTrades)
+	err := c.doEnvelope(http.MethodGet, fmt.Sprintf(URIGetOrderTrades, orderID), nil, nil, &orderTrades)
 	return orderTrades, err
 }
 

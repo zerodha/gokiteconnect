@@ -154,17 +154,17 @@ func (ts *TestSuite) TestIssue64(t *testing.T) {
 		t.Errorf("Error while fetching orders. %v", err)
 	}
 
-	// Check if marshal followed by unmarshall correctly parses timestamps
+	// Check if marshal followed by unmarshal correctly parses timestamps
 	ord := orders[0]
 	js, err := json.Marshal(ord)
 	if err != nil {
-		t.Errorf("Error while marshalling order. %v", err)
+		t.Errorf("Error while marshaling order. %v", err)
 	}
 
 	var outOrd Order
 	err = json.Unmarshal(js, &outOrd)
 	if err != nil {
-		t.Errorf("Error while unmarshalling order. %v", err)
+		t.Errorf("Error while unmarshaling order. %v", err)
 	}
 
 	if !ord.ExchangeTimestamp.Equal(outOrd.ExchangeTimestamp.Time) {
