@@ -63,10 +63,10 @@ type GetBasketParams struct {
 func (c *Client) GetOrderMargins(marparam GetMarginParams) ([]OrderMargins, error) {
 	body, err := json.Marshal(marparam.OrderParams)
 	if err != nil {
-		return []OrderMargins{}, err
+		return nil, err
 	}
 
-	var headers http.Header = map[string][]string{}
+	headers := make(http.Header, 1)
 	headers.Add("Content-Type", "application/json")
 
 	uri := URIOrderMargins
@@ -76,14 +76,13 @@ func (c *Client) GetOrderMargins(marparam GetMarginParams) ([]OrderMargins, erro
 
 	resp, err := c.doRaw(http.MethodPost, uri, body, headers)
 	if err != nil {
-		return []OrderMargins{}, err
+		return nil, err
 	}
 
 	var out []OrderMargins
-	if err := readEnvelope(resp, &out); err != nil {
-		return []OrderMargins{}, err
+	if err = readEnvelope(resp, &out); err != nil {
+		return nil, err
 	}
-
 	return out, nil
 }
 
@@ -93,18 +92,18 @@ func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BasketMargins, err
 		return BasketMargins{}, err
 	}
 
-	var headers http.Header = map[string][]string{}
+	headers := make(http.Header, 1)
 	headers.Add("Content-Type", "application/json")
 
-	uri := URIBasketMargins
-	v := url.Values{}
-
+	v := make(url.Values, 2)
 	if baskparam.Compact {
 		v.Set("mode", "compact")
 	}
 	if baskparam.ConsiderPositions {
 		v.Set("consider_positions", "true")
 	}
+
+	uri := URIBasketMargins
 	if qp := v.Encode(); qp != "" {
 		uri += "?" + qp
 	}
@@ -115,9 +114,6 @@ func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BasketMargins, err
 	}
 
 	var out BasketMargins
-	if err := readEnvelope(resp, &out); err != nil {
-		return BasketMargins{}, err
-	}
-
-	return out, nil
+	err = readEnvelope(resp, &out)
+	return out, err
 }

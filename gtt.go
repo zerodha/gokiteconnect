@@ -150,11 +150,9 @@ type GTTResponse struct {
 
 // PlaceGTT constructs and places a GTT order using GTTParams.
 func (c *Client) PlaceGTT(o GTTParams) (GTTResponse, error) {
-	var (
-		gtt       = newGTT(o)
-		orderResp GTTResponse
-	)
+	gtt := newGTT(o)
 
+	var orderResp GTTResponse
 	condition, err := json.Marshal(gtt.Condition)
 	if err != nil {
 		return orderResp, fmt.Errorf("error while parsing condition: %v", err)
@@ -176,11 +174,9 @@ func (c *Client) PlaceGTT(o GTTParams) (GTTResponse, error) {
 
 // ModifyGTT modifies the condition or orders inside an already created GTT order.
 func (c *Client) ModifyGTT(triggerID int, o GTTParams) (GTTResponse, error) {
-	var (
-		gtt       = newGTT(o)
-		orderResp GTTResponse
-	)
+	gtt := newGTT(o)
 
+	var orderResp GTTResponse
 	condition, err := json.Marshal(gtt.Condition)
 	if err != nil {
 		return orderResp, fmt.Errorf("error while parsing condition: %v", err)

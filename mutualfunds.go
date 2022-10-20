@@ -171,13 +171,10 @@ func (c *Client) GetMFOrdersByDate(fromDate, toDate string) (MFOrders, error) {
 
 // PlaceMFOrder places an mutualfund order.
 func (c *Client) PlaceMFOrder(orderParams MFOrderParams) (MFOrderResponse, error) {
-	var (
-		orderResponse MFOrderResponse
-		params        url.Values
-		err           error
-	)
+	var orderResponse MFOrderResponse
 
-	if params, err = query.Values(orderParams); err != nil {
+	params, err := query.Values(orderParams)
+	if err != nil {
 		return orderResponse, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
@@ -217,13 +214,10 @@ func (c *Client) PlaceMFSIP(sipParams MFSIPParams) (MFSIPResponse, error) {
 
 // ModifyMFSIP modifies an mutualfund SIP.
 func (c *Client) ModifyMFSIP(sipID string, sipParams MFSIPModifyParams) (MFSIPResponse, error) {
-	var (
-		sipResponse MFSIPResponse
-		params      url.Values
-		err         error
-	)
+	var sipResponse MFSIPResponse
 
-	if params, err = query.Values(sipParams); err != nil {
+	params, err := query.Values(sipParams)
+	if err != nil {
 		return sipResponse, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 

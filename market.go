@@ -132,9 +132,7 @@ func (c *Client) GetQuote(instruments ...string) (Quote, error) {
 
 // GetLTP gets map of LTP quotes for given instruments in the format of `exchange:tradingsymbol`.
 func (c *Client) GetLTP(instruments ...string) (QuoteLTP, error) {
-	qParams := quoteParams{
-		Instruments: instruments,
-	}
+	qParams := quoteParams{Instruments: instruments}
 
 	var quotes QuoteLTP
 	params, err := query.Values(qParams)
@@ -161,11 +159,9 @@ func (c *Client) GetOHLC(instruments ...string) (QuoteOHLC, error) {
 }
 
 func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalData, error) {
-	var (
-		data = make([]HistoricalData, 0, len(inp.Candles))
-		ok   bool
-	)
+	data := make([]HistoricalData, 0, len(inp.Candles))
 
+	var ok bool
 	for _, i := range inp.Candles {
 		var (
 			ds     string
