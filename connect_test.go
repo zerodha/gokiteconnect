@@ -113,52 +113,53 @@ var MockResponders = [][]string{
 	// Array of [<httpMethod>, <url>, <file_name>]
 
 	// GET endpoints
-	[]string{http.MethodGet, URIUserProfile, "profile.json"},
-	[]string{http.MethodGet, URIUserMargins, "margins.json"},
-	[]string{http.MethodGet, URIUserMarginsSegment, "margins_equity.json"},
-	[]string{http.MethodGet, URIGetOrders, "orders.json"},
-	[]string{http.MethodGet, URIGetTrades, "trades.json"},
-	[]string{http.MethodGet, URIGetOrderHistory, "order_info.json"},
-	[]string{http.MethodGet, URIGetOrderTrades, "order_trades.json"},
-	[]string{http.MethodGet, URIGetPositions, "positions.json"},
-	[]string{http.MethodGet, URIGetHoldings, "holdings.json"},
-	[]string{http.MethodGet, URIGetMFOrders, "mf_orders.json"},
-	[]string{http.MethodGet, URIGetMFOrderInfo, "mf_orders_info.json"},
-	[]string{http.MethodGet, URIGetMFSIPs, "mf_sips.json"},
-	[]string{http.MethodGet, URIGetMFSIPInfo, "mf_sip_info.json"},
-	[]string{http.MethodGet, URIGetMFHoldings, "mf_holdings.json"},
-	[]string{http.MethodGet, fmt.Sprintf(URIGetGTT, 123), "gtt_get_order.json"},
-	[]string{http.MethodGet, URIGetGTTs, "gtt_get_orders.json"},
-	[]string{http.MethodGet, URIGetInstruments, "instruments_all.csv"},
-	[]string{http.MethodGet, URIGetMFInstruments, "mf_instruments.csv"},
-	[]string{http.MethodGet, uriGetInstrumentsExchangeTest, "instruments_nse.csv"},
-	[]string{http.MethodGet, uriGetHistoricalTest, "historical_minute.json"},
-	[]string{http.MethodGet, uriGetHistoricalWithOITest, "historical_oi.json"},
-	[]string{http.MethodGet, URIGetTriggerRange, "trigger_range.json"},
-	[]string{http.MethodGet, URIGetQuote, "quote.json"},
-	[]string{http.MethodGet, URIGetLTP, "ltp.json"},
-	[]string{http.MethodGet, URIGetOHLC, "ohlc.json"},
+	{http.MethodGet, URIUserProfile, "profile.json"},
+	{http.MethodGet, URIUserMargins, "margins.json"},
+	{http.MethodGet, URIUserMarginsSegment, "margins_equity.json"},
+	{http.MethodGet, URIGetOrders, "orders.json"},
+	{http.MethodGet, URIGetTrades, "trades.json"},
+	{http.MethodGet, URIGetOrderHistory, "order_info.json"},
+	{http.MethodGet, URIGetOrderTrades, "order_trades.json"},
+	{http.MethodGet, URIGetPositions, "positions.json"},
+	{http.MethodGet, URIGetHoldings, "holdings.json"},
+	{http.MethodGet, URIGetMFOrders, "mf_orders.json"},
+	{http.MethodGet, URIGetMFOrderInfo, "mf_orders_info.json"},
+	{http.MethodGet, URIGetMFSIPs, "mf_sips.json"},
+	{http.MethodGet, URIGetMFSIPInfo, "mf_sip_info.json"},
+	{http.MethodGet, URIGetMFHoldings, "mf_holdings.json"},
+	{http.MethodGet, fmt.Sprintf(URIGetGTT, 123), "gtt_get_order.json"},
+	{http.MethodGet, URIGetGTTs, "gtt_get_orders.json"},
+	{http.MethodGet, URIGetInstruments, "instruments_all.csv"},
+	{http.MethodGet, URIGetMFInstruments, "mf_instruments.csv"},
+	{http.MethodGet, uriGetInstrumentsExchangeTest, "instruments_nse.csv"},
+	{http.MethodGet, uriGetHistoricalTest, "historical_minute.json"},
+	{http.MethodGet, uriGetHistoricalWithOITest, "historical_oi.json"},
+	{http.MethodGet, URIGetTriggerRange, "trigger_range.json"},
+	{http.MethodGet, URIGetQuote, "quote.json"},
+	{http.MethodGet, URIGetLTP, "ltp.json"},
+	{http.MethodGet, URIGetOHLC, "ohlc.json"},
+	{http.MethodGet, URIAuctionInstruments, "auctions_list.json"},
 
 	// PUT endpoints
-	[]string{http.MethodPut, URIModifyMFSIP, "mf_sip_info.json"},
-	[]string{http.MethodPut, URIModifyOrder, "order_modify.json"},
-	[]string{http.MethodPut, URIConvertPosition, "positions.json"},
-	[]string{http.MethodPut, fmt.Sprintf(URIModifyGTT, 123), "gtt_modify_order.json"},
+	{http.MethodPut, URIModifyMFSIP, "mf_sip_info.json"},
+	{http.MethodPut, URIModifyOrder, "order_modify.json"},
+	{http.MethodPut, URIConvertPosition, "positions.json"},
+	{http.MethodPut, fmt.Sprintf(URIModifyGTT, 123), "gtt_modify_order.json"},
 
 	// POST endpoints
-	[]string{http.MethodPost, URIPlaceOrder, "order_response.json"},
-	[]string{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
-	[]string{http.MethodPost, URIPlaceMFSIP, "mf_sip_place.json"},
-	[]string{http.MethodPost, URIPlaceGTT, "gtt_place_order.json"},
-	[]string{http.MethodPost, URIOrderMargins, "order_margins.json"},
-	[]string{http.MethodPost, URIBasketMargins, "basket_margins.json"},
-	[]string{http.MethodPost, URIInitHoldingsAuth, "holdings_auth.json"},
+	{http.MethodPost, URIPlaceOrder, "order_response.json"},
+	{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
+	{http.MethodPost, URIPlaceMFSIP, "mf_sip_place.json"},
+	{http.MethodPost, URIPlaceGTT, "gtt_place_order.json"},
+	{http.MethodPost, URIOrderMargins, "order_margins.json"},
+	{http.MethodPost, URIBasketMargins, "basket_margins.json"},
+	{http.MethodPost, URIInitHoldingsAuth, "holdings_auth.json"},
 
 	// DELETE endpoints
-	[]string{http.MethodDelete, URICancelOrder, "order_response.json"},
-	[]string{http.MethodDelete, URICancelMFSIP, "mf_sip_cancel.json"},
-	[]string{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), "gtt_modify_order.json"},
-	[]string{http.MethodDelete, URIUserSessionInvalidate, "session_logout.json"},
+	{http.MethodDelete, URICancelOrder, "order_response.json"},
+	{http.MethodDelete, URICancelMFSIP, "mf_sip_cancel.json"},
+	{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), "gtt_modify_order.json"},
+	{http.MethodDelete, URIUserSessionInvalidate, "session_logout.json"},
 }
 
 // Test only function prefix with this
@@ -212,12 +213,12 @@ func (ts *TestSuite) TearDownAPITest() {}
 
 /*
 Run sets up the suite, runs its test cases and tears it down:
-    1. Calls `ts.SetUpSuite`
-    2. Seeks for any methods that have `Test` prefix, for each of them it:
-      a. Calls `SetUp`
-      b. Calls the test method itself
-      c. Calls `TearDown`
-    3. Calls `ts.TearDownSuite`
+ 1. Calls `ts.SetUpSuite`
+ 2. Seeks for any methods that have `Test` prefix, for each of them it:
+    a. Calls `SetUp`
+    b. Calls the test method itself
+    c. Calls `TearDown`
+ 3. Calls `ts.TearDownSuite`
 */
 func RunAPITests(t *testing.T, ts *TestSuite) {
 	ts.SetupAPITestSuit()
