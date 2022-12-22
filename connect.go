@@ -41,6 +41,7 @@ const (
 	VarietyBO      = "bo"
 	VarietyCO      = "co"
 	VarietyIceberg = "iceberg"
+	VarietyAuction = "auction"
 
 	// Products
 	ProductBO   = "BO"

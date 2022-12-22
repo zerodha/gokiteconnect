@@ -86,6 +86,7 @@ func (ts *TestSuite) TestPlaceOrder(t *testing.T) {
 		Squareoff:         100,
 		Stoploss:          100,
 		TrailingStoploss:  100,
+		AuctionNumber:     7359,
 		Tag:               "test",
 	}
 	orderResponse, err := ts.KiteConnect.PlaceOrder("test", params)
