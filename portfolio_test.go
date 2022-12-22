@@ -42,6 +42,22 @@ func (ts *TestSuite) TestGetHoldings(t *testing.T) {
 	}
 }
 
+func (ts *TestSuite) TestGetAuctionInstruments(t *testing.T) {
+	t.Parallel()
+	auctionIns, err := ts.KiteConnect.GetAuctionInstruments()
+	if err != nil {
+		t.Errorf("Error while fetching auction instrument : %v", err)
+	}
+	for _, ins := range auctionIns {
+		if ins.AuctionNumber == "" {
+			t.Errorf("Error while retrieving auction number from the auction instruments list : %v", err)
+		}
+		if ins.Quantity == 0 {
+			t.Errorf("Error while retrieving auction qty from the auction instruments list : %v", err)
+		}
+	}
+}
+
 func (ts *TestSuite) TestConvertPosition(t *testing.T) {
 	t.Parallel()
 	params := ConvertPositionParams{

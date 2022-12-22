@@ -104,10 +104,11 @@ const (
 	URIModifyOrder     string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
 	URICancelOrder     string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
 
-	URIGetPositions     string = "/portfolio/positions"
-	URIGetHoldings      string = "/portfolio/holdings"
-	URIInitHoldingsAuth string = "/portfolio/holdings/authorise"
-	URIConvertPosition  string = "/portfolio/positions"
+	URIGetPositions       string = "/portfolio/positions"
+	URIGetHoldings        string = "/portfolio/holdings"
+	URIInitHoldingsAuth   string = "/portfolio/holdings/authorise"
+	URIAuctionInstruments string = "/portfolio/holdings/auctions"
+	URIConvertPosition    string = "/portfolio/positions"
 
 	URIOrderMargins  string = "/margins/orders"
 	URIBasketMargins string = "/margins/basket"
