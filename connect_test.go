@@ -148,6 +148,9 @@ var MockResponders = [][]string{
 
 	// POST endpoints
 	{http.MethodPost, URIPlaceOrder, "order_response.json"},
+	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "iceberg"), "order_response.json"},
+	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "co"), "order_response.json"},
+	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "auction"), "order_response.json"},
 	{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
 	{http.MethodPost, URIPlaceMFSIP, "mf_sip_place.json"},
 	{http.MethodPost, URIPlaceGTT, "gtt_place_order.json"},

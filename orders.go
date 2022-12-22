@@ -74,6 +74,8 @@ type OrderParams struct {
 	IcebergLegs int `url:"iceberg_legs,omitempty"`
 	IcebergQty  int `url:"iceberg_quantity,omitempty"`
 
+	AuctionNumber int `url:"auction_number,omitempty"`
+
 	Tag string `json:"tag" url:"tag,omitempty"`
 }
 
