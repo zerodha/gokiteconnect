@@ -17,20 +17,62 @@ func (ts *TestSuite) TestGetOrderMargins(t *testing.T) {
 		TriggerPrice:    0,
 	}
 
-	orderResponse, err := ts.KiteConnect.GetOrderMargins(GetMarginParams{
+	compactOrderResp, err := ts.KiteConnect.GetOrderMargins(GetMarginParams{
 		OrderParams: []OrderMarginParam{params},
 		Compact:     true,
 	})
 	if err != nil {
-		t.Errorf("Error while getting order margins: %v", err)
+		t.Errorf("Error while getting compact order margins: %v", err)
 	}
 
-	if len(orderResponse) != 1 {
-		t.Errorf("Incorrect response, expected len(orderResponse) to be 0, got: %v", len(orderResponse))
+	if len(compactOrderResp) != 1 {
+		t.Errorf("Incorrect response length, expected len(compactOrderResp) to be 1, got: %v", len(compactOrderResp))
 	}
 
-	if orderResponse[0].Total != 961.45 {
-		t.Errorf("Incorrect total, expected 961.45, got: %v", orderResponse[0].Total)
+	if compactOrderResp[0].TradingSymbol != "INFY" {
+		t.Errorf("Incorrect tradingsymbol, expected INFY, got: %v", compactOrderResp[0].TradingSymbol)
+	}
+
+	if compactOrderResp[0].Total == 0 {
+		t.Errorf("Incorrect compact total margins, got: %v", compactOrderResp[0].Total)
+	}
+
+	// Detailed order margin tests include charges, leverage
+	detailOrderResp, err := ts.KiteConnect.GetOrderMargins(GetMarginParams{
+		OrderParams: []OrderMarginParam{params},
+		Compact:     false,
+	})
+
+	if err != nil {
+		t.Errorf("Error while getting detailed order margins: %v", err)
+	}
+
+	if detailOrderResp[0].Leverage != 1 {
+		t.Errorf("Incorrect leverage multiplier, expected 1x, got: %v", detailOrderResp[0].TradingSymbol)
+	}
+
+	if len(detailOrderResp) != 1 {
+		t.Errorf("Incorrect response, expected len(detailOrderResp) to be 1, got: %v", len(detailOrderResp))
+	}
+
+	if detailOrderResp[0].Charges.TransactionTax == 0 {
+		t.Errorf("Incorrect TransactionTax in detailed order margins, got: %v", detailOrderResp[0].Charges.TransactionTax)
+	}
+
+	if detailOrderResp[0].Charges.StampDuty == 0 {
+		t.Errorf("Incorrect StampDuty in detailed order margins, got: %v", detailOrderResp[0].Charges.StampDuty)
+	}
+
+	if detailOrderResp[0].Charges.GST.Total == 0 {
+		t.Errorf("Incorrect GST in detailed order margins, got: %v", detailOrderResp[0].Charges.GST.Total)
+	}
+
+	if detailOrderResp[0].Charges.Total == 0 {
+		t.Errorf("Incorrect charges total in detailed order margins, got: %v", detailOrderResp[0].Charges.Total)
+	}
+
+	if detailOrderResp[0].Total == 0 {
+		t.Errorf("Incorrect total margin in detailed order margins, got: %v", detailOrderResp[0].Total)
 	}
 }
 
@@ -55,7 +97,7 @@ func (ts *TestSuite) TestGetBasketMargins(t *testing.T) {
 		ConsiderPositions: true,
 	})
 	if err != nil {
-		t.Errorf("Error while getting basket order margins: %v", err)
+		t.Errorf("Error while getting compact basket order margins: %v", err)
 	}
 
 	if len(orderResponseBasket.Orders) != 2 {
