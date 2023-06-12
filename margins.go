@@ -39,7 +39,29 @@ type OrderMargins struct {
 	Cash          float64 `json:"cash"`
 	VAR           float64 `json:"var"`
 	PNL           PNL     `json:"pnl"`
+	Leverage      float64 `json:"leverage"`
+	Charges       Charges `json:"charges"`
 	Total         float64 `json:"total"`
+}
+
+// Charges represents breakdown of various charges that are applied to an order
+type Charges struct {
+	TransactionTax         float64 `json:"transaction_tax"`
+	TransactionTaxType     string  `json:"transaction_tax_type"`
+	ExchangeTurnoverCharge float64 `json:"exchange_turnover_charge"`
+	SEBITurnoverCharge     float64 `json:"sebi_turnover_charge"`
+	Brokerage              float64 `json:"brokerage"`
+	StampDuty              float64 `json:"stamp_duty"`
+	GST                    GST     `json:"gst"`
+	Total                  float64 `json:"total"`
+}
+
+// GST represents the various GST charges
+type GST struct {
+	IGST  float64 `json:"igst"`
+	CGST  float64 `json:"cgst"`
+	SGST  float64 `json:"sgst"`
+	Total float64 `json:"total"`
 }
 
 // BasketMargins represents response from the Margin Calculator API for Basket orders

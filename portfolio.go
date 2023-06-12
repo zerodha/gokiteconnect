@@ -106,11 +106,44 @@ type ConvertPositionParams struct {
 	Quantity        int    `url:"quantity"`
 }
 
+// AuctionInstrument represents the auction instrument available for a auction session.
+type AuctionInstrument struct {
+	TradingSymbol       string  `json:"tradingsymbol"`
+	Exchange            string  `json:"exchange"`
+	InstrumentToken     uint32  `json:"instrument_token"`
+	ISIN                string  `json:"isin"`
+	Product             string  `json:"product"`
+	Price               float64 `json:"price"`
+	Quantity            int     `json:"quantity"`
+	T1Quantity          int     `json:"t1_quantity"`
+	RealisedQuantity    int     `json:"realised_quantity"`
+	AuthorisedQuantity  int     `json:"authorised_quantity"`
+	AuthorisedDate      string  `json:"authorised_date"`
+	OpeningQuantity     int     `json:"opening_quantity"`
+	CollateralQuantity  int     `json:"collateral_quantity"`
+	CollateralType      string  `json:"collateral_type"`
+	Discrepancy         bool    `json:"discrepancy"`
+	AveragePrice        float64 `json:"average_price"`
+	LastPrice           float64 `json:"last_price"`
+	ClosePrice          float64 `json:"close_price"`
+	Pnl                 float64 `json:"pnl"`
+	DayChange           float64 `json:"day_change"`
+	DayChangePercentage float64 `json:"day_change_percentage"`
+	AuctionNumber       string  `json:"auction_number"`
+}
+
 // GetHoldings gets a list of holdings.
 func (c *Client) GetHoldings() (Holdings, error) {
 	var holdings Holdings
 	err := c.doEnvelope(http.MethodGet, URIGetHoldings, nil, nil, &holdings)
 	return holdings, err
+}
+
+// GetAuctionInstruments retrieves list of available instruments for a auction session
+func (c *Client) GetAuctionInstruments() ([]AuctionInstrument, error) {
+	var auctionInstruments []AuctionInstrument
+	err := c.doEnvelope(http.MethodGet, URIAuctionInstruments, nil, nil, &auctionInstruments)
+	return auctionInstruments, err
 }
 
 // GetPositions gets user positions.

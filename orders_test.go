@@ -97,6 +97,76 @@ func (ts *TestSuite) TestPlaceOrder(t *testing.T) {
 	}
 }
 
+func (ts *TestSuite) TestPlaceIceBergOrder(t *testing.T) {
+	t.Parallel()
+	params := OrderParams{
+		Exchange:        "test_iceberg",
+		Tradingsymbol:   "test_iceberg",
+		Validity:        "TTL",
+		Product:         "test_iceberg",
+		OrderType:       "test_iceberg",
+		TransactionType: "test_iceberg",
+		Quantity:        1000,
+		Price:           100,
+		IcebergLegs:     2,
+		IcebergQty:      500,
+		Tag:             "test_iceberg",
+	}
+	orderResponse, err := ts.KiteConnect.PlaceOrder("iceberg", params)
+	if err != nil {
+		t.Errorf("Error while placing iceberg order. %v", err)
+	}
+	if orderResponse.OrderID == "" {
+		t.Errorf("No order id returned. Error %v", err)
+	}
+}
+
+func (ts *TestSuite) TestPlaceCoOrder(t *testing.T) {
+	t.Parallel()
+	params := OrderParams{
+		Exchange:        "test_co",
+		Tradingsymbol:   "test_co",
+		Validity:        "test_co",
+		Product:         "test_co",
+		OrderType:       "test_co",
+		TransactionType: "test_co",
+		Quantity:        100,
+		Price:           101,
+		TriggerPrice:    100,
+		Tag:             "test_co",
+	}
+	orderResponse, err := ts.KiteConnect.PlaceOrder("co", params)
+	if err != nil {
+		t.Errorf("Error while placing co order. %v", err)
+	}
+	if orderResponse.OrderID == "" {
+		t.Errorf("No order id returned. Error %v", err)
+	}
+}
+
+func (ts *TestSuite) TestPlaceAuctionOrder(t *testing.T) {
+	t.Parallel()
+	params := OrderParams{
+		Exchange:        "test_auction",
+		Tradingsymbol:   "test_auction",
+		Validity:        "test_auction",
+		Product:         "test_auction",
+		OrderType:       "test_auction",
+		TransactionType: "test_auction",
+		Quantity:        100,
+		Price:           100,
+		AuctionNumber:   7359,
+		Tag:             "test_auction",
+	}
+	orderResponse, err := ts.KiteConnect.PlaceOrder("auction", params)
+	if err != nil {
+		t.Errorf("Error while placing auction order. %v", err)
+	}
+	if orderResponse.OrderID == "" {
+		t.Errorf("No order id returned. Error %v", err)
+	}
+}
+
 func (ts *TestSuite) TestModifyOrder(t *testing.T) {
 	t.Parallel()
 	params := OrderParams{

@@ -21,6 +21,7 @@ func TestCustomUnmarshalJSON(t *testing.T) {
 		{"{\"date\":\"2006-01-02 15:04:05\"}", false},
 		{"{\"date\":\"2006-01-02T15:04:05-0700\"}", false},
 		{"{\"date\":\"2006-01-02T\"}", true},
+		{"{\"date\":\"null\"}", true},
 	}
 
 	for _, j := range testCases {

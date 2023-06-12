@@ -28,7 +28,6 @@ const (
 	version        string        = "4.0.2"
 	requestTimeout time.Duration = 7000 * time.Millisecond
 	baseURI        string        = "https://api.kite.trade"
-	loginURI       string        = "https://kite.trade/connect/login?api_key=%s&v=3"
 	kiteBaseURI    string        = "https://kite.zerodha.com"
 	// Kite connect header version
 	kiteHeaderVersion string = "3"
@@ -42,6 +41,7 @@ const (
 	VarietyBO      = "bo"
 	VarietyCO      = "co"
 	VarietyIceberg = "iceberg"
+	VarietyAuction = "auction"
 
 	// Products
 	ProductBO   = "BO"
@@ -105,10 +105,11 @@ const (
 	URIModifyOrder     string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
 	URICancelOrder     string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
 
-	URIGetPositions     string = "/portfolio/positions"
-	URIGetHoldings      string = "/portfolio/holdings"
-	URIInitHoldingsAuth string = "/portfolio/holdings/authorise"
-	URIConvertPosition  string = "/portfolio/positions"
+	URIGetPositions       string = "/portfolio/positions"
+	URIGetHoldings        string = "/portfolio/holdings"
+	URIInitHoldingsAuth   string = "/portfolio/holdings/authorise"
+	URIAuctionInstruments string = "/portfolio/holdings/auctions"
+	URIConvertPosition    string = "/portfolio/positions"
 
 	URIOrderMargins  string = "/margins/orders"
 	URIBasketMargins string = "/margins/basket"
@@ -190,7 +191,7 @@ func (c *Client) SetAccessToken(accessToken string) {
 
 // GetLoginURL gets Kite Connect login endpoint.
 func (c *Client) GetLoginURL() string {
-	return fmt.Sprintf(loginURI, c.apiKey)
+	return fmt.Sprintf("%s/connect/login?api_key=%s&v=%s", kiteBaseURI, c.apiKey, kiteHeaderVersion)
 }
 
 func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.Header, v interface{}) error {
