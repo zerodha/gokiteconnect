@@ -24,6 +24,7 @@ type Order struct {
 	ExchangeUpdateTimestamp models.Time            `json:"exchange_update_timestamp"`
 	ExchangeTimestamp       models.Time            `json:"exchange_timestamp"`
 	Variety                 string                 `json:"variety"`
+	Modified                bool                   `json:"modified"`
 	Meta                    map[string]interface{} `json:"meta"`
 
 	Exchange        string `json:"exchange"`
@@ -44,6 +45,8 @@ type Order struct {
 	FilledQuantity    float64 `json:"filled_quantity"`
 	PendingQuantity   float64 `json:"pending_quantity"`
 	CancelledQuantity float64 `json:"cancelled_quantity"`
+
+	AuctionNumber string `json:"auction_number"`
 
 	Tag  string   `json:"tag"`
 	Tags []string `json:"tags"`
@@ -74,7 +77,7 @@ type OrderParams struct {
 	IcebergLegs int `url:"iceberg_legs,omitempty"`
 	IcebergQty  int `url:"iceberg_quantity,omitempty"`
 
-	AuctionNumber int `url:"auction_number,omitempty"`
+	AuctionNumber string `url:"auction_number,omitempty"`
 
 	Tag string `json:"tag" url:"tag,omitempty"`
 }
