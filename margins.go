@@ -19,7 +19,7 @@ type OrderMarginParam struct {
 	TriggerPrice    float64 `json:"trigger_price,omitempty"`
 }
 
-// OrderMarginParam represents an order in the Margin Calculator API
+// OrderChargesParam represents an order in the Charges Calculator API
 type OrderChargesParam struct {
 	OrderID         string  `json:"order_id"`
 	Exchange        string  `json:"exchange"`
@@ -57,6 +57,7 @@ type OrderMargins struct {
 	Total         float64 `json:"total"`
 }
 
+// OrderCharges represent an item's response from the Charges calculator API
 type OrderCharges struct {
 	Exchange        string  `json:"exchange"`
 	Tradingsymbol   string  `json:"tradingsymbol"`
