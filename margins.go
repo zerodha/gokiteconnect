@@ -174,7 +174,7 @@ func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BasketMargins, err
 	return out, nil
 }
 
-func (c *Client) GetOrdersCharges(chargeParam GetChargesParams) ([]OrderCharges, error) {
+func (c *Client) GetOrderCharges(chargeParam GetChargesParams) ([]OrderCharges, error) {
 	body, err := json.Marshal(chargeParam.OrderParams)
 	if err != nil {
 		return []OrderCharges{}, err

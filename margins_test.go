@@ -121,7 +121,7 @@ func (ts *TestSuite) TestGetOrderCharges(t *testing.T) {
 			OrderID:         "11111",
 		}
 
-	orderResponseCharges, err := ts.KiteConnect.GetOrdersCharges(GetChargesParams{
+	orderResponseCharges, err := ts.KiteConnect.GetOrderCharges(GetChargesParams{
 		OrderParams: []OrderChargesParam{params},
 	})
 	if err != nil {
