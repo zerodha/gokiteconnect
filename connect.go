@@ -113,6 +113,7 @@ const (
 
 	URIOrderMargins  string = "/margins/orders"
 	URIBasketMargins string = "/margins/basket"
+	URIOrderCharges  string = "/charges/orders"
 
 	// MF endpoints
 	URIGetMFOrders      string = "/mf/orders"
