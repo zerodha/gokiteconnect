@@ -152,7 +152,7 @@ func (ts *TestSuite) TestGetOrderCharges(t *testing.T) {
 		t.Errorf("Error while getting order charges: %v", err)
 	}
 
-	if len(orderResponseCharges) != 1 {
+	if len(orderResponseCharges) != 3 {
 		t.Errorf("Incorrect response, expected len(orderResponseCharges) to be 3, got: %v", len(orderResponseCharges))
 	}
 }
