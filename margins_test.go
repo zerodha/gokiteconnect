@@ -109,26 +109,50 @@ func (ts *TestSuite) TestGetOrderCharges(t *testing.T) {
 	t.Parallel()
 
 	params :=
-		OrderChargesParam{
-			Exchange:        "NSE",
-			Tradingsymbol:   "INFY",
-			TransactionType: "BUY",
-			Variety:         "regular",
-			Product:         "CNC",
-			OrderType:       "MARKET",
-			Quantity:        1,
-			AveragePrice:    10,
-			OrderID:         "11111",
+		[]OrderChargesParam{
+			{
+				Exchange:        "SBIN",
+				Tradingsymbol:   "INFY",
+				TransactionType: "BUY",
+				Variety:         "regular",
+				Product:         "CNC",
+				OrderType:       "MARKET",
+				Quantity:        1,
+				AveragePrice:    560,
+				OrderID:         "11111",
+			},
+			{
+				Exchange:        "MCX",
+				Tradingsymbol:   "GOLDPETAL23JULFUT",
+				TransactionType: "SELL",
+				Variety:         "regular",
+				Product:         "NRML",
+				OrderType:       "LIMIT",
+				Quantity:        1,
+				AveragePrice:    5862,
+				OrderID:         "11111",
+			},
+			{
+				Exchange:        "NFO",
+				Tradingsymbol:   "NIFTY2371317900PE",
+				TransactionType: "BUY",
+				Variety:         "regular",
+				Product:         "NRML",
+				OrderType:       "LIMIT",
+				Quantity:        100,
+				AveragePrice:    1.5,
+				OrderID:         "11111",
+			},
 		}
 
 	orderResponseCharges, err := ts.KiteConnect.GetOrderCharges(GetChargesParams{
-		OrderParams: []OrderChargesParam{params},
+		OrderParams: params,
 	})
 	if err != nil {
-		t.Errorf("Error while getting compact basket order margins: %v", err)
+		t.Errorf("Error while getting order charges: %v", err)
 	}
 
 	if len(orderResponseCharges) != 1 {
-		t.Errorf("Incorrect response, expected len(orderResponseBasket.Orders) to be 2, got: %v", len(orderResponseCharges))
+		t.Errorf("Incorrect response, expected len(orderResponseCharges) to be 3, got: %v", len(orderResponseCharges))
 	}
 }
