@@ -130,7 +130,7 @@ func (ts *TestSuite) TestGetOrderCharges(t *testing.T) {
 				OrderType:       "LIMIT",
 				Quantity:        1,
 				AveragePrice:    5862,
-				OrderID:         "11111",
+				OrderID:         "22222",
 			},
 			{
 				Exchange:        "NFO",
@@ -141,7 +141,7 @@ func (ts *TestSuite) TestGetOrderCharges(t *testing.T) {
 				OrderType:       "LIMIT",
 				Quantity:        100,
 				AveragePrice:    1.5,
-				OrderID:         "11111",
+				OrderID:         "33333",
 			},
 		}
 
