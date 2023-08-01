@@ -19,6 +19,19 @@ type OrderMarginParam struct {
 	TriggerPrice    float64 `json:"trigger_price,omitempty"`
 }
 
+// OrderChargesParam represents an order in the Charges Calculator API
+type OrderChargesParam struct {
+	OrderID         string  `json:"order_id"`
+	Exchange        string  `json:"exchange"`
+	Tradingsymbol   string  `json:"tradingsymbol"`
+	TransactionType string  `json:"transaction_type"`
+	Variety         string  `json:"variety"`
+	Product         string  `json:"product"`
+	OrderType       string  `json:"order_type"`
+	Quantity        float64 `json:"quantity"`
+	AveragePrice    float64 `json:"average_price"`
+}
+
 // PNL represents the PNL
 type PNL struct {
 	Realised   float64 `json:"realised"`
@@ -42,6 +55,19 @@ type OrderMargins struct {
 	Leverage      float64 `json:"leverage"`
 	Charges       Charges `json:"charges"`
 	Total         float64 `json:"total"`
+}
+
+// OrderCharges represent an item's response from the Charges calculator API
+type OrderCharges struct {
+	Exchange        string  `json:"exchange"`
+	Tradingsymbol   string  `json:"tradingsymbol"`
+	TransactionType string  `json:"transaction_type"`
+	Variety         string  `json:"variety"`
+	Product         string  `json:"product"`
+	OrderType       string  `json:"order_type"`
+	Quantity        float64 `json:"quantity"`
+	Price           float64 `json:"price"`
+	Charges         Charges `json:"charges"`
 }
 
 // Charges represents breakdown of various charges that are applied to an order
@@ -80,6 +106,10 @@ type GetBasketParams struct {
 	OrderParams       []OrderMarginParam
 	Compact           bool
 	ConsiderPositions bool
+}
+
+type GetChargesParams struct {
+	OrderParams []OrderChargesParam
 }
 
 func (c *Client) GetOrderMargins(marparam GetMarginParams) ([]OrderMargins, error) {
@@ -139,6 +169,29 @@ func (c *Client) GetBasketMargins(baskparam GetBasketParams) (BasketMargins, err
 	var out BasketMargins
 	if err := readEnvelope(resp, &out); err != nil {
 		return BasketMargins{}, err
+	}
+
+	return out, nil
+}
+
+func (c *Client) GetOrderCharges(chargeParam GetChargesParams) ([]OrderCharges, error) {
+	body, err := json.Marshal(chargeParam.OrderParams)
+	if err != nil {
+		return []OrderCharges{}, err
+	}
+
+	var headers http.Header = map[string][]string{}
+	headers.Add("Content-Type", "application/json")
+
+	uri := URIOrderCharges
+	resp, err := c.doRaw(http.MethodPost, uri, body, headers)
+	if err != nil {
+		return []OrderCharges{}, err
+	}
+
+	var out []OrderCharges
+	if err := readEnvelope(resp, &out); err != nil {
+		return []OrderCharges{}, err
 	}
 
 	return out, nil

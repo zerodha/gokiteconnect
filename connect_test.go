@@ -157,6 +157,7 @@ var MockResponders = [][]string{
 	{http.MethodPost, URIOrderMargins, "order_margins.json"},
 	{http.MethodPost, URIBasketMargins, "basket_margins.json"},
 	{http.MethodPost, URIInitHoldingsAuth, "holdings_auth.json"},
+	{http.MethodPost, URIOrderCharges, "virtual_contract_note.json"},
 
 	// DELETE endpoints
 	{http.MethodDelete, URICancelOrder, "order_response.json"},
