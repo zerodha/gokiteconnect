@@ -39,6 +39,8 @@ type Ticker struct {
 	subscribedTokens map[uint32]Mode
 
 	cancel context.CancelFunc
+
+	lastPingTimeMutex sync.Mutex
 }
 
 // callbacks represents callbacks available in ticker.
@@ -339,6 +341,12 @@ func (t *Ticker) handleClose(code int, reason string) error {
 	return nil
 }
 
+func (t *Ticker) GetLastPingTime() time.Time {
+	t.lastPingTimeMutex.Lock()
+	defer t.lastPingTimeMutex.Unlock()
+	return t.lastPingTime
+}
+
 // Trigger callback methods
 func (t *Ticker) triggerError(err error) {
 	if t.callbacks.onError != nil {
@@ -368,6 +376,12 @@ func (t *Ticker) triggerNoReconnect(attempt int) {
 	if t.callbacks.onNoReconnect != nil {
 		t.callbacks.onNoReconnect(attempt)
 	}
+}
+
+func (t *Ticker) SetLastPingTime(time time.Time) {
+	t.lastPingTimeMutex.Lock()
+	defer t.lastPingTimeMutex.Unlock()
+	t.lastPingTime = time
 }
 
 func (t *Ticker) triggerMessage(messageType int, message []byte) {
@@ -401,7 +415,7 @@ func (t *Ticker) checkConnection(ctx context.Context, wg *sync.WaitGroup) {
 
 			// If last ping time is greater then timeout interval then close the
 			// existing connection and reconnect
-			if time.Since(t.lastPingTime) > dataTimeoutInterval {
+			if time.Since(t.GetLastPingTime()) > dataTimeoutInterval {
 				// Close the current connection without waiting for close frame
 				if t.Conn != nil {
 					t.Conn.Close()
@@ -434,7 +448,7 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 			t.lastPingTime = time.Now()
 
 			// Trigger message.
-			t.triggerMessage(mType, msg)
+			t.SetLastPingTime(time.Now())
 
 			// If binary message then parse and send tick.
 			if mType == websocket.BinaryMessage {
