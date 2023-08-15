@@ -445,10 +445,10 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 			}
 
 			// Update last ping time to check for connection
-			t.lastPingTime = time.Now()
+			t.SetLastPingTime(time.Now())
 
 			// Trigger message.
-			t.SetLastPingTime(time.Now())
+			t.triggerMessage(mType, msg)
 
 			// If binary message then parse and send tick.
 			if mType == websocket.BinaryMessage {
