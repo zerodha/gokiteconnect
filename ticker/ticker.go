@@ -341,7 +341,7 @@ func (t *Ticker) handleClose(code int, reason string) error {
 	return nil
 }
 
-func (t *Ticker) GetLastPingTime() time.Time {
+func (t *Ticker) getLastPingTime() time.Time {
 	t.lastPingTimeMutex.Lock()
 	defer t.lastPingTimeMutex.Unlock()
 	return t.lastPingTime
@@ -378,7 +378,7 @@ func (t *Ticker) triggerNoReconnect(attempt int) {
 	}
 }
 
-func (t *Ticker) SetLastPingTime(time time.Time) {
+func (t *Ticker) setLastPingTime(time time.Time) {
 	t.lastPingTimeMutex.Lock()
 	defer t.lastPingTimeMutex.Unlock()
 	t.lastPingTime = time
@@ -415,7 +415,7 @@ func (t *Ticker) checkConnection(ctx context.Context, wg *sync.WaitGroup) {
 
 			// If last ping time is greater then timeout interval then close the
 			// existing connection and reconnect
-			if time.Since(t.GetLastPingTime()) > dataTimeoutInterval {
+			if time.Since(t.getLastPingTime()) > dataTimeoutInterval {
 				// Close the current connection without waiting for close frame
 				if t.Conn != nil {
 					t.Conn.Close()
@@ -445,7 +445,7 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 			}
 
 			// Update last ping time to check for connection
-			t.SetLastPingTime(time.Now())
+			t.setLastPingTime(time.Now())
 
 			// Trigger message.
 			t.triggerMessage(mType, msg)
