@@ -39,6 +39,13 @@ type UserMeta struct {
 	DematConsent string `json:"demat_consent"`
 }
 
+// FullUserMeta contains full meta data of the user.
+type FullUserMeta struct {
+	DematConsent  string   `json:"poa"`
+	Silo          string   `json:"silo"`
+	AccountBlocks []string `json:"account_blocks"`
+}
+
 // UserProfile represents a user's personal and financial profile.
 type UserProfile struct {
 	UserID        string   `json:"user_id"`
@@ -55,25 +62,25 @@ type UserProfile struct {
 }
 
 type FullUserProfile struct {
-	UserID            string   `json:"user_id"`
-	UserName          string   `json:"user_name"`
-	AvatarURL         string   `json:"avatar_url"`
-	UserType          string   `json:"user_type"`
-	Email             string   `json:"email"`
-	Phone             string   `json:"phone"`
-	Broker            string   `json:"broker"`
-	TwoFAType         string   `json:"twofa_type"`
-	Banks             []Bank   `json:"bank_accounts"`
-	DPIDs             []string `json:"dp_ids"`
-	Products          []string `json:"products"`
-	OrderTypes        []string `json:"order_types"`
-	Exchanges         []string `json:"exchanges"`
-	Pan               string   `json:"pan"`
-	UserShortName     string   `json:"user_shortname"`
-	Tags              []string `json:"tags"`
-	PasswordTimestamp string   `json:"password_timestamp"`
-	TwoFATimestamp    string   `json:"twofa_timestamp"`
-	Meta              UserMeta `json:"meta"`
+	UserID            string       `json:"user_id"`
+	UserName          string       `json:"user_name"`
+	AvatarURL         string       `json:"avatar_url"`
+	UserType          string       `json:"user_type"`
+	Email             string       `json:"email"`
+	Phone             string       `json:"phone"`
+	Broker            string       `json:"broker"`
+	TwoFAType         string       `json:"twofa_type"`
+	Banks             []Bank       `json:"bank_accounts"`
+	DPIDs             []string     `json:"dp_ids"`
+	Products          []string     `json:"products"`
+	OrderTypes        []string     `json:"order_types"`
+	Exchanges         []string     `json:"exchanges"`
+	Pan               string       `json:"pan"`
+	UserShortName     string       `json:"user_shortname"`
+	Tags              []string     `json:"tags"`
+	PasswordTimestamp string       `json:"password_timestamp"`
+	TwoFATimestamp    string       `json:"twofa_timestamp"`
+	Meta              FullUserMeta `json:"meta"`
 }
 
 // Margins represents the user margins for a segment.
