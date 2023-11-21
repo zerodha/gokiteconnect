@@ -75,11 +75,11 @@ type FullUserProfile struct {
 	Products          []string     `json:"products"`
 	OrderTypes        []string     `json:"order_types"`
 	Exchanges         []string     `json:"exchanges"`
-	Pan               string       `json:"pan"`
+	PAN               string       `json:"pan"`
 	UserShortName     string       `json:"user_shortname"`
 	Tags              []string     `json:"tags"`
-	PasswordTimestamp string       `json:"password_timestamp"`
-	TwoFATimestamp    string       `json:"twofa_timestamp"`
+	PasswordTimestamp models.Time  `json:"password_timestamp"`
+	TwoFATimestamp    models.Time  `json:"twofa_timestamp"`
 	Meta              FullUserMeta `json:"meta"`
 }
 
