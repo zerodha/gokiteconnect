@@ -94,6 +94,7 @@ const (
 	URIUserSessionInvalidate string = "/session/token"
 	URIUserSessionRenew      string = "/session/refresh_token"
 	URIUserProfile           string = "/user/profile"
+	URIFullUserProfile       string = "/user/profile/full"
 	URIUserMargins           string = "/user/margins"
 	URIUserMarginsSegment    string = "/user/margins/%s" // "/user/margins/{segment}"
 

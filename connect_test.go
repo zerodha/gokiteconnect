@@ -114,6 +114,7 @@ var MockResponders = [][]string{
 
 	// GET endpoints
 	{http.MethodGet, URIUserProfile, "profile.json"},
+	{http.MethodGet, URIFullUserProfile, "full_profile.json"},
 	{http.MethodGet, URIUserMargins, "margins.json"},
 	{http.MethodGet, URIUserMarginsSegment, "margins_equity.json"},
 	{http.MethodGet, URIGetOrders, "orders.json"},

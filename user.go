@@ -39,6 +39,13 @@ type UserMeta struct {
 	DematConsent string `json:"demat_consent"`
 }
 
+// FullUserMeta contains full meta data of the user.
+type FullUserMeta struct {
+	DematConsent  string   `json:"poa"`
+	Silo          string   `json:"silo"`
+	AccountBlocks []string `json:"account_blocks"`
+}
+
 // UserProfile represents a user's personal and financial profile.
 type UserProfile struct {
 	UserID        string   `json:"user_id"`
@@ -52,6 +59,28 @@ type UserProfile struct {
 	Products      []string `json:"products"`
 	OrderTypes    []string `json:"order_types"`
 	Exchanges     []string `json:"exchanges"`
+}
+
+type FullUserProfile struct {
+	UserID            string       `json:"user_id"`
+	UserName          string       `json:"user_name"`
+	AvatarURL         string       `json:"avatar_url"`
+	UserType          string       `json:"user_type"`
+	Email             string       `json:"email"`
+	Phone             string       `json:"phone"`
+	Broker            string       `json:"broker"`
+	TwoFAType         string       `json:"twofa_type"`
+	Banks             []Bank       `json:"bank_accounts"`
+	DPIDs             []string     `json:"dp_ids"`
+	Products          []string     `json:"products"`
+	OrderTypes        []string     `json:"order_types"`
+	Exchanges         []string     `json:"exchanges"`
+	PAN               string       `json:"pan"`
+	UserShortName     string       `json:"user_shortname"`
+	Tags              []string     `json:"tags"`
+	PasswordTimestamp models.Time  `json:"password_timestamp"`
+	TwoFATimestamp    models.Time  `json:"twofa_timestamp"`
+	Meta              FullUserMeta `json:"meta"`
 }
 
 // Margins represents the user margins for a segment.
@@ -176,6 +205,13 @@ func (c *Client) GetUserProfile() (UserProfile, error) {
 	var userProfile UserProfile
 	err := c.doEnvelope(http.MethodGet, URIUserProfile, nil, nil, &userProfile)
 	return userProfile, err
+}
+
+// GetFullUserProfile gets full user profile.
+func (c *Client) GetFullUserProfile() (FullUserProfile, error) {
+	var fUserProfile FullUserProfile
+	err := c.doEnvelope(http.MethodGet, URIFullUserProfile, nil, nil, &fUserProfile)
+	return fUserProfile, err
 }
 
 // GetUserMargins gets all user margins.
