@@ -54,6 +54,28 @@ type UserProfile struct {
 	Exchanges     []string `json:"exchanges"`
 }
 
+type FullUserProfile struct {
+	UserID            string   `json:"user_id"`
+	UserName          string   `json:"user_name"`
+	AvatarURL         string   `json:"avatar_url"`
+	UserType          string   `json:"user_type"`
+	Email             string   `json:"email"`
+	Phone             string   `json:"phone"`
+	Broker            string   `json:"broker"`
+	TwoFAType         string   `json:"twofa_type"`
+	Banks             []Bank   `json:"bank_accounts"`
+	DPIDs             []string `json:"dp_ids"`
+	Products          []string `json:"products"`
+	OrderTypes        []string `json:"order_types"`
+	Exchanges         []string `json:"exchanges"`
+	Pan               string   `json:"pan"`
+	UserShortName     string   `json:"user_shortname"`
+	Tags              []string `json:"tags"`
+	PasswordTimestamp string   `json:"password_timestamp"`
+	TwoFATimestamp    string   `json:"twofa_timestamp"`
+	Meta              UserMeta `json:"meta"`
+}
+
 // Margins represents the user margins for a segment.
 type Margins struct {
 	Category  string           `json:"-"`
@@ -176,6 +198,13 @@ func (c *Client) GetUserProfile() (UserProfile, error) {
 	var userProfile UserProfile
 	err := c.doEnvelope(http.MethodGet, URIUserProfile, nil, nil, &userProfile)
 	return userProfile, err
+}
+
+// GetFullUserProfile gets full user profile.
+func (c *Client) GetFullUserProfile() (FullUserProfile, error) {
+	var fUserProfile FullUserProfile
+	err := c.doEnvelope(http.MethodGet, URIFullUserProfile, nil, nil, &fUserProfile)
+	return fUserProfile, err
 }
 
 // GetUserMargins gets all user margins.
