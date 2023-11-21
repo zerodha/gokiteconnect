@@ -1,5 +1,7 @@
 package models
 
+const istTimeZone = "Asia/Kolkata"
+
 import (
 	"errors"
 	"strings"
@@ -31,49 +33,39 @@ func (t *Time) UnmarshalJSON(b []byte) error {
 }
 
 // UnmarshalCSV converts CSV string field internal date
+func (t *Time) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(strings.Trim(string(b), "\""))
+	return t.parseTime(s)
+}
+
 func (t *Time) UnmarshalCSV(s string) error {
 	s = strings.TrimSpace(s)
+	return t.parseTime(s)
+}
 
-	pTime, err := parseTime(s)
+func (t *Time) parseTime(s string) error {
+	if s == "" || s == "null" {
+		return nil
+	}
+
+	loc, err := time.LoadLocation(istTimeZone)
 	if err != nil {
 		return err
 	}
 
-	t.Time = pTime
-	return nil
-}
+	var pTime time.Time
+	var parseErr error
 
-func parseTime(s string) (time.Time, error) {
-	var (
-		pTime time.Time
-		err   error
-	)
+	layouts := append(ctLayouts, ctZonedLayouts...)
 
-	if s == "" || s == "null" {
-		return pTime, nil
-	}
-
-	// Load IST location.
-	loc, err := time.LoadLocation("Asia/Kolkata")
-	if err != nil {
-		return pTime, err
-	}
-
-	// Iterate through zoneless layouts and assign zone as IST.
-	for _, l := range ctLayouts {
-		pTime, err = time.ParseInLocation(l, s, loc)
-		if err == nil && !pTime.IsZero() {
-			return pTime, nil
+	for _, layout := range layouts {
+		pTime, parseErr = time.Parse(layout, s)
+		if parseErr == nil && !pTime.IsZero() {
+			t.Time = pTime.In(loc)
+			return nil
 		}
 	}
 
-	// If pattern not found then iterate and parse layouts with zone.
-	for _, l := range ctZonedLayouts {
-		pTime, err = time.Parse(l, s)
-		if err == nil && !pTime.IsZero() {
-			return pTime, nil
-		}
-	}
-
-	return pTime, errors.New("unknown time format")
+	return errors.New("unknown time format")
 }
+
