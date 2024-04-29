@@ -109,12 +109,17 @@ type GTTParams struct {
 	Exchange        string
 	LastPrice       float64
 	TransactionType string
+	Product         string
 	Trigger         Trigger
 }
 
 func newGTT(o GTTParams) GTT {
 	var orders Orders
 
+	product := o.Product
+	if product == "" {
+		product = ProductCNC
+	}
 	for i := range o.Trigger.TriggerValues() {
 		orders = append(orders, Order{
 			Exchange:        o.Exchange,
@@ -123,7 +128,7 @@ func newGTT(o GTTParams) GTT {
 			Quantity:        o.Trigger.Quantities()[i],
 			Price:           o.Trigger.LimitPrices()[i],
 			OrderType:       OrderTypeLimit,
-			Product:         ProductCNC,
+			Product:         product,
 		})
 	}
 	return GTT{
