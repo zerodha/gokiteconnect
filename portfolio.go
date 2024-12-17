@@ -192,7 +192,7 @@ type HoldingAuthParams struct {
 // HoldingsAuthParams represents the response from initiating holdings authorization
 type HoldingsAuthResp struct {
 	RequestID   string `json:"request_id"`
-	RedirectURL string
+	RedirectURL string `json:"redirect_url"`
 }
 
 // InitiateHoldingsAuth initiates the holdings authorization flow. It accepts an optional
@@ -237,5 +237,5 @@ func (c *Client) InitiateHoldingsAuth(haps HoldingAuthParams) (HoldingsAuthResp,
 }
 
 func genHolAuthURL(apiKey, reqID string) string {
-	return kiteBaseURI + "/connect/portfolio/authorize/holdings/" + apiKey + "/" + reqID
+	return kiteBaseURI + "/connect/portfolio/authorise/holdings/" + apiKey + "/" + reqID
 }
