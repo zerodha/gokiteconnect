@@ -196,6 +196,12 @@ func (c *Client) GetLoginURL() string {
 	return fmt.Sprintf("%s/connect/login?api_key=%s&v=%s", kiteBaseURI, c.apiKey, kiteHeaderVersion)
 }
 
+// GetLoginURL gets Kite Connect login endpoint with redirect params appended.
+func (c *Client) GetLoginURLWithparams(p url.Values) string {
+	return fmt.Sprintf("%s/connect/login?api_key=%s&v=%s&redirect_params=%s",
+		kiteBaseURI, c.apiKey, kiteHeaderVersion, url.QueryEscape(p.Encode()))
+}
+
 func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.Header, v interface{}) error {
 	if params == nil {
 		params = url.Values{}
