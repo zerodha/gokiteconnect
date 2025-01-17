@@ -35,6 +35,9 @@ func (ts *TestSuite) TestGetOrders(t *testing.T) {
 		require.Equal(t, "22", orders[6].AuctionNumber)
 		require.Equal(t, false, orders[6].Modified)
 	})
+	t.Run("test mtf order", func(t *testing.T) {
+		require.Equal(t, "MTF", orders[7].Product)
+	})
 }
 
 func (ts *TestSuite) TestGetTrades(t *testing.T) {
@@ -173,6 +176,28 @@ func (ts *TestSuite) TestPlaceAuctionOrder(t *testing.T) {
 	}
 	if orderResponse.OrderID == "" {
 		t.Errorf("No order id returned. Error %v", err)
+	}
+}
+
+func (ts *TestSuite) TestPlaceMTFOrder(t *testing.T) {
+	t.Parallel()
+	mtfParams := OrderParams{
+		Exchange:        "test_mtf",
+		Tradingsymbol:   "test_mtf",
+		Validity:        "test_mtf",
+		Product:         ProductMTF,
+		OrderType:       "test_mtf",
+		TransactionType: "test_mtf",
+		Quantity:        100,
+		Price:           100,
+		Tag:             "test_mtf",
+	}
+	orderResponse, err := ts.KiteConnect.PlaceOrder("test", mtfParams)
+	if err != nil {
+		t.Errorf("Error while placing mtf order. %v", err)
+	}
+	if orderResponse.OrderID == "" {
+		t.Errorf("No order id returned for placing mtf order. Error %v", err)
 	}
 }
 
