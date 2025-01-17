@@ -40,6 +40,13 @@ func (ts *TestSuite) TestGetHoldings(t *testing.T) {
 			t.Errorf("Error while fetching tradingsymbol in holdings. %v", err)
 		}
 	}
+	// MTF fields
+	if holdings[0].MTF.Quantity != 1000 {
+		t.Errorf("Error while fetching quantity in mtf holdings. %v", err)
+	}
+	if holdings[0].MTF.Value != 100000 {
+		t.Errorf("Error while fetching value in mtf holdings. %v", err)
+	}
 }
 
 func (ts *TestSuite) TestGetAuctionInstruments(t *testing.T) {

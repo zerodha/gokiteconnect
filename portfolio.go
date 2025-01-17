@@ -45,6 +45,17 @@ type Holding struct {
 	PnL                 float64 `json:"pnl"`
 	DayChange           float64 `json:"day_change"`
 	DayChangePercentage float64 `json:"day_change_percentage"`
+
+	MTF MTFHolding `json:"mtf"`
+}
+
+// MTFHolding represents the mtf details for a holding
+type MTFHolding struct {
+	Quantity      int     `json:"quantity"`
+	UsedQuantity  int     `json:"used_quantity"`
+	AveragePrice  float64 `json:"average_price"`
+	Value         float64 `json:"value"`
+	InitialMargin float64 `json:"initial_margin"`
 }
 
 // Holdings is a list of holdings

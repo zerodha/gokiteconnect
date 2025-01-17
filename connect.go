@@ -49,6 +49,7 @@ const (
 	ProductMIS  = "MIS"
 	ProductCNC  = "CNC"
 	ProductNRML = "NRML"
+	ProductMTF  = "MTF"
 
 	// Order types
 	OrderTypeMarket = "MARKET"
