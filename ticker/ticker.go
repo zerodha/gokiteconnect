@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net/url"
 	"sync"
@@ -47,12 +48,12 @@ type Ticker struct {
 type atomicTime struct {
 	v atomic.Value
 }
-	
+
 // Get returns the current timestamp.
 func (b *atomicTime) Get() time.Time {
 	return b.v.Load().(time.Time)
 }
-	 
+
 // Set sets the current timestamp.
 func (b *atomicTime) Set(value time.Time) {
 	b.v.Store(value)
@@ -356,7 +357,6 @@ func (t *Ticker) handleClose(code int, reason string) error {
 	return nil
 }
 
-
 // Trigger callback methods
 func (t *Ticker) triggerError(err error) {
 	if t.callbacks.onError != nil {
@@ -387,7 +387,6 @@ func (t *Ticker) triggerNoReconnect(attempt int) {
 		t.callbacks.onNoReconnect(attempt)
 	}
 }
-
 
 func (t *Ticker) triggerMessage(messageType int, message []byte) {
 	if t.callbacks.onMessage != nil {
@@ -445,7 +444,7 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 		default:
 			mType, msg, err := t.Conn.ReadMessage()
 			if err != nil {
-				t.triggerError(fmt.Errorf("Error reading data: %v", err))
+				t.triggerError(fmt.Errorf("error reading data: %v", err))
 				return
 			}
 
@@ -459,7 +458,7 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 			if mType == websocket.BinaryMessage {
 				ticks, err := t.parseBinary(msg)
 				if err != nil {
-					t.triggerError(fmt.Errorf("Error parsing data received: %v", err))
+					t.triggerError(fmt.Errorf("error parsing data received: %v", err))
 				}
 
 				// Trigger individual tick.
@@ -555,9 +554,9 @@ func (t *Ticker) SetMode(mode Mode, tokens []uint32) error {
 func (t *Ticker) Resubscribe() error {
 	var tokens []uint32
 	modes := map[Mode][]uint32{
-		ModeFull:  []uint32{},
-		ModeQuote: []uint32{},
-		ModeLTP:   []uint32{},
+		ModeFull:  {},
+		ModeQuote: {},
+		ModeLTP:   {},
 	}
 
 	// Make a map of mode and corresponding tokens
@@ -568,7 +567,7 @@ func (t *Ticker) Resubscribe() error {
 		}
 	}
 
-	fmt.Println("Subscribe again: ", tokens, t.subscribedTokens)
+	log.Println("DEBUG: Subscribe again:", tokens, t.subscribedTokens)
 
 	// Subscribe to tokens
 	if len(tokens) > 0 {
@@ -694,7 +693,7 @@ func parsePacket(b []byte) (models.Tick, error) {
 		// On mode full set timestamp
 		if len(b) == modeFullIndexLength {
 			tick.Mode = string(ModeFull)
-			tick.Timestamp = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[28:32])), 0)}
+			tick.Timestamp = models.Time{Time: time.Unix(int64(binary.BigEndian.Uint32(b[28:32])), 0)}
 		}
 
 		return tick, nil
@@ -729,11 +728,11 @@ func parsePacket(b []byte) (models.Tick, error) {
 	// Parse full mode.
 	if len(b) == modeFullLength {
 		tick.Mode = string(ModeFull)
-		tick.LastTradeTime = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[44:48])), 0)}
+		tick.LastTradeTime = models.Time{Time: time.Unix(int64(binary.BigEndian.Uint32(b[44:48])), 0)}
 		tick.OI = binary.BigEndian.Uint32(b[48:52])
 		tick.OIDayHigh = binary.BigEndian.Uint32(b[52:56])
 		tick.OIDayLow = binary.BigEndian.Uint32(b[56:60])
-		tick.Timestamp = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[60:64])), 0)}
+		tick.Timestamp = models.Time{Time: time.Unix(int64(binary.BigEndian.Uint32(b[60:64])), 0)}
 		tick.NetChange = lastPrice - closePrice
 
 		// Depth Information.
@@ -776,4 +775,3 @@ func convertPrice(seg uint32, val float64) float64 {
 		return val / 100.0
 	}
 }
-
