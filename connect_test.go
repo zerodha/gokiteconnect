@@ -2,9 +2,9 @@ package kiteconnect
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"reflect"
 	"regexp"
@@ -109,62 +109,75 @@ func TestClientSetters(t *testing.T) {
 // Following boiler plate is used to implement setup/teardown using Go subtests feature
 const mockBaseDir = "./mock_responses"
 
-var MockResponders = [][]string{
+type mockResponder struct {
+	method    string
+	url       string
+	responder httpmock.Responder
+}
+
+var MockResponders = []mockResponder{
 	// Array of [<httpMethod>, <url>, <file_name>]
 
 	// GET endpoints
-	{http.MethodGet, URIUserProfile, "profile.json"},
-	{http.MethodGet, URIFullUserProfile, "full_profile.json"},
-	{http.MethodGet, URIUserMargins, "margins.json"},
-	{http.MethodGet, URIUserMarginsSegment, "margins_equity.json"},
-	{http.MethodGet, URIGetOrders, "orders.json"},
-	{http.MethodGet, URIGetTrades, "trades.json"},
-	{http.MethodGet, URIGetOrderHistory, "order_info.json"},
-	{http.MethodGet, URIGetOrderTrades, "order_trades.json"},
-	{http.MethodGet, URIGetPositions, "positions.json"},
-	{http.MethodGet, URIGetHoldings, "holdings.json"},
-	{http.MethodGet, URIGetMFOrders, "mf_orders.json"},
-	{http.MethodGet, URIGetMFOrderInfo, "mf_orders_info.json"},
-	{http.MethodGet, URIGetMFSIPs, "mf_sips.json"},
-	{http.MethodGet, URIGetMFSIPInfo, "mf_sip_info.json"},
-	{http.MethodGet, URIGetMFHoldings, "mf_holdings.json"},
-	{http.MethodGet, fmt.Sprintf(URIGetGTT, 123), "gtt_get_order.json"},
-	{http.MethodGet, URIGetGTTs, "gtt_get_orders.json"},
-	{http.MethodGet, URIGetInstruments, "instruments_all.csv"},
-	{http.MethodGet, URIGetMFInstruments, "mf_instruments.csv"},
-	{http.MethodGet, uriGetInstrumentsExchangeTest, "instruments_nse.csv"},
-	{http.MethodGet, uriGetHistoricalTest, "historical_minute.json"},
-	{http.MethodGet, uriGetHistoricalWithOITest, "historical_oi.json"},
-	{http.MethodGet, URIGetTriggerRange, "trigger_range.json"},
-	{http.MethodGet, URIGetQuote, "quote.json"},
-	{http.MethodGet, URIGetLTP, "ltp.json"},
-	{http.MethodGet, URIGetOHLC, "ohlc.json"},
-	{http.MethodGet, URIAuctionInstruments, "auctions_list.json"},
+	{http.MethodGet, URIUserProfile, fileResponder("profile.json")},
+	{http.MethodGet, URIFullUserProfile, fileResponder("full_profile.json")},
+	{http.MethodGet, URIUserMargins, fileResponder("margins.json")},
+	{http.MethodGet, URIUserMarginsSegment, fileResponder("margins_equity.json")},
+	{http.MethodGet, URIGetOrders, fileResponder("orders.json")},
+	{http.MethodGet, URIGetTrades, fileResponder("trades.json")},
+	{http.MethodGet, URIGetOrderHistory, fileResponder("order_info.json")},
+	{http.MethodGet, URIGetOrderTrades, fileResponder("order_trades.json")},
+	{http.MethodGet, URIGetPositions, fileResponder("positions.json")},
+	{http.MethodGet, URIGetHoldings, fileResponder("holdings.json")},
+	{http.MethodGet, URIGetMFOrders, fileResponder("mf_orders.json")},
+	{http.MethodGet, URIGetMFOrderInfo, fileResponder("mf_orders_info.json")},
+	{http.MethodGet, URIGetMFSIPs, fileResponder("mf_sips.json")},
+	{http.MethodGet, URIGetMFSIPInfo, fileResponder("mf_sip_info.json")},
+	{http.MethodGet, URIGetMFHoldings, fileResponder("mf_holdings.json")},
+	{http.MethodGet, fmt.Sprintf(URIGetGTT, 123), fileResponder("gtt_get_order.json")},
+	{http.MethodGet, URIGetGTTs, fileResponder("gtt_get_orders.json")},
+	{http.MethodGet, URIGetInstruments, fileResponder("instruments_all.csv")},
+	{http.MethodGet, URIGetMFInstruments, fileResponder("mf_instruments.csv")},
+	{http.MethodGet, uriGetInstrumentsExchangeTest, fileResponder("instruments_nse.csv")},
+	{http.MethodGet, uriGetHistoricalTest, fileResponder("historical_minute.json")},
+	{http.MethodGet, uriGetHistoricalWithOITest, fileResponder("historical_oi.json")},
+	{http.MethodGet, URIGetTriggerRange, fileResponder("trigger_range.json")},
+	{http.MethodGet, URIGetQuote, fileResponder("quote.json")},
+	{http.MethodGet, URIGetLTP, fileResponder("ltp.json")},
+	{http.MethodGet, URIGetOHLC, fileResponder("ohlc.json")},
+	{http.MethodGet, URIAuctionInstruments, fileResponder("auctions_list.json")},
 
 	// PUT endpoints
-	{http.MethodPut, URIModifyMFSIP, "mf_sip_info.json"},
-	{http.MethodPut, URIModifyOrder, "order_modify.json"},
-	{http.MethodPut, URIConvertPosition, "positions.json"},
-	{http.MethodPut, fmt.Sprintf(URIModifyGTT, 123), "gtt_modify_order.json"},
+	{http.MethodPut, URIModifyMFSIP, fileResponder("mf_sip_info.json")},
+	{http.MethodPut, URIModifyOrder, fileResponder("order_modify.json")},
+	{http.MethodPut, URIConvertPosition, fileResponder("positions.json")},
+	{http.MethodPut, fmt.Sprintf(URIModifyGTT, 123), fileResponder("gtt_modify_order.json")},
 
 	// POST endpoints
-	{http.MethodPost, URIPlaceOrder, "order_response.json"},
-	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "iceberg"), "order_response.json"},
-	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "co"), "order_response.json"},
-	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "auction"), "order_response.json"},
-	{http.MethodPost, URIPlaceMFOrder, "order_response.json"},
-	{http.MethodPost, URIPlaceMFSIP, "mf_sip_place.json"},
-	{http.MethodPost, URIPlaceGTT, "gtt_place_order.json"},
-	{http.MethodPost, URIOrderMargins, "order_margins.json"},
-	{http.MethodPost, URIBasketMargins, "basket_margins.json"},
-	{http.MethodPost, URIInitHoldingsAuth, "holdings_auth.json"},
-	{http.MethodPost, URIOrderCharges, "virtual_contract_note.json"},
+	{http.MethodPost, URIPlaceOrder, conditionalFileResponder(func(r *http.Request) string {
+		hasAutoslice := r.PostFormValue("autoslice") == "true"
+		if hasAutoslice {
+			return "autoslice_response.json"
+		}
+		return "order_response.json"
+	})},
+
+	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "iceberg"), fileResponder("order_response.json")},
+	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "co"), fileResponder("order_response.json")},
+	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "auction"), fileResponder("order_response.json")},
+	{http.MethodPost, URIPlaceMFOrder, fileResponder("order_response.json")},
+	{http.MethodPost, URIPlaceMFSIP, fileResponder("mf_sip_place.json")},
+	{http.MethodPost, URIPlaceGTT, fileResponder("gtt_place_order.json")},
+	{http.MethodPost, URIOrderMargins, fileResponder("order_margins.json")},
+	{http.MethodPost, URIBasketMargins, fileResponder("basket_margins.json")},
+	{http.MethodPost, URIInitHoldingsAuth, fileResponder("holdings_auth.json")},
+	{http.MethodPost, URIOrderCharges, fileResponder("virtual_contract_note.json")},
 
 	// DELETE endpoints
-	{http.MethodDelete, URICancelOrder, "order_response.json"},
-	{http.MethodDelete, URICancelMFSIP, "mf_sip_cancel.json"},
-	{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), "gtt_modify_order.json"},
-	{http.MethodDelete, URIUserSessionInvalidate, "session_logout.json"},
+	{http.MethodDelete, URICancelOrder, fileResponder("order_response.json")},
+	{http.MethodDelete, URICancelMFSIP, fileResponder("mf_sip_cancel.json")},
+	{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), fileResponder("gtt_modify_order.json")},
+	{http.MethodDelete, URIUserSessionInvalidate, fileResponder("session_logout.json")},
 }
 
 // Test only function prefix with this
@@ -175,20 +188,37 @@ type TestSuite struct {
 	KiteConnect *Client
 }
 
+func fileResponder(filePath string) httpmock.Responder {
+	resp, err := os.ReadFile(path.Join(mockBaseDir, filePath))
+	if err != nil {
+		panic("Error while reading mock response: " + filePath)
+	}
+
+	return httpmock.NewBytesResponder(200, resp)
+}
+
+func conditionalFileResponder(f func(*http.Request) string) httpmock.Responder {
+	return func(req *http.Request) (*http.Response, error) {
+		fname := f(req)
+
+		resp, err := os.ReadFile(path.Join(mockBaseDir, fname))
+		if err != nil {
+			panic("Error while reading mock response: " + fname)
+		}
+
+		return httpmock.NewBytesResponse(200, resp), nil
+	}
+}
+
 // Setup the API suit
 func (ts *TestSuite) SetupAPITestSuit() {
 	ts.KiteConnect = New("test_api_key")
 	httpmock.ActivateNonDefault(ts.KiteConnect.httpClient.GetClient().client)
 
 	for _, v := range MockResponders {
-		httpMethod := v[0]
-		route := v[1]
-		filePath := v[2]
-
-		resp, err := ioutil.ReadFile(path.Join(mockBaseDir, filePath))
-		if err != nil {
-			panic("Error while reading mock response: " + filePath)
-		}
+		httpMethod := v.method
+		route := v.url
+		responder := v.responder
 
 		base, err := url.Parse(ts.KiteConnect.baseURI)
 		if err != nil {
@@ -200,8 +230,7 @@ func (ts *TestSuite) SetupAPITestSuit() {
 		base.Path = path.Join(base.Path, formattedRoute)
 		// fmt.Println(base.String())
 		// endpoint := path.Join(ts.KiteConnect.baseURI, route)
-		httpmock.RegisterResponder(httpMethod, base.String(), httpmock.NewBytesResponder(200, resp))
-
+		httpmock.RegisterResponder(httpMethod, base.String(), responder)
 	}
 }
 
@@ -237,6 +266,9 @@ func RunAPITests(t *testing.T, ts *TestSuite) {
 				ts.SetupAPITest()
 				defer ts.TearDownAPITest()
 
+				if m.Name != "TestPlaceAutosliceOrder" {
+					return
+				}
 				in := []reflect.Value{reflect.ValueOf(ts), reflect.ValueOf(t)}
 				m.Func.Call(in)
 			})

@@ -79,12 +79,33 @@ type OrderParams struct {
 
 	AuctionNumber string `url:"auction_number,omitempty"`
 
+	MarketProtection float64 `url:"market_protection,omitempty"`
+
 	Tag string `json:"tag" url:"tag,omitempty"`
 }
 
 // OrderResponse represents the order place success response.
 type OrderResponse struct {
 	OrderID string `json:"order_id"`
+}
+
+// BulkOrderResponse represents the order place success response.
+type BulkOrderResponse struct {
+	OrderID string `json:"order_id"`
+	Error   error  `json:"-,omitempty"`
+}
+
+// rawBulkOrderResponse is the intermediate response from the app. It it transformed
+// into a BulkOrderResponse.
+type rawBulkOrderResponse struct {
+	OrderID string `json:"order_id"`
+
+	Error struct {
+		Code      int         `json:"code"`
+		ErrorType string      `json:"error_type"`
+		Message   string      `json:"message"`
+		Data      interface{} `json:"data"`
+	} `json:"error,omitempty"`
 }
 
 // Trade represents an individual trade response.
@@ -148,6 +169,37 @@ func (c *Client) PlaceOrder(variety string, orderParams OrderParams) (OrderRespo
 
 	err = c.doEnvelope(http.MethodPost, fmt.Sprintf(URIPlaceOrder, variety), params, nil, &orderResponse)
 	return orderResponse, err
+}
+
+// PlaceAutosliceOrder places an autoslice order.
+func (c *Client) PlaceAutosliceOrder(variety string, orderParams OrderParams) ([]BulkOrderResponse, error) {
+	var (
+		rawOrderResponses []rawBulkOrderResponse
+		params            url.Values
+		err               error
+	)
+
+	if params, err = query.Values(orderParams); err != nil {
+		return nil, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
+	}
+
+	params.Set("autoslice", "true")
+
+	err = c.doEnvelope(http.MethodPost, fmt.Sprintf(URIPlaceOrder, variety), params, nil, &rawOrderResponses)
+	if err != nil {
+		return nil, err
+	}
+
+	orderResponses := make([]BulkOrderResponse, len(rawOrderResponses))
+	for i, orderResponse := range rawOrderResponses {
+		if orderResponse.OrderID != "" {
+			orderResponses[i].OrderID = orderResponse.OrderID
+		} else {
+			orderResponses[i].Error = NewError(orderResponse.Error.ErrorType, orderResponse.Error.Message, orderResponse.Error.Data)
+		}
+	}
+
+	return orderResponses, nil
 }
 
 // ModifyOrder modifies an order.

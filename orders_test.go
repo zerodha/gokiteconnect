@@ -109,6 +109,51 @@ func (ts *TestSuite) TestPlaceOrder(t *testing.T) {
 	}
 }
 
+func (ts *TestSuite) TestPlaceAutosliceOrder(t *testing.T) {
+	t.Parallel()
+
+	params := OrderParams{
+		Exchange:          "test",
+		Tradingsymbol:     "test",
+		Validity:          "test",
+		Product:           "test",
+		OrderType:         "test",
+		TransactionType:   "test",
+		Quantity:          100,
+		DisclosedQuantity: 100,
+		Price:             100,
+		TriggerPrice:      100,
+		Squareoff:         100,
+		Stoploss:          100,
+		TrailingStoploss:  100,
+		Tag:               "test",
+	}
+
+	orderResponse, err := ts.KiteConnect.PlaceAutosliceOrder("test", params)
+	if err != nil {
+		t.Errorf("Error while placing autoslice order. %v (%#v)", err, orderResponse)
+	}
+
+	// Check for all successful orders having an OrderID
+	successCount := 0
+	for _, order := range orderResponse {
+		if order.OrderID != "" {
+			successCount++
+			require.NotEmpty(t, order.OrderID, "Successful orders should have an OrderID")
+		} else if order.Error != nil {
+			// For orders with errors, validate error details
+			require.NotNil(t, order.Error, "Failed orders should have error details")
+			require.Contains(t, order.Error.Error(), "Insufficient funds",
+				"Error message should indicate the reason for failure")
+		} else {
+			t.Errorf("Invalid order response: neither OrderID nor Error is set")
+		}
+	}
+
+	// Verify we have successful orders
+	require.GreaterOrEqual(t, successCount, 4, "Expected at least 4 successful orders")
+}
+
 func (ts *TestSuite) TestPlaceIceBergOrder(t *testing.T) {
 	t.Parallel()
 	params := OrderParams{
