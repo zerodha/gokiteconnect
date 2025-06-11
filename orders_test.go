@@ -259,6 +259,10 @@ func (ts *TestSuite) TestIssue64(t *testing.T) {
 	}
 
 	// Check if marshal followed by unmarshall correctly parses timestamps
+	if len(orders) == 0 {
+		t.Errorf("No orders returned, cannot test timestamp parsing")
+		return
+	}
 	ord := orders[0]
 	js, err := json.Marshal(ord)
 	if err != nil {

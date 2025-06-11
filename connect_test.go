@@ -165,6 +165,14 @@ var MockResponders = [][]string{
 	{http.MethodDelete, URICancelMFSIP, "mf_sip_cancel.json"},
 	{http.MethodDelete, fmt.Sprintf(URIDeleteGTT, 123), "gtt_modify_order.json"},
 	{http.MethodDelete, URIUserSessionInvalidate, "session_logout.json"},
+
+	// Alerts API
+	{http.MethodPost, URIAlerts, "alerts_create.json"},
+	{http.MethodGet, URIAlerts, "alerts_get.json"},
+	{http.MethodGet, fmt.Sprintf(URIAlert, testUUID), "alerts_get_one.json"},
+	{http.MethodPut, fmt.Sprintf(URIAlert, testUUID), "alerts_modify.json"},
+	{http.MethodDelete, URIAlerts, "alerts_delete.json"},
+	{http.MethodGet, fmt.Sprintf(URIAlertHistory, testUUID), "alerts_history.json"},
 }
 
 // Test only function prefix with this
