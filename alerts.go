@@ -171,8 +171,6 @@ type OHLC struct {
 	Close float64 `json:"close"`
 }
 
-// --- Method signatures ---
-
 // CreateAlert creates a new alert.
 func (c *Client) CreateAlert(params AlertParams) (Alert, error) {
 	var (
@@ -263,8 +261,8 @@ func (c *Client) ModifyAlert(uuid string, params AlertParams) (Alert, error) {
 	return alert, err
 }
 
-// DeleteAlert deletes one or more alerts by UUID.
-func (c *Client) DeleteAlert(uuids ...string) error {
+// DeleteAlerts deletes one or more alerts by UUID.
+func (c *Client) DeleteAlerts(uuids ...string) error {
 	if len(uuids) == 0 {
 		return fmt.Errorf("at least one uuid must be provided")
 	}

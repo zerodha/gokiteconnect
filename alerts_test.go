@@ -77,10 +77,10 @@ func (ts *TestSuite) TestModifyAlert(t *testing.T) {
 	}
 }
 
-func (ts *TestSuite) TestDeleteAlert(t *testing.T) {
+func (ts *TestSuite) TestDeleteAlerts(t *testing.T) {
 	t.Parallel()
 
-	err := ts.KiteConnect.DeleteAlert(testUUID)
+	err := ts.KiteConnect.DeleteAlerts(testUUID)
 	if err != nil {
 		t.Errorf("Error while deleting alert: %v", err)
 	}
