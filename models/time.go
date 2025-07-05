@@ -2,6 +2,7 @@ package models
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -23,7 +24,7 @@ func (t *Time) UnmarshalJSON(b []byte) error {
 
 	pTime, err := parseTime(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to parse time from '%s': %w", s, err)
 	}
 
 	t.Time = pTime
@@ -36,7 +37,7 @@ func (t *Time) UnmarshalCSV(s string) error {
 
 	pTime, err := parseTime(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to parse time from '%s': %w", s, err)
 	}
 
 	t.Time = pTime
@@ -56,7 +57,7 @@ func parseTime(s string) (time.Time, error) {
 	// Load IST location.
 	loc, err := time.LoadLocation("Asia/Kolkata")
 	if err != nil {
-		return pTime, err
+		return pTime, fmt.Errorf("failed to load timezone 'Asia/Kolkata': %w", err)
 	}
 
 	// Iterate through zoneless layouts and assign zone as IST.

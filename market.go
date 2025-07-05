@@ -295,7 +295,7 @@ func (c *Client) parseInstruments(data interface{}, url string, params url.Value
 
 	// Get CSV response
 	if resp, err = c.do(http.MethodGet, url, params, nil); err != nil {
-		return err
+		return fmt.Errorf("http get failed for url '%s': %w", url, err)
 	}
 
 	// Unmarshal CSV response to instruments

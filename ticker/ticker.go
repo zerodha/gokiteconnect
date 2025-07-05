@@ -455,7 +455,8 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 			t.triggerMessage(mType, msg)
 
 			// If binary message then parse and send tick.
-			if mType == websocket.BinaryMessage {
+			switch mType {
+			case websocket.BinaryMessage:
 				ticks, err := t.parseBinary(msg)
 				if err != nil {
 					t.triggerError(fmt.Errorf("error parsing data received: %v", err))
@@ -465,7 +466,7 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 				for _, tick := range ticks {
 					t.triggerTick(tick)
 				}
-			} else if mType == websocket.TextMessage {
+			case websocket.TextMessage:
 				t.processTextMessage(msg)
 			}
 		}
@@ -495,7 +496,7 @@ func (t *Ticker) Subscribe(tokens []uint32) error {
 		Val:  tokens,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to subscribe : %w", err)
 	}
 
 	// Store tokens to current subscriptions
@@ -517,7 +518,7 @@ func (t *Ticker) Unsubscribe(tokens []uint32) error {
 		Val:  tokens,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to unsubscribe : %w", err)
 	}
 
 	// Remove tokens from current subscriptions
@@ -539,7 +540,7 @@ func (t *Ticker) SetMode(mode Mode, tokens []uint32) error {
 		Val:  []interface{}{mode, tokens},
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to set mode: %w", err)
 	}
 
 	// Set mode in current subscriptions stored
@@ -554,9 +555,9 @@ func (t *Ticker) SetMode(mode Mode, tokens []uint32) error {
 func (t *Ticker) Resubscribe() error {
 	var tokens []uint32
 	modes := map[Mode][]uint32{
-		ModeFull:  {},
-		ModeQuote: {},
-		ModeLTP:   {},
+		ModeFull:  make([]uint32, 0),
+		ModeQuote: make([]uint32, 0),
+		ModeLTP:   make([]uint32, 0),
 	}
 
 	// Make a map of mode and corresponding tokens
@@ -595,10 +596,11 @@ func (t *Ticker) processTextMessage(inp []byte) {
 		return
 	}
 
-	if msg.Type == messageError {
+	switch msg.Type {
+	case messageError:
 		// Trigger text error
 		t.triggerError(fmt.Errorf(msg.Data.(string)))
-	} else if msg.Type == messageOrder {
+	case messageOrder:
 		// Parse order update data
 		order := struct {
 			Data kiteconnect.Order `json:"data"`

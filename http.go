@@ -7,6 +7,7 @@ package kiteconnect
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -143,7 +144,7 @@ func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Hea
 func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers http.Header, obj interface{}) error {
 	resp, err := h.Do(method, url, params, headers)
 	if err != nil {
-		return err
+		return fmt.Errorf("http %s %s failed: %w", method, url, err)
 	}
 
 	err = readEnvelope(resp, obj)
