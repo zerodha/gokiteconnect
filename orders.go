@@ -79,6 +79,9 @@ type OrderParams struct {
 
 	AuctionNumber string `url:"auction_number,omitempty"`
 
+	MarketProtection float64 `url:"market_protection,omitempty"`
+	Autoslice        bool    `url:"autoslice,omitempty"`
+
 	Tag string `json:"tag" url:"tag,omitempty"`
 }
 

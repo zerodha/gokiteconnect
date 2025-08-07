@@ -47,12 +47,12 @@ type Ticker struct {
 type atomicTime struct {
 	v atomic.Value
 }
-	
+
 // Get returns the current timestamp.
 func (b *atomicTime) Get() time.Time {
 	return b.v.Load().(time.Time)
 }
-	 
+
 // Set sets the current timestamp.
 func (b *atomicTime) Set(value time.Time) {
 	b.v.Store(value)
@@ -356,7 +356,6 @@ func (t *Ticker) handleClose(code int, reason string) error {
 	return nil
 }
 
-
 // Trigger callback methods
 func (t *Ticker) triggerError(err error) {
 	if t.callbacks.onError != nil {
@@ -387,7 +386,6 @@ func (t *Ticker) triggerNoReconnect(attempt int) {
 		t.callbacks.onNoReconnect(attempt)
 	}
 }
-
 
 func (t *Ticker) triggerMessage(messageType int, message []byte) {
 	if t.callbacks.onMessage != nil {
@@ -445,7 +443,7 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 		default:
 			mType, msg, err := t.Conn.ReadMessage()
 			if err != nil {
-				t.triggerError(fmt.Errorf("Error reading data: %v", err))
+				t.triggerError(fmt.Errorf("error reading data: %v", err))
 				return
 			}
 
@@ -456,17 +454,18 @@ func (t *Ticker) readMessage(ctx context.Context, wg *sync.WaitGroup) {
 			t.triggerMessage(mType, msg)
 
 			// If binary message then parse and send tick.
-			if mType == websocket.BinaryMessage {
+			switch mType {
+			case websocket.BinaryMessage:
 				ticks, err := t.parseBinary(msg)
 				if err != nil {
-					t.triggerError(fmt.Errorf("Error parsing data received: %v", err))
+					t.triggerError(fmt.Errorf("error parsing data received: %v", err))
 				}
 
 				// Trigger individual tick.
 				for _, tick := range ticks {
 					t.triggerTick(tick)
 				}
-			} else if mType == websocket.TextMessage {
+			case websocket.TextMessage:
 				t.processTextMessage(msg)
 			}
 		}
@@ -776,4 +775,3 @@ func convertPrice(seg uint32, val float64) float64 {
 		return val / 100.0
 	}
 }
-

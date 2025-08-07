@@ -38,6 +38,14 @@ func (ts *TestSuite) TestGetOrders(t *testing.T) {
 	t.Run("test mtf order", func(t *testing.T) {
 		require.Equal(t, "MTF", orders[7].Product)
 	})
+	t.Run("test market protection tags", func(t *testing.T) {
+		require.Equal(t, "TATASTEEL", orders[8].TradingSymbol)
+		require.Equal(t, []string{"mktp", "mktp:2.00"}, orders[8].Tags)
+	})
+	t.Run("test autoslice tags", func(t *testing.T) {
+		require.Equal(t, "NIFTY2580724400CE", orders[9].TradingSymbol)
+		require.Equal(t, []string{"autoslice", "autoslice:1953367517640548352"}, orders[9].Tags)
+	})
 }
 
 func (ts *TestSuite) TestGetTrades(t *testing.T) {
@@ -198,6 +206,50 @@ func (ts *TestSuite) TestPlaceMTFOrder(t *testing.T) {
 	}
 	if orderResponse.OrderID == "" {
 		t.Errorf("No order id returned for placing mtf order. Error %v", err)
+	}
+}
+
+func (ts *TestSuite) TestPlaceOrderWithMarketProtection(t *testing.T) {
+	t.Parallel()
+	params := OrderParams{
+		Exchange:         "test",
+		Tradingsymbol:    "test",
+		Validity:         "test",
+		Product:          "test",
+		OrderType:        "MARKET",
+		TransactionType:  "BUY",
+		Quantity:         1,
+		MarketProtection: 2.0,
+		Tag:              "test_market_protection",
+	}
+	orderResponse, err := ts.KiteConnect.PlaceOrder("test", params)
+	if err != nil {
+		t.Errorf("Error while placing order with market protection. %v", err)
+	}
+	if orderResponse.OrderID == "" {
+		t.Errorf("No order id returned for order with market protection. Error %v", err)
+	}
+}
+
+func (ts *TestSuite) TestPlaceOrderWithAutoslice(t *testing.T) {
+	t.Parallel()
+	params := OrderParams{
+		Exchange:        "test",
+		Tradingsymbol:   "test",
+		Validity:        "test",
+		Product:         "test",
+		OrderType:       "MARKET",
+		TransactionType: "BUY",
+		Quantity:        2625,
+		Autoslice:       true, // Enable autoslice
+		Tag:             "test_autoslice",
+	}
+	orderResponse, err := ts.KiteConnect.PlaceOrder("test", params)
+	if err != nil {
+		t.Errorf("Error while placing order with autoslice. %v", err)
+	}
+	if orderResponse.OrderID == "" {
+		t.Errorf("No order id returned for order with autoslice. Error %v", err)
 	}
 }
 
