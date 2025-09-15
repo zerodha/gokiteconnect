@@ -61,6 +61,32 @@ type MTFHolding struct {
 // Holdings is a list of holdings
 type Holdings []Holding
 
+// HoldingCompact represents a single compact equity holding item in the API response
+type HoldingCompact struct {
+	Exchange        string `json:"exchange"`
+	Tradingsymbol   string `json:"tradingsymbol"`
+	InstrumentToken uint32 `json:"instrument_token"`
+
+	T1Quantity int `json:"t1_quantity"`
+	Quantity   int `json:"quantity"`
+
+	// Hidden field, it gets nulled while sending to the outside world.
+	Exchanges []string `json:"exchanges,omitempty"`
+}
+
+// HoldingsCompact represents a list of compact Holding entries.
+type HoldingsCompact []HoldingCompact
+
+// HoldingSummary represents a summary of all holdings.
+type HoldingSummary struct {
+	TotalPnL        float64 `json:"total_pnl"`
+	TotalPnLPercent float64 `json:"total_pnl_percent"`
+	TodayPnL        float64 `json:"today_pnl"`
+	TodayPnLPercent float64 `json:"today_pnl_percent"`
+	InvestedAmount  float64 `json:"invested_amount"`
+	CurrentValue    float64 `json:"current_value"`
+}
+
 // Position represents an individual position response.
 type Position struct {
 	Tradingsymbol   string `json:"tradingsymbol"`
@@ -148,6 +174,20 @@ func (c *Client) GetHoldings() (Holdings, error) {
 	var holdings Holdings
 	err := c.doEnvelope(http.MethodGet, URIGetHoldings, nil, nil, &holdings)
 	return holdings, err
+}
+
+// GetHoldingsSummary gets a summary of holdings.
+func (c *Client) GetHoldingsSummary() (HoldingSummary, error) {
+	var summary HoldingSummary
+	err := c.doEnvelope(http.MethodGet, URIGetHoldingsSummary, nil, nil, &summary)
+	return summary, err
+}
+
+// GetHoldingsCompact gets a compact list of holdings.
+func (c *Client) GetHoldingsCompact() (HoldingsCompact, error) {
+	var compact HoldingsCompact
+	err := c.doEnvelope(http.MethodGet, URIGetHoldingsCompact, nil, nil, &compact)
+	return compact, err
 }
 
 // GetAuctionInstruments retrieves list of available instruments for a auction session

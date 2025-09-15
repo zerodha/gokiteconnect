@@ -110,6 +110,8 @@ const (
 
 	URIGetPositions       string = "/portfolio/positions"
 	URIGetHoldings        string = "/portfolio/holdings"
+	URIGetHoldingsSummary string = "/portfolio/holdings/summary"
+	URIGetHoldingsCompact string = "/portfolio/holdings/compact"
 	URIInitHoldingsAuth   string = "/portfolio/holdings/authorise"
 	URIAuctionInstruments string = "/portfolio/holdings/auctions"
 	URIConvertPosition    string = "/portfolio/positions"
