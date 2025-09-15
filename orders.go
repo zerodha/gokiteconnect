@@ -79,6 +79,8 @@ type OrderParams struct {
 
 	AuctionNumber string `url:"auction_number,omitempty"`
 
+	MarketProtection float64 `url:"market_protection,omitempty"`
+
 	Tag string `json:"tag" url:"tag,omitempty"`
 }
 
