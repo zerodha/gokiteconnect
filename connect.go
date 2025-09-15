@@ -20,12 +20,13 @@ type Client struct {
 	accessToken string
 	debug       bool
 	baseURI     string
+	appName     string
 	httpClient  HTTPClient
 }
 
 const (
 	name           string        = "gokiteconnect"
-	version        string        = "4.0.2"
+	version        string        = "4.x.x"
 	requestTimeout time.Duration = 7000 * time.Millisecond
 	baseURI        string        = "https://api.kite.trade"
 	kiteBaseURI    string        = "https://kite.zerodha.com"
@@ -203,6 +204,19 @@ func (c *Client) GetLoginURLWithparams(p url.Values) string {
 		kiteBaseURI, c.apiKey, kiteHeaderVersion, url.QueryEscape(p.Encode()))
 }
 
+// SetAppName sets the application name to the Kite Connect instance. It is used to
+// identify the application making the API calls using the user agent.
+func (c *Client) SetAppName(appName string) {
+	c.appName = appName
+}
+
+func (c *Client) userAgent() string {
+	if c.appName != "" {
+		return fmt.Sprintf("%s/%s/%s", name, version, c.appName)
+	}
+	return fmt.Sprintf("%s/%s", name, version)
+}
+
 func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.Header, v interface{}) error {
 	if params == nil {
 		params = url.Values{}
@@ -215,7 +229,7 @@ func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.
 
 	// Add Kite Connect version to header
 	headers.Add("X-Kite-Version", kiteHeaderVersion)
-	headers.Add("User-Agent", name+"/"+version)
+	headers.Add("User-Agent", c.userAgent())
 
 	if c.apiKey != "" && c.accessToken != "" {
 		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
@@ -235,7 +249,7 @@ func (c *Client) do(method, uri string, params url.Values, headers http.Header) 
 	}
 
 	headers.Add("X-Kite-Version", kiteHeaderVersion)
-	headers.Add("User-Agent", name+"/"+version)
+	headers.Add("User-Agent", c.userAgent())
 
 	if c.apiKey != "" && c.accessToken != "" {
 		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
@@ -251,7 +265,7 @@ func (c *Client) doRaw(method, uri string, reqBody []byte, headers http.Header) 
 	}
 
 	headers.Add("X-Kite-Version", kiteHeaderVersion)
-	headers.Add("User-Agent", name+"/"+version)
+	headers.Add("User-Agent", c.userAgent())
 
 	if c.apiKey != "" && c.accessToken != "" {
 		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
