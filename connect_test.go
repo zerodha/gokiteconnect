@@ -123,6 +123,8 @@ var MockResponders = [][]string{
 	{http.MethodGet, URIGetOrderTrades, "order_trades.json"},
 	{http.MethodGet, URIGetPositions, "positions.json"},
 	{http.MethodGet, URIGetHoldings, "holdings.json"},
+	{http.MethodGet, URIGetHoldingsSummary, "holdings_summary.json"},
+	{http.MethodGet, URIGetHoldingsCompact, "holdings_compact.json"},
 	{http.MethodGet, URIGetMFOrders, "mf_orders.json"},
 	{http.MethodGet, URIGetMFOrderInfo, "mf_orders_info.json"},
 	{http.MethodGet, URIGetMFSIPs, "mf_sips.json"},
