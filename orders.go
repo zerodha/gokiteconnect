@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/google/go-querystring/query"
+
 	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
@@ -74,8 +75,9 @@ type OrderParams struct {
 	Stoploss         float64 `url:"stoploss,omitempty"`
 	TrailingStoploss float64 `url:"trailing_stoploss,omitempty"`
 
-	IcebergLegs int `url:"iceberg_legs,omitempty"`
-	IcebergQty  int `url:"iceberg_quantity,omitempty"`
+	AutoSlice   bool `url:"autoslice,omitempty"`
+	IcebergLegs int  `url:"iceberg_legs,omitempty"`
+	IcebergQty  int  `url:"iceberg_quantity,omitempty"`
 
 	AuctionNumber string `url:"auction_number,omitempty"`
 
