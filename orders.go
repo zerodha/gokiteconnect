@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	"github.com/google/go-querystring/query"
+
 	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
@@ -69,6 +70,7 @@ type OrderParams struct {
 	DisclosedQuantity int     `url:"disclosed_quantity,omitempty"`
 	Price             float64 `url:"price,omitempty"`
 	TriggerPrice      float64 `url:"trigger_price,omitempty"`
+	MarketProtection  int     `url:"market_protection,omitempty"`
 
 	Squareoff        float64 `url:"squareoff,omitempty"`
 	Stoploss         float64 `url:"stoploss,omitempty"`

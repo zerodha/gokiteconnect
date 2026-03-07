@@ -57,6 +57,9 @@ const (
 	OrderTypeSL     = "SL"
 	OrderTypeSLM    = "SL-M"
 
+	// Market protection
+	OrderMarketProtectionAuto = -1
+
 	// Validities
 	ValidityDay = "DAY"
 	ValidityIOC = "IOC"
