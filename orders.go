@@ -46,10 +46,12 @@ type Order struct {
 	PendingQuantity   float64 `json:"pending_quantity"`
 	CancelledQuantity float64 `json:"cancelled_quantity"`
 
-	AuctionNumber string `json:"auction_number"`
+	AuctionNumber    string  `json:"auction_number"`
+	MarketProtection float64 `json:"market_protection"`
 
 	Tag  string   `json:"tag"`
 	Tags []string `json:"tags"`
+	GUID string   `json:"guid"`
 }
 
 // Orders is a list of orders.
