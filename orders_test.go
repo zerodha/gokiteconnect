@@ -310,6 +310,9 @@ func TestAutosliceOrderResponse(t *testing.T) {
 	})
 }
 
+// TestPlaceAutosliceOrder tests autoslice order placement and response parsing.
+// Note: In production, autoslice orders use variety "regular" with Autoslice: true.
+// The test uses variety "autoslice" only for mock routing purposes.
 func (ts *TestSuite) TestPlaceAutosliceOrder(t *testing.T) {
 	t.Parallel()
 	params := OrderParams{

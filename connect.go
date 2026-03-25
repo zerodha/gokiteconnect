@@ -26,7 +26,7 @@ type Client struct {
 
 const (
 	name           string        = "gokiteconnect"
-	version        string        = "4.x.x"
+	version        string        = "4.4.x"
 	requestTimeout time.Duration = 7000 * time.Millisecond
 	baseURI        string        = "https://api.kite.trade"
 	kiteBaseURI    string        = "https://kite.zerodha.com"

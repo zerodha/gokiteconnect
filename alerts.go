@@ -146,7 +146,7 @@ type AlertHistoryMeta struct {
 	TradingSymbol     string  `json:"tradingsymbol"`
 	Timestamp         string  `json:"timestamp"`
 	LastPrice         float64 `json:"last_price"`
-	OHLC              OHLC    `json:"ohlc"`
+	OHLC              models.OHLC `json:"ohlc"`
 	NetChange         float64 `json:"net_change"`
 	Exchange          string  `json:"exchange"`
 	LastTradeTime     string  `json:"last_trade_time"`
@@ -161,14 +161,6 @@ type AlertHistoryMeta struct {
 	OIDayLow          int     `json:"oi_day_low"`
 	LowerCircuitLimit float64 `json:"lower_circuit_limit"`
 	UpperCircuitLimit float64 `json:"upper_circuit_limit"`
-}
-
-// OHLC represents open-high-low-close data.
-type OHLC struct {
-	Open  float64 `json:"open"`
-	High  float64 `json:"high"`
-	Low   float64 `json:"low"`
-	Close float64 `json:"close"`
 }
 
 // CreateAlert creates a new alert.
