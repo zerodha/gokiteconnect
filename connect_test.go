@@ -2,7 +2,6 @@ package kiteconnect
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"path"
@@ -12,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	httpmock "gopkg.in/jarcoal/httpmock.v1"
+	"github.com/jarcoal/httpmock"
 )
 
 const (
@@ -109,9 +108,14 @@ func TestClientSetters(t *testing.T) {
 // Following boiler plate is used to implement setup/teardown using Go subtests feature
 const mockBaseDir = "./mock_responses"
 
-var MockResponders = [][]string{
-	// Array of [<httpMethod>, <url>, <file_name>]
+// mockRoute defines a mock HTTP endpoint with its method, URL pattern, and response file.
+type mockRoute struct {
+	method   string
+	route    string
+	filePath string
+}
 
+var mockRoutes = []mockRoute{
 	// GET endpoints
 	{http.MethodGet, URIUserProfile, "profile.json"},
 	{http.MethodGet, URIFullUserProfile, "full_profile.json"},
@@ -186,68 +190,53 @@ type TestSuite struct {
 	KiteConnect *Client
 }
 
-// Setup the API suit
-func (ts *TestSuite) SetupAPITestSuit() {
+// SetupAPITestSuit sets up the mock HTTP environment for the test suite.
+func (ts *TestSuite) SetupAPITestSuit(t *testing.T) {
 	ts.KiteConnect = New("test_api_key")
 	httpmock.ActivateNonDefault(ts.KiteConnect.httpClient.GetClient().client)
 
-	for _, v := range MockResponders {
-		httpMethod := v[0]
-		route := v[1]
-		filePath := v[2]
+	// Compile the regex once for replacing URL variables.
+	re := regexp.MustCompile("%s")
 
-		resp, err := ioutil.ReadFile(path.Join(mockBaseDir, filePath))
-		if err != nil {
-			panic("Error while reading mock response: " + filePath)
-		}
-
+	for _, r := range mockRoutes {
 		base, err := url.Parse(ts.KiteConnect.baseURI)
 		if err != nil {
-			panic("Something went wrong")
+			t.Fatalf("Failed to parse base URI: %v", err)
 		}
+
 		// Replace all url variables with string "test"
-		re := regexp.MustCompile("%s")
-		formattedRoute := re.ReplaceAllString(route, "test")
+		formattedRoute := re.ReplaceAllString(r.route, "test")
 		base.Path = path.Join(base.Path, formattedRoute)
-		// fmt.Println(base.String())
-		// endpoint := path.Join(ts.KiteConnect.baseURI, route)
-		httpmock.RegisterResponder(httpMethod, base.String(), httpmock.NewBytesResponder(200, resp))
 
+		httpmock.RegisterResponder(r.method, base.String(),
+			httpmock.NewBytesResponder(200, httpmock.File(path.Join(mockBaseDir, r.filePath)).Bytes()))
 	}
+
+	// Catch any unregistered routes immediately instead of silently failing.
+	httpmock.RegisterNoResponder(httpmock.NewNotFoundResponder(t.Fatal))
 }
 
-// TearDown API suit
+// TearDownAPITestSuit cleans up the mock HTTP environment.
 func (ts *TestSuite) TearDownAPITestSuit() {
-	// defer httpmock.DeactivateAndReset()
+	httpmock.DeactivateAndReset()
 }
-
-// Individual test setup
-func (ts *TestSuite) SetupAPITest() {}
-
-// Individual test teardown
-func (ts *TestSuite) TearDownAPITest() {}
 
 /*
-Run sets up the suite, runs its test cases and tears it down:
- 1. Calls `ts.SetUpSuite`
- 2. Seeks for any methods that have `Test` prefix, for each of them it:
-    a. Calls `SetUp`
-    b. Calls the test method itself
-    c. Calls `TearDown`
- 3. Calls `ts.TearDownSuite`
+RunAPITests sets up the suite, runs its test cases and tears it down:
+ 1. Calls SetupAPITestSuit
+ 2. Seeks for any methods that have "Test" prefix, for each of them it
+    runs the test method as a subtest
+ 3. Calls TearDownAPITestSuit via t.Cleanup
 */
 func RunAPITests(t *testing.T, ts *TestSuite) {
-	ts.SetupAPITestSuit()
-	defer ts.TearDownAPITestSuit()
+	ts.SetupAPITestSuit(t)
+	t.Cleanup(ts.TearDownAPITestSuit)
 
 	suiteType := reflect.TypeOf(ts)
 	for i := 0; i < suiteType.NumMethod(); i++ {
 		m := suiteType.Method(i)
 		if strings.HasPrefix(m.Name, suiteTestMethodPrefix) {
 			t.Run(m.Name, func(t *testing.T) {
-				ts.SetupAPITest()
-				defer ts.TearDownAPITest()
-
 				in := []reflect.Value{reflect.ValueOf(ts), reflect.ValueOf(t)}
 				m.Func.Call(in)
 			})

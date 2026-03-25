@@ -11,7 +11,10 @@ func (ts *TestSuite) TestGetOrders(t *testing.T) {
 	t.Parallel()
 	orders, err := ts.KiteConnect.GetOrders()
 	if err != nil {
-		t.Errorf("Error while fetching orders. %v", err)
+		t.Fatalf("Error while fetching orders. %v", err)
+	}
+	if len(orders) == 0 {
+		t.Fatal("No orders returned")
 	}
 	t.Run("test empty/unparsed orders", func(t *testing.T) {
 		for _, order := range orders {
