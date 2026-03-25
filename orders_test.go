@@ -251,6 +251,112 @@ func (ts *TestSuite) TestExitOrder(t *testing.T) {
 	}
 }
 
+func TestAutosliceOrderResponse(t *testing.T) {
+	t.Parallel()
+
+	t.Run("success response", func(t *testing.T) {
+		data := []byte(`{
+			"order_id": "260318190751749",
+			"children": [
+				{"order_id": "260318190751750"},
+				{"order_id": "260318190751751"}
+			]
+		}`)
+		var resp OrderResponse
+		err := json.Unmarshal(data, &resp)
+		require.NoError(t, err)
+		require.Equal(t, "260318190751749", resp.OrderID)
+		require.Len(t, resp.Children, 2)
+		require.Equal(t, "260318190751750", resp.Children[0].OrderID)
+		require.Equal(t, "260318190751751", resp.Children[1].OrderID)
+		require.Nil(t, resp.Children[0].Error)
+	})
+
+	t.Run("partial failure response", func(t *testing.T) {
+		data := []byte(`{
+			"order_id": "2034173850391977984",
+			"children": [
+				{"order_id": "2034173850391977985"},
+				{
+					"error": {
+						"code": 400,
+						"error_type": "MarginException",
+						"message": "Insufficient funds. Required margin is 13751.67 but available margin is 13746.26.",
+						"data": null
+					}
+				}
+			]
+		}`)
+		var resp OrderResponse
+		err := json.Unmarshal(data, &resp)
+		require.NoError(t, err)
+		require.Equal(t, "2034173850391977984", resp.OrderID)
+		require.Len(t, resp.Children, 2)
+		require.Equal(t, "2034173850391977985", resp.Children[0].OrderID)
+		require.Nil(t, resp.Children[0].Error)
+		require.NotNil(t, resp.Children[1].Error)
+		require.Equal(t, 400, resp.Children[1].Error.Code)
+		require.Equal(t, "MarginException", resp.Children[1].Error.ErrorType)
+		require.Contains(t, resp.Children[1].Error.Message, "Insufficient funds")
+	})
+
+	t.Run("regular order backward compat", func(t *testing.T) {
+		data := []byte(`{"order_id": "151220000000000"}`)
+		var resp OrderResponse
+		err := json.Unmarshal(data, &resp)
+		require.NoError(t, err)
+		require.Equal(t, "151220000000000", resp.OrderID)
+		require.Empty(t, resp.Children)
+	})
+}
+
+func (ts *TestSuite) TestPlaceAutosliceOrder(t *testing.T) {
+	t.Parallel()
+	params := OrderParams{
+		Exchange:        "NFO",
+		Tradingsymbol:   "NIFTY26APRFUT",
+		Validity:        "DAY",
+		Product:         "NRML",
+		OrderType:       "LIMIT",
+		TransactionType: "BUY",
+		Quantity:        1755,
+		Price:           22693,
+		Autoslice:       true,
+	}
+	orderResponse, err := ts.KiteConnect.PlaceOrder("autoslice", params)
+	if err != nil {
+		t.Errorf("Error while placing autoslice order. %v", err)
+	}
+	if orderResponse.OrderID == "" {
+		t.Errorf("No parent order id returned. Error %v", err)
+	}
+	if len(orderResponse.Children) == 0 {
+		t.Errorf("No children returned for autoslice order")
+	}
+	// Check that at least one child has an order_id
+	hasOrderID := false
+	for _, child := range orderResponse.Children {
+		if child.OrderID != "" {
+			hasOrderID = true
+		}
+	}
+	if !hasOrderID {
+		t.Errorf("No child order IDs returned")
+	}
+	// Check that partial failure child has error
+	hasError := false
+	for _, child := range orderResponse.Children {
+		if child.Error != nil {
+			hasError = true
+			require.Equal(t, 400, child.Error.Code)
+			require.Equal(t, "MarginException", child.Error.ErrorType)
+		}
+	}
+	if !hasError {
+		t.Errorf("Expected at least one child error in mock response")
+	}
+}
+
 func (ts *TestSuite) TestIssue64(t *testing.T) {
 	t.Parallel()
 	orders, err := ts.KiteConnect.GetOrders()
