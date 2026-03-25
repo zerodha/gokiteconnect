@@ -694,7 +694,7 @@ func parsePacket(b []byte) (models.Tick, error) {
 		// On mode full set timestamp
 		if len(b) == modeFullIndexLength {
 			tick.Mode = string(ModeFull)
-			tick.Timestamp = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[28:32])), 0)}
+			tick.Timestamp = models.Time{Time: time.Unix(int64(binary.BigEndian.Uint32(b[28:32])), 0)}
 		}
 
 		return tick, nil
@@ -729,11 +729,11 @@ func parsePacket(b []byte) (models.Tick, error) {
 	// Parse full mode.
 	if len(b) == modeFullLength {
 		tick.Mode = string(ModeFull)
-		tick.LastTradeTime = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[44:48])), 0)}
+		tick.LastTradeTime = models.Time{Time: time.Unix(int64(binary.BigEndian.Uint32(b[44:48])), 0)}
 		tick.OI = binary.BigEndian.Uint32(b[48:52])
 		tick.OIDayHigh = binary.BigEndian.Uint32(b[52:56])
 		tick.OIDayLow = binary.BigEndian.Uint32(b[56:60])
-		tick.Timestamp = models.Time{time.Unix(int64(binary.BigEndian.Uint32(b[60:64])), 0)}
+		tick.Timestamp = models.Time{Time: time.Unix(int64(binary.BigEndian.Uint32(b[60:64])), 0)}
 		tick.NetChange = lastPrice - closePrice
 
 		// Depth Information.
