@@ -54,4 +54,58 @@ func main() {
 		fmt.Printf("Error getting margins: %v", err)
 	}
 	fmt.Println("margins: ", margins)
+
+	// Alerts examples
+	// Create alert
+	alert, err := kc.CreateAlert(kiteconnect.AlertParams{
+		Name:             "NIFTY 50 Alert",
+		Type:             kiteconnect.AlertTypeSimple,
+		LHSExchange:      "INDICES",
+		LHSTradingSymbol: "NIFTY 50",
+		LHSAttribute:     "LastTradedPrice",
+		Operator:         kiteconnect.AlertOperatorGE,
+		RHSType:          "constant",
+		RHSConstant:      27000,
+	})
+	if err != nil {
+		log.Printf("Error creating alert: %v", err)
+		return
+	}
+	fmt.Printf("Created alert: %s (UUID: %s)\n", alert.Name, alert.UUID)
+
+	// Get all alerts
+	alerts, err := kc.GetAlerts(nil)
+	if err != nil {
+		log.Printf("Error fetching alerts: %v", err)
+		return
+	}
+	fmt.Printf("Found %d alerts:\n", len(alerts))
+	for _, a := range alerts {
+		fmt.Printf("- %s (UUID: %s, Status: %s)\n", a.Name, a.UUID, a.Status)
+	}
+
+	// Modify an alert
+	modifiedAlert, err := kc.ModifyAlert(alerts[0].UUID, kiteconnect.AlertParams{
+		Name:             "Modified NIFTY 50 Alert",
+		Type:             kiteconnect.AlertTypeSimple,
+		LHSExchange:      "INDICES",
+		LHSTradingSymbol: "NIFTY 50",
+		LHSAttribute:     "LastTradedPrice",
+		Operator:         kiteconnect.AlertOperatorLE,
+		RHSType:          "constant",
+		RHSConstant:      28000,
+	})
+	if err != nil {
+		log.Printf("Error modifying alert: %v", err)
+	} else {
+		fmt.Printf("Modified alert: %s (New threshold: %v)\n", modifiedAlert.Name, modifiedAlert.RHSConstant)
+	}
+
+	// Delete single alert
+	err = kc.DeleteAlerts(alerts[0].UUID)
+	if err != nil {
+		log.Printf("Error deleting alert: %v", err)
+	} else {
+		fmt.Println("Alert deleted successfully")
+	}
 }

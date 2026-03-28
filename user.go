@@ -12,12 +12,17 @@ import (
 // UserSession represents the response after a successful authentication.
 type UserSession struct {
 	UserProfile
-	UserSessionTokens
 
-	UserID      string      `json:"user_id"`
-	APIKey      string      `json:"api_key"`
-	PublicToken string      `json:"public_token"`
-	LoginTime   models.Time `json:"login_time"`
+	UserID       string      `json:"user_id"`
+	APIKey       string      `json:"api_key"`
+	PublicToken  string      `json:"public_token"`
+	AccessToken  string      `json:"access_token"`
+	RefreshToken string      `json:"refresh_token"`
+	LoginTime    models.Time `json:"login_time"`
+
+	// Deprecated: kept for backwards compatibility with v4.3.x and earlier,
+	// where UserSession embedded UserSessionTokens.
+	UserSessionTokens UserSessionTokens `json:"-"`
 }
 
 // UserSessionTokens represents response after renew access token.
@@ -25,6 +30,14 @@ type UserSessionTokens struct {
 	UserID       string `json:"user_id"`
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
+}
+
+func (s *UserSession) syncLegacyTokens() {
+	s.UserSessionTokens = UserSessionTokens{
+		UserID:       s.UserID,
+		AccessToken:  s.AccessToken,
+		RefreshToken: s.RefreshToken,
+	}
 }
 
 // Bank represents the details of a single bank account entry on a user's file.
@@ -142,9 +155,12 @@ func (c *Client) GenerateSession(requestToken string, apiSecret string) (UserSes
 
 	var session UserSession
 	err := c.doEnvelope(http.MethodPost, URIUserSession, params, nil, &session)
+	if err == nil {
+		session.syncLegacyTokens()
+	}
 
 	// Set accessToken on successful session retrieve
-	if err != nil && session.AccessToken != "" {
+	if err == nil && session.AccessToken != "" {
 		c.SetAccessToken(session.AccessToken)
 	}
 
@@ -188,7 +204,7 @@ func (c *Client) RenewAccessToken(refreshToken string, apiSecret string) (UserSe
 	err := c.doEnvelope(http.MethodPost, URIUserSessionRenew, params, nil, &session)
 
 	// Set accessToken on successful session retrieve
-	if err != nil && session.AccessToken != "" {
+	if err == nil && session.AccessToken != "" {
 		c.SetAccessToken(session.AccessToken)
 	}
 

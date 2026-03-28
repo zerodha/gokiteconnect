@@ -46,10 +46,12 @@ type Order struct {
 	PendingQuantity   float64 `json:"pending_quantity"`
 	CancelledQuantity float64 `json:"cancelled_quantity"`
 
-	AuctionNumber string `json:"auction_number"`
+	AuctionNumber    string  `json:"auction_number"`
+	MarketProtection float64 `json:"market_protection"`
 
 	Tag  string   `json:"tag"`
 	Tags []string `json:"tags"`
+	GUID string   `json:"guid"`
 }
 
 // Orders is a list of orders.
@@ -79,12 +81,35 @@ type OrderParams struct {
 
 	AuctionNumber string `url:"auction_number,omitempty"`
 
+	MarketProtection float64 `url:"market_protection,omitempty"`
+
+	Autoslice bool `url:"autoslice,omitempty"`
+
 	Tag string `json:"tag" url:"tag,omitempty"`
 }
 
 // OrderResponse represents the order place success response.
+// For autoslice orders, the response includes the parent order ID
+// and a list of child orders in the Children field.
 type OrderResponse struct {
-	OrderID string `json:"order_id"`
+	OrderID  string       `json:"order_id"`
+	Children []OrderChild `json:"children,omitempty"`
+}
+
+// OrderChild represents a child order in an autoslice order response.
+// Each child is either a successfully placed order (OrderID is set) or
+// a failed order (Error is set).
+type OrderChild struct {
+	OrderID string          `json:"order_id,omitempty"`
+	Error   *OrderChildError `json:"error,omitempty"`
+}
+
+// OrderChildError represents an error for a child order in an autoslice response.
+type OrderChildError struct {
+	Code      int         `json:"code"`
+	ErrorType string      `json:"error_type"`
+	Message   string      `json:"message"`
+	Data      interface{} `json:"data"`
 }
 
 // Trade represents an individual trade response.

@@ -238,7 +238,7 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 		}
 
 		data = append(data, HistoricalData{
-			Date:   models.Time{d},
+			Date:   models.Time{Time: d},
 			Open:   open,
 			High:   high,
 			Low:    low,
