@@ -154,7 +154,7 @@ func (c *Client) GetLTP(instruments ...string) (QuoteLTP, error) {
 		return quotes, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
-	err = c.doEnvelope(http.MethodGet, URIGetQuote, params, nil, &quotes)
+	err = c.doEnvelope(http.MethodGet, URIGetLTP, params, nil, &quotes)
 	return quotes, err
 }
 
@@ -175,7 +175,7 @@ func (c *Client) GetOHLC(instruments ...string) (QuoteOHLC, error) {
 		return quotes, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
 	}
 
-	err = c.doEnvelope(http.MethodGet, URIGetQuote, params, nil, &quotes)
+	err = c.doEnvelope(http.MethodGet, URIGetOHLC, params, nil, &quotes)
 	return quotes, err
 }
 
