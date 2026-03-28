@@ -154,6 +154,8 @@ var mockRoutes = []mockRoute{
 	{http.MethodPut, fmt.Sprintf(URIModifyGTT, 123), "gtt_modify_order.json"},
 
 	// POST endpoints
+	{http.MethodPost, URIUserSession, "generate_session.json"},
+	{http.MethodPost, URIUserSessionRenew, "generate_session.json"},
 	{http.MethodPost, URIPlaceOrder, "order_response.json"},
 	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "iceberg"), "order_response.json"},
 	{http.MethodPost, fmt.Sprintf(URIPlaceOrder, "co"), "order_response.json"},
