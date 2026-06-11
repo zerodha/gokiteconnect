@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/google/go-querystring/query"
 	"github.com/stretchr/testify/require"
 )
 
@@ -252,6 +253,21 @@ func (ts *TestSuite) TestExitOrder(t *testing.T) {
 	if orderResponse.OrderID == "" {
 		t.Errorf("No order id returned. Error %v", err)
 	}
+}
+
+func TestOrderParamsAlgoIDEncoding(t *testing.T) {
+	t.Parallel()
+
+	params := OrderParams{AlgoID: "algo-123", Tag: "tag-123"}
+
+	values, err := query.Values(params)
+	require.NoError(t, err)
+	require.Equal(t, "algo-123", values.Get("algo_id"))
+
+	body, err := json.Marshal(params)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"algo_id":"algo-123"`)
+	require.Contains(t, string(body), `"tag":"tag-123"`)
 }
 
 func TestAutosliceOrderResponse(t *testing.T) {
