@@ -85,7 +85,8 @@ type OrderParams struct {
 
 	Autoslice bool `url:"autoslice,omitempty"`
 
-	Tag string `json:"tag" url:"tag,omitempty"`
+	AlgoID string `json:"algo_id" url:"algo_id,omitempty"`
+	Tag    string `json:"tag" url:"tag,omitempty"`
 }
 
 // OrderResponse represents the order place success response.
