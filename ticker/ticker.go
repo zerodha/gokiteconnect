@@ -90,7 +90,10 @@ const (
 	BseCD
 	McxFO
 	McxSX
-	Indices
+	Indices  // Equals 9
+    _       // Skip 10
+    _       // Skip 11
+    Nco     // Equals 12 (NSE Commodity)
 
 	// ModeLTP subscribes for last price.
 	ModeLTP Mode = "ltp"
@@ -770,7 +773,7 @@ func convertPrice(seg uint32, val float64) float64 {
 	switch seg {
 	case NseCD:
 		return val / 10000000.0
-	case BseCD:
+	case BseCD, Nco:
 		return val / 10000.0
 	default:
 		return val / 100.0
