@@ -2,6 +2,9 @@ package kiteconnect
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/google/go-querystring/query"
@@ -406,4 +409,68 @@ func (ts *TestSuite) TestIssue64(t *testing.T) {
 	if !ord.ExchangeTimestamp.Equal(outOrd.ExchangeTimestamp.Time) {
 		t.Errorf("Incorrect timestamp parsing.\nwant:\t%v\ngot:\t%v", ord.ExchangeTimestamp, outOrd.ExchangeTimestamp)
 	}
+}
+
+func TestCancelOrderForwardsParentOrderID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		parentOrderID *string
+		wantParent    string
+	}{
+		{
+			name:          "parent order id is forwarded",
+			parentOrderID: func() *string { s := "parent-456"; return &s }(),
+			wantParent:    "parent-456",
+		},
+		{
+			name:          "no parent order id is sent when nil",
+			parentOrderID: nil,
+			wantParent:    "",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var gotQuery url.Values
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotQuery = r.URL.Query()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"success","data":{"order_id":"order-123"}}`))
+			}))
+			defer srv.Close()
+
+			client := New("test_api_key")
+			client.SetBaseURI(srv.URL)
+
+			resp, err := client.CancelOrder("regular", "order-123", tc.parentOrderID)
+			require.NoError(t, err)
+			require.Equal(t, "order-123", resp.OrderID)
+			require.Equal(t, tc.wantParent, gotQuery.Get("parent_order_id"))
+		})
+	}
+}
+
+func TestExitOrderForwardsParentOrderID(t *testing.T) {
+	t.Parallel()
+
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"order_id":"order-123"}}`))
+	}))
+	defer srv.Close()
+
+	client := New("test_api_key")
+	client.SetBaseURI(srv.URL)
+
+	parentOrderID := "parent-456"
+	_, err := client.ExitOrder("regular", "order-123", &parentOrderID)
+	require.NoError(t, err)
+	require.Equal(t, parentOrderID, gotQuery.Get("parent_order_id"))
 }
