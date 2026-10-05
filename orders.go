@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/devshoe/gokiteconnect/models"
 	"github.com/google/go-querystring/query"
-	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
 // Order represents a individual order response.

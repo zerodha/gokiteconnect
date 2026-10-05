@@ -1,22 +1,27 @@
 package kiteconnect
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/devshoe/gokiteconnect/candles"
+	"github.com/devshoe/gokiteconnect/models"
 	"github.com/gocarina/gocsv"
 	"github.com/google/go-querystring/query"
-	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
 type quoteParams struct {
 	Instruments []string `url:"i"`
 }
 
-// Quote represents the full quote response.
-type Quote map[string]struct {
+// Quote represents the full quote response, keyed by `exchange:tradingsymbol`.
+type Quote map[string]QuoteData
+
+// QuoteData represents the full quote for a single instrument.
+type QuoteData struct {
 	InstrumentToken   int          `json:"instrument_token"`
 	Timestamp         models.Time  `json:"timestamp"`
 	LastPrice         float64      `json:"last_price"`
@@ -36,15 +41,21 @@ type Quote map[string]struct {
 	Depth             models.Depth `json:"depth"`
 }
 
-// QuoteOHLC represents OHLC quote response.
-type QuoteOHLC map[string]struct {
+// QuoteOHLC represents OHLC quote response, keyed by `exchange:tradingsymbol`.
+type QuoteOHLC map[string]QuoteOHLCData
+
+// QuoteOHLCData represents the OHLC quote for a single instrument.
+type QuoteOHLCData struct {
 	InstrumentToken int         `json:"instrument_token"`
 	LastPrice       float64     `json:"last_price"`
 	OHLC            models.OHLC `json:"ohlc"`
 }
 
-// QuoteLTP represents last price quote response.
-type QuoteLTP map[string]struct {
+// QuoteLTP represents last price quote response, keyed by `exchange:tradingsymbol`.
+type QuoteLTP map[string]QuoteLTPData
+
+// QuoteLTPData represents the last price quote for a single instrument.
+type QuoteLTPData struct {
 	InstrumentToken int     `json:"instrument_token"`
 	LastPrice       float64 `json:"last_price"`
 }
@@ -71,6 +82,28 @@ type historicalDataParams struct {
 	OI              int    `url:"oi"`
 	InstrumentToken int    `url:"instrument_token"`
 	Interval        string `url:"interval"`
+}
+
+const historicalBatchDelay = 100 * time.Millisecond
+
+// historicalBatchDuration returns the maximum date range used for a single
+// historical-data request. These limits mirror the interval-specific batching
+// rules used by tradebot.
+func historicalBatchDuration(interval string) (time.Duration, bool) {
+	switch interval {
+	case "minute", "2minute":
+		return 60 * 24 * time.Hour, true
+	case "3minute", "4minute", "5minute", "10minute":
+		return 100 * 24 * time.Hour, true
+	case "15minute", "30minute":
+		return 200 * 24 * time.Hour, true
+	case "60minute", "2hour", "3hour", "4hour":
+		return 400 * 24 * time.Hour, true
+	case "day", "week":
+		return 2000 * 24 * time.Hour, true
+	default:
+		return 0, false
+	}
 }
 
 // Instrument represents individual instrument response.
@@ -125,6 +158,9 @@ func (c *Client) GetQuote(instruments ...string) (Quote, error) {
 		qParams quoteParams
 	)
 
+	if c.enctoken != "" {
+		return nil, NewError(InputError, "Endpoint not supported for enctoken", nil)
+	}
 	qParams = quoteParams{
 		Instruments: instruments,
 	}
@@ -251,8 +287,75 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 	return data, nil
 }
 
-// GetHistoricalData gets list of historical data.
+// GetHistoricalData gets historical OHLCV candles for an instrument token.
+// Large ranges are split into interval-specific batches internally and the
+// results are returned in request order. Adjacent requests use half-open
+// [from, to) bounds and are delayed by 100ms to respect upstream rate limits.
+// Unknown interval strings retain the legacy single-request behavior.
 func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDate time.Time, toDate time.Time, continuous bool, OI bool) ([]HistoricalData, error) {
+	batchSize, batchable := historicalBatchDuration(interval)
+	if !batchable || !toDate.After(fromDate) || !fromDate.Add(batchSize).Before(toDate) {
+		return c.getHistoricalDataBatch(instrumentToken, interval, fromDate, toDate, continuous, OI)
+	}
+
+	var data []HistoricalData
+	for batchStart := fromDate; batchStart.Before(toDate); {
+		batchEnd := batchStart.Add(batchSize)
+		if batchEnd.After(toDate) {
+			batchEnd = toDate
+		}
+
+		batch, err := c.getHistoricalDataBatch(instrumentToken, interval, batchStart, batchEnd, continuous, OI)
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, batch...)
+
+		batchStart = batchEnd
+		if batchStart.Before(toDate) {
+			time.Sleep(historicalBatchDelay)
+		}
+	}
+
+	return data, nil
+}
+
+// GetHistoricalDataBySymbol gets historical OHLCV candles for an instrument ID
+// in the format of `exchange:tradingsymbol`. The ID is resolved to a token
+// through the instrument catalog's token index, then fetched with
+// GetHistoricalData.
+func (c *Client) GetHistoricalDataBySymbol(ctx context.Context, id string, interval string, fromDate time.Time, toDate time.Time, continuous bool, OI bool) (candles.Candles, error) {
+	tokens, err := c.Instruments().TokenIndex(ctx)
+	if err != nil {
+		return candles.Candles{}, fmt.Errorf("resolve instrument %q: %w", id, err)
+	}
+	token, ok := tokens.Token(models.InstrumentID(id))
+	if !ok {
+		return candles.Candles{}, fmt.Errorf("resolve instrument %q: %w", id, models.ErrNotFound)
+	}
+
+	data, err := c.GetHistoricalData(int(token), interval, fromDate, toDate, continuous, OI)
+	if err != nil {
+		return candles.Candles{}, err
+	}
+
+	series := candles.Candles{Data: make([]candles.Candle, len(data))}
+	for i, d := range data {
+		series.Data[i] = candles.Candle{
+			Timestamp: d.Date.Time,
+			Open:      d.Open,
+			High:      d.High,
+			Low:       d.Low,
+			Close:     d.Close,
+			Volume:    d.Volume,
+			OI:        d.OI,
+		}
+	}
+	return series, nil
+}
+
+// getHistoricalDataBatch makes exactly one historical-data request.
+func (c *Client) getHistoricalDataBatch(instrumentToken int, interval string, fromDate time.Time, toDate time.Time, continuous bool, OI bool) ([]HistoricalData, error) {
 	var (
 		err       error
 		data      []HistoricalData

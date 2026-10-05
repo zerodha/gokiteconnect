@@ -10,7 +10,7 @@ jobs:
   test:
     strategy:
       matrix:
-        go-version: ["1.21", "1.22", "1.23", "1.24"]
+        go-version: ["1.26"]
         platform: [ubuntu-latest]
 
     runs-on: ${{ matrix.platform }}
@@ -21,7 +21,7 @@ jobs:
           submodules: true
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go-version }}
           check-latest: true

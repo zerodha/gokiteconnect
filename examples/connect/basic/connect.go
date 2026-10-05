@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	kiteconnect "github.com/zerodha/gokiteconnect/v4"
+	kiteconnect "github.com/devshoe/gokiteconnect"
 )
 
 const (

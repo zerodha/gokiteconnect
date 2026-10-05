@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/devshoe/gokiteconnect/models"
 	"github.com/stretchr/testify/require"
-	"github.com/zerodha/gokiteconnect/v4/models"
 )
 
 func TestParseTick(t *testing.T) {

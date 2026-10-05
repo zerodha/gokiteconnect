@@ -18,10 +18,12 @@ type PlainResponse struct {
 type Client struct {
 	apiKey      string
 	accessToken string
+	enctoken    string
 	debug       bool
 	baseURI     string
 	appName     string
 	httpClient  HTTPClient
+	instruments *InstrumentCatalog
 }
 
 const (
@@ -198,6 +200,12 @@ func (c *Client) SetAccessToken(accessToken string) {
 	c.accessToken = accessToken
 }
 
+// SetEncToken sets the encryption token to the Kite Connect instance.
+func (c *Client) SetEncToken(enctoken string) {
+	c.enctoken = enctoken
+	c.baseURI = kiteBaseURI + "/oms"
+}
+
 // GetLoginURL gets Kite Connect login endpoint.
 func (c *Client) GetLoginURL() string {
 	return fmt.Sprintf("%s/connect/login?api_key=%s&v=%s", kiteBaseURI, c.apiKey, kiteHeaderVersion)
@@ -239,6 +247,9 @@ func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.
 	if c.apiKey != "" && c.accessToken != "" {
 		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
 		headers.Add("Authorization", authHeader)
+	} else if c.enctoken != "" {
+		authHeader := fmt.Sprintf("enctoken %s", c.enctoken)
+		headers.Add("Authorization", authHeader)
 	}
 
 	return c.httpClient.DoEnvelope(method, c.baseURI+uri, params, headers, v)
@@ -259,6 +270,9 @@ func (c *Client) do(method, uri string, params url.Values, headers http.Header) 
 	if c.apiKey != "" && c.accessToken != "" {
 		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
 		headers.Add("Authorization", authHeader)
+	} else if c.enctoken != "" {
+		authHeader := fmt.Sprintf("enctoken %s", c.enctoken)
+		headers.Add("Authorization", authHeader)
 	}
 
 	return c.httpClient.Do(method, c.baseURI+uri, params, headers)
@@ -274,6 +288,9 @@ func (c *Client) doRaw(method, uri string, reqBody []byte, headers http.Header) 
 
 	if c.apiKey != "" && c.accessToken != "" {
 		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+		headers.Add("Authorization", authHeader)
+	} else if c.enctoken != "" {
+		authHeader := fmt.Sprintf("enctoken %s", c.enctoken)
 		headers.Add("Authorization", authHeader)
 	}
 
