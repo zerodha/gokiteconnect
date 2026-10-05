@@ -1,13 +1,18 @@
 package kiteconnect
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/devshoe/gokiteconnect/candles"
+	"github.com/devshoe/gokiteconnect/models"
 )
 
 func TestHistoricalBatchDuration(t *testing.T) {
@@ -162,5 +167,55 @@ func TestGetHistoricalDataKeepsUnknownIntervalsAsSingleRequest(t *testing.T) {
 	mu.Unlock()
 	if got != 1 {
 		t.Fatalf("request count = %d, want 1 for an unknown interval", got)
+	}
+}
+
+// symbolRepository lists a fixed catalog; other repository methods panic
+// through the nil embedded interface if called.
+type symbolRepository struct {
+	InstrumentRepository
+	instruments []models.Instrument
+}
+
+func (r symbolRepository) List(context.Context, []string) ([]models.Instrument, error) {
+	return r.instruments, nil
+}
+
+func TestGetHistoricalDataBySymbol(t *testing.T) {
+	location := time.FixedZone("IST", 5*60*60+30*60)
+	start := time.Date(2026, time.January, 1, 9, 15, 0, 0, location)
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"candles":[["2026-01-01T09:15:00+0530",100,102,99,101,1000,25]]}}`))
+	}))
+	defer server.Close()
+
+	client := New("test_api_key")
+	client.SetBaseURI(server.URL)
+	client.SetInstrumentRepository(symbolRepository{instruments: []models.Instrument{
+		{ID: "NSE:INFY", InstrumentToken: 408065},
+	}})
+	ctx := context.Background()
+
+	series, err := client.GetHistoricalDataBySymbol(ctx, "nse:infy", "minute", start, start.Add(time.Hour), false, true)
+	if err != nil {
+		t.Fatalf("GetHistoricalDataBySymbol() error = %v", err)
+	}
+	if gotPath != "/instruments/historical/408065/minute" {
+		t.Fatalf("request path = %q, want token 408065", gotPath)
+	}
+	want := candles.Candle{Timestamp: start, Open: 100, High: 102, Low: 99, Close: 101, Volume: 1000, OI: 25}
+	if len(series.Data) != 1 || !series.Data[0].Timestamp.Equal(want.Timestamp) || series.Data[0].Close != want.Close || series.Data[0].OI != want.OI {
+		t.Fatalf("candles = %#v, want [%#v]", series.Data, want)
+	}
+
+	if _, err := client.GetHistoricalDataBySymbol(ctx, "NSE:MISSING", "minute", start, start.Add(time.Hour), false, false); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("unknown symbol error = %v, want ErrNotFound", err)
+	}
+	if _, err := New("test_api_key").GetHistoricalDataBySymbol(ctx, "NSE:INFY", "minute", start, start.Add(time.Hour), false, false); !errors.Is(err, ErrNoInstrumentRepository) {
+		t.Fatalf("no repository error = %v, want ErrNoInstrumentRepository", err)
 	}
 }

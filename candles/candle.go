@@ -11,3 +11,8 @@ type Candle struct {
 	Volume    int       `json:"volume"`
 	OI        int       `json:"oi"`
 }
+
+// Candles is a time-ordered series of candles.
+type Candles struct {
+	Data []Candle
+}

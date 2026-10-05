@@ -23,6 +23,7 @@ type Client struct {
 	baseURI     string
 	appName     string
 	httpClient  HTTPClient
+	instruments *InstrumentCatalog
 }
 
 const (

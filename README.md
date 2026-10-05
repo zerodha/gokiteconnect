@@ -67,9 +67,9 @@ func main() {
 
 ## Local instrument catalog
 
-The `instruments` package builds a normalized, searchable DuckDB catalog from
-the Zerodha instrument master. Opening the catalog refreshes it automatically
-when it has not been updated during the current day in Asia/Kolkata.
+`Client.Instruments()` exposes a normalized, searchable catalog built from the
+Zerodha instrument master. Attach a repository to enable it; the DuckDB
+implementation lives in the `repository` package.
 
 ```go
 package main
@@ -79,8 +79,8 @@ import (
 	"log"
 
 	kiteconnect "github.com/devshoe/gokiteconnect"
-	"github.com/devshoe/gokiteconnect/instruments"
-	instrumentrepo "github.com/devshoe/gokiteconnect/instruments/repository"
+	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/repository"
 )
 
 func main() {
@@ -88,21 +88,21 @@ func main() {
 	kite := kiteconnect.New("my_api_key")
 	kite.SetAccessToken("my_access_token")
 
-	repository, err := instrumentrepo.NewDuckDB(ctx, "instruments.duckdb")
+	instruments, err := repository.NewInstrumentsDuckDBRepository(ctx, "instruments.duckdb")
 	if err != nil {
 		log.Fatal(err)
 	}
+	kite.SetInstrumentRepository(instruments)
+	defer kite.Instruments().Close()
 
-	catalog, err := instruments.NewClient(ctx, kite, repository)
-	if err != nil {
-		_ = repository.Close()
+	// Refresh when the catalog has not been updated today in Asia/Kolkata.
+	if _, err := kite.Instruments().RefreshIfStale(ctx); err != nil {
 		log.Fatal(err)
 	}
-	defer catalog.Close()
 
-	options, err := catalog.GetOptions(ctx, instruments.OptionsFilter{
+	options, err := kite.Instruments().GetOptions(ctx, models.OptionsFilter{
 		UnderlyingID: "NSE:NIFTY 50",
-		Types:        []instruments.OptionType{instruments.OptionTypeCall},
+		Types:        []models.OptionType{models.OptionTypeCall},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -114,6 +114,33 @@ func main() {
 Use a new database path, or reopen a database previously created by the DuckDB
 repository. Legacy tradebot databases are rejected without modification. DuckDB
 uses CGO, so builds must have a working C toolchain and `CGO_ENABLED=1`.
+
+### Instruments terminal explorer
+
+Run the full-screen catalog browser with:
+
+```sh
+go run ./cmd/instruments-cli
+```
+
+The explorer uses `$TRADEBOT_LOCAL_STORAGE_ROOT/instruments.duckdb` by default.
+Set `TRADEBOT_INSTRUMENTS_DUCKDB_PATH` or pass `-db /path/to/catalog.duckdb`
+to use another catalog. The public Kite instrument master does not require a
+stored user session or API key. A missing or stale catalog is refreshed when the
+application opens.
+
+The main view shows listed F&O underlyings when the search field is empty and
+ranked instrument matches while typing. Select an underlying or derivative to
+open its futures and CE/strike/PE option chain. The chain supports expiry
+selection, strike bounds, and call/put filtering.
+
+- `/` focuses search and `U` returns to the F&O-underlying browser.
+- `Enter` explores the selected instrument; `Esc` returns from a chain.
+- `E` selects an expiry, `[` and `]` cycle expiries, and `F` edits filters.
+- `R` forces a complete catalog refresh and `Q` quits.
+
+The explorer is metadata-only: it does not request live quotes, calculate
+moneyness, manage watchlists, or place trades. Mouse navigation is supported.
 
 ## Kite ticker usage
 

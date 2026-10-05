@@ -15,7 +15,7 @@ import (
 	"time"
 
 	kiteconnect "github.com/devshoe/gokiteconnect"
-	instrumentcatalog "github.com/devshoe/gokiteconnect/instruments"
+	"github.com/devshoe/gokiteconnect/models"
 )
 
 const catalogCSV = `instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
@@ -37,7 +37,7 @@ func TestClientCatalogQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if got := instrumentIDs(listed); !reflect.DeepEqual(got, []instrumentcatalog.InstrumentID{"NSE:INFY", "NSE:NIFTY 50"}) {
+	if got := instrumentIDs(listed); !reflect.DeepEqual(got, []models.InstrumentID{"NSE:INFY", "NSE:NIFTY 50"}) {
 		t.Fatalf("List(NSE) IDs = %v", got)
 	}
 
@@ -52,10 +52,10 @@ func TestClientCatalogQueries(t *testing.T) {
 	if err != nil || byToken.ID != "NSE:INFY" {
 		t.Fatalf("GetByToken() = %#v, %v", byToken, err)
 	}
-	if _, err := client.Get(ctx, "NSE:MISSING"); !errors.Is(err, instrumentcatalog.ErrNotFound) {
+	if _, err := client.Get(ctx, "NSE:MISSING"); !errors.Is(err, models.ErrNotFound) {
 		t.Fatalf("Get(missing) error = %v, want ErrNotFound", err)
 	}
-	if _, err := client.GetByToken(ctx, 0); !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
+	if _, err := client.GetByToken(ctx, 0); !errors.Is(err, models.ErrInvalidInput) {
 		t.Fatalf("GetByToken(0) error = %v, want ErrInvalidInput", err)
 	}
 
@@ -66,10 +66,10 @@ func TestClientCatalogQueries(t *testing.T) {
 	if len(searchResults) != 1 || searchResults[0].ID != "NFO:NIFTY26JUN20000CE" {
 		t.Fatalf("Search() = %#v", searchResults)
 	}
-	if _, err := client.Search(ctx, " ", 0); !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
+	if _, err := client.Search(ctx, " ", 0); !errors.Is(err, models.ErrInvalidInput) {
 		t.Fatalf("Search(empty) error = %v, want ErrInvalidInput", err)
 	}
-	if _, err := client.Search(ctx, "::--", 0); !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
+	if _, err := client.Search(ctx, "::--", 0); !errors.Is(err, models.ErrInvalidInput) {
 		t.Fatalf("Search(punctuation) error = %v, want ErrInvalidInput", err)
 	}
 	wildcardResults, err := client.Search(ctx, "%", 10)
@@ -82,31 +82,31 @@ func TestClientCatalogQueries(t *testing.T) {
 		t.Fatalf("ListFO() = %#v, %v", fo, err)
 	}
 	underlyings, err := client.ListUnderlyingIDs(ctx, "NFO")
-	if err != nil || !reflect.DeepEqual(underlyings, []instrumentcatalog.InstrumentID{"NSE:NIFTY 50"}) {
+	if err != nil || !reflect.DeepEqual(underlyings, []models.InstrumentID{"NSE:NIFTY 50"}) {
 		t.Fatalf("ListUnderlyingIDs() = %v, %v", underlyings, err)
 	}
 
-	futures, err := client.GetFutures(ctx, instrumentcatalog.FuturesFilter{
+	futures, err := client.GetFutures(ctx, models.FuturesFilter{
 		UnderlyingID:  "NSE:NIFTY 50",
 		ExpiryNumbers: []int{0},
 	})
 	if err != nil || len(futures) != 1 || futures[0].ID != "NFO:NIFTY26JUNFUT" {
 		t.Fatalf("GetFutures() = %#v, %v", futures, err)
 	}
-	options, err := client.GetOptions(ctx, instrumentcatalog.OptionsFilter{
+	options, err := client.GetOptions(ctx, models.OptionsFilter{
 		UnderlyingID: "NSE:NIFTY 50",
 		ExpiryDates:  []time.Time{instrumentDate(2026, time.June, 25)},
-		Strikes:      &instrumentcatalog.StrikeRange{Min: floatPointer(19900), Max: floatPointer(20050)},
-		Types:        []instrumentcatalog.OptionType{instrumentcatalog.OptionTypeCall},
+		Strikes:      &models.StrikeRange{Min: floatPointer(19900), Max: floatPointer(20050)},
+		Types:        []models.OptionType{models.OptionTypeCall},
 	})
 	if err != nil || len(options) != 1 || options[0].ID != "NFO:NIFTY26JUN20000CE" {
 		t.Fatalf("GetOptions() = %#v, %v", options, err)
 	}
-	allOptions, err := client.GetOptions(ctx, instrumentcatalog.OptionsFilter{UnderlyingID: "NSE:NIFTY 50"})
+	allOptions, err := client.GetOptions(ctx, models.OptionsFilter{UnderlyingID: "NSE:NIFTY 50"})
 	if err != nil {
 		t.Fatalf("GetOptions(all) error = %v", err)
 	}
-	if got := instrumentIDs(allOptions); !reflect.DeepEqual(got, []instrumentcatalog.InstrumentID{
+	if got := instrumentIDs(allOptions); !reflect.DeepEqual(got, []models.InstrumentID{
 		"NFO:NIFTY26JUN20000CE",
 		"NFO:NIFTY26JUN20000PE",
 		"NFO:NIFTY26JUN20100CE",
@@ -138,12 +138,89 @@ func TestSearchUsesDefaultAndExplicitLimits(t *testing.T) {
 	ctx := context.Background()
 	client := openTestClient(t, ctx, &catalogTransport{body: csv.String()}, filepath.Join(t.TempDir(), "catalog.duckdb"))
 	results, err := client.Search(ctx, "match", 0)
-	if err != nil || len(results) != instrumentcatalog.DefaultSearchLimit {
+	if err != nil || len(results) != kiteconnect.DefaultInstrumentSearchLimit {
 		t.Fatalf("Search(default limit) returned %d rows, %v", len(results), err)
 	}
 	results, err = client.Search(ctx, "match", 7)
 	if err != nil || len(results) != 7 {
 		t.Fatalf("Search(explicit limit) returned %d rows, %v", len(results), err)
+	}
+}
+
+func TestReplaceLoadsMultipleAppenderChunks(t *testing.T) {
+	ctx := context.Background()
+	repository, err := NewInstrumentsDuckDBRepository(ctx, filepath.Join(t.TempDir(), "catalog.duckdb"))
+	if err != nil {
+		t.Fatalf("NewInstrumentsDuckDBRepository() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+
+	const rowCount = 4097
+	catalog := make([]models.Instrument, 0, rowCount)
+	for index := range rowCount {
+		symbol := fmt.Sprintf("BULK%05d", index)
+		name := "Bulk instrument " + symbol
+		catalog = append(catalog, models.Instrument{
+			ID:              models.InstrumentID("NSE:" + symbol),
+			Exchange:        "NSE",
+			TradingSymbol:   symbol,
+			InstrumentToken: int64(1_000_000 + index),
+			ExchangeToken:   fmt.Sprintf("%d", index),
+			Name:            &name,
+			DisplayName:     name,
+			SearchString:    symbol + " " + name,
+			TickSize:        0.05,
+			LotSize:         1,
+			InstrumentType:  "EQ",
+			Segment:         "NSE",
+		})
+	}
+	refreshedAt := time.Date(2026, time.September, 25, 3, 30, 0, 0, time.UTC)
+	if err := repository.Replace(ctx, catalog, refreshedAt); err != nil {
+		t.Fatalf("Replace(%d rows) error = %v", rowCount, err)
+	}
+
+	stored, err := repository.List(ctx, nil)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(stored) != rowCount {
+		t.Fatalf("List() returned %d rows, want %d", len(stored), rowCount)
+	}
+	if stored[0].ID != "NSE:BULK00000" || stored[len(stored)-1].ID != "NSE:BULK04096" {
+		t.Fatalf("List() boundaries = %s through %s", stored[0].ID, stored[len(stored)-1].ID)
+	}
+	gotRefreshedAt, err := repository.LastRefreshedAt(ctx)
+	if err != nil || !gotRefreshedAt.Equal(refreshedAt) {
+		t.Fatalf("LastRefreshedAt() = %v, %v; want %v", gotRefreshedAt, err, refreshedAt)
+	}
+}
+
+func TestClientSupportsColonInTradingSymbol(t *testing.T) {
+	const colonSymbolCSV = `instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange
+403209,1575,BSE SENSEX SIXTY 65:35,BSE SENSEX SIXTY 65:35,0,,0,0,1,EQ,INDICES,BSE
+422409,1650,BSE LGMD60:40ST DIV50,BSE INDEX BSE LGMD60:40ST DIV50,0,,0,0,1,EQ,INDICES,BSE
+`
+	ctx := context.Background()
+	client := openTestClient(t, ctx, &catalogTransport{body: colonSymbolCSV}, filepath.Join(t.TempDir(), "catalog.duckdb"))
+
+	instrument, err := client.Get(ctx, "bse:bse sensex sixty 65:35")
+	if err != nil {
+		t.Fatalf("Get(colon symbol) error = %v", err)
+	}
+	if instrument.ID != "BSE:BSE SENSEX SIXTY 65:35" || instrument.InstrumentToken != 403209 {
+		t.Fatalf("Get(colon symbol) = %#v", instrument)
+	}
+	results, err := client.Search(ctx, "65:35", 10)
+	if err != nil {
+		t.Fatalf("Search(colon symbol) error = %v", err)
+	}
+	if len(results) != 1 || results[0].ID != instrument.ID {
+		t.Fatalf("Search(colon symbol) = %#v", results)
 	}
 }
 
@@ -153,6 +230,29 @@ func TestClientRefreshLifecycle(t *testing.T) {
 	client, repository := openTestClientWithRepository(t, ctx, transport, filepath.Join(t.TempDir(), "catalog.duckdb"))
 	if got := transport.callCount(); got != 1 {
 		t.Fatalf("constructor fetch calls = %d, want 1", got)
+	}
+	tableRows, err := repository.db.Query(`
+		SELECT table_name
+		FROM information_schema.tables
+		WHERE table_schema = 'main'
+		ORDER BY table_name
+	`)
+	if err != nil {
+		t.Fatalf("inspect repository tables: %v", err)
+	}
+	var tableNames []string
+	for tableRows.Next() {
+		var tableName string
+		if err := tableRows.Scan(&tableName); err != nil {
+			t.Fatalf("scan repository table: %v", err)
+		}
+		tableNames = append(tableNames, tableName)
+	}
+	if err := tableRows.Close(); err != nil {
+		t.Fatalf("close repository tables: %v", err)
+	}
+	if !reflect.DeepEqual(tableNames, []string{"instruments"}) {
+		t.Fatalf("repository tables = %v, want [instruments]", tableNames)
 	}
 
 	lastRefreshed, err := client.LastRefreshedAt(ctx)
@@ -241,7 +341,7 @@ func TestFailedRefreshPreservesCatalog(t *testing.T) {
 1,11,INFY,INFOSYS,0,,0,0.05,1,EQ,NSE,NSE
 2,12,INFY,INFOSYS,0,,0,0.05,1,EQ,NSE,NSE
 `)
-	if err := client.Refresh(ctx); !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
+	if err := client.Refresh(ctx); !errors.Is(err, models.ErrInvalidInput) {
 		t.Fatalf("invalid Refresh() error = %v, want ErrInvalidInput", err)
 	}
 	if instrument, err := client.Get(ctx, "NSE:INFY"); err != nil || instrument.InstrumentToken != 408065 {
@@ -286,9 +386,9 @@ func TestNewClientRejectsLegacyDatabaseWithoutModification(t *testing.T) {
 		t.Fatalf("close legacy database: %v", err)
 	}
 
-	repository, err := NewDuckDB(ctx, path)
-	if repository != nil || !errors.Is(err, instrumentcatalog.ErrIncompatibleDatabase) {
-		t.Fatalf("NewDuckDB(legacy) = %#v, %v", repository, err)
+	repository, err := NewInstrumentsDuckDBRepository(ctx, path)
+	if repository != nil || !errors.Is(err, ErrIncompatibleInstrumentsDatabase) {
+		t.Fatalf("NewInstrumentsDuckDBRepository(legacy) = %#v, %v", repository, err)
 	}
 
 	db, err = sql.Open("duckdb", path)
@@ -300,13 +400,6 @@ func TestNewClientRejectsLegacyDatabaseWithoutModification(t *testing.T) {
 	if err := db.QueryRow("SELECT id FROM instruments").Scan(&id); err != nil || id != "NSE:INFY" {
 		t.Fatalf("legacy row after rejection = %q, %v", id, err)
 	}
-	var markerCount int
-	if err := db.QueryRow("SELECT count(*) FROM information_schema.tables WHERE table_name = 'instrument_catalog_state'").Scan(&markerCount); err != nil {
-		t.Fatalf("inspect legacy marker: %v", err)
-	}
-	if markerCount != 0 {
-		t.Fatalf("legacy database marker count = %d, want 0", markerCount)
-	}
 }
 
 func TestNewClientCanRetryAfterInitialSourceFailure(t *testing.T) {
@@ -314,7 +407,7 @@ func TestNewClientCanRetryAfterInitialSourceFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalog.duckdb")
 	transport := &catalogTransport{body: "instrument_token,exchange_token,tradingsymbol,name,last_price,expiry,strike,tick_size,lot_size,instrument_type,segment,exchange\n"}
 	client, err := newClientAtPath(ctx, newKiteClient(transport), path)
-	if client != nil || !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
+	if client != nil || !errors.Is(err, models.ErrInvalidInput) {
 		t.Fatalf("first NewClient() = %#v, %v", client, err)
 	}
 
@@ -331,43 +424,16 @@ func TestNewClientCanRetryAfterInitialSourceFailure(t *testing.T) {
 	}
 }
 
-func TestNewClientValidatesArgumentsAndSchemaVersion(t *testing.T) {
+func TestNewInstrumentsDuckDBRepositoryRejectsDirectory(t *testing.T) {
 	ctx := context.Background()
-	transport := &catalogTransport{body: catalogCSV}
-	if client, err := instrumentcatalog.NewClient(ctx, nil, nil); client != nil || !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
-		t.Fatalf("NewClient(nil Kite client) = %#v, %v", client, err)
-	}
-	if client, err := instrumentcatalog.NewClient(nil, newKiteClient(transport), nil); client != nil || !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
-		t.Fatalf("NewClient(nil context) = %#v, %v", client, err)
-	}
-	if repository, err := NewDuckDB(ctx, t.TempDir()); repository != nil || !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
-		t.Fatalf("NewDuckDB(directory) = %#v, %v", repository, err)
-	}
-
-	path := filepath.Join(t.TempDir(), "future-schema.duckdb")
-	client := openTestClient(t, ctx, transport, path)
-	if err := client.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
-	db, err := sql.Open("duckdb", path)
-	if err != nil {
-		t.Fatalf("open catalog to change version: %v", err)
-	}
-	if _, err := db.Exec("UPDATE instrument_catalog_state SET schema_version = 2 WHERE id = 1"); err != nil {
-		t.Fatalf("update schema version: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close versioned catalog: %v", err)
-	}
-	client, err = newClientAtPath(ctx, newKiteClient(transport), path)
-	if client != nil || !errors.Is(err, instrumentcatalog.ErrIncompatibleDatabase) {
-		t.Fatalf("NewClient(unsupported schema) = %#v, %v", client, err)
+	if repository, err := NewInstrumentsDuckDBRepository(ctx, t.TempDir()); repository != nil || !errors.Is(err, models.ErrInvalidInput) {
+		t.Fatalf("NewInstrumentsDuckDBRepository(directory) = %#v, %v", repository, err)
 	}
 }
 
 func TestClientHonorsCancelledContext(t *testing.T) {
 	ctx := context.Background()
-	client := openTestClient(t, ctx, &catalogTransport{body: catalogCSV}, filepath.Join(t.TempDir(), "catalog.duckdb"))
+	client, _ := openTestClientWithRepository(t, ctx, &catalogTransport{body: catalogCSV}, filepath.Join(t.TempDir(), "catalog.duckdb"))
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	if _, err := client.List(cancelled); !errors.Is(err, context.Canceled) {
@@ -376,7 +442,7 @@ func TestClientHonorsCancelledContext(t *testing.T) {
 	if err := client.Refresh(cancelled); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Refresh(cancelled) error = %v", err)
 	}
-	if _, err := client.List(nil); !errors.Is(err, instrumentcatalog.ErrInvalidInput) {
+	if _, err := client.List(nil); !errors.Is(err, models.ErrInvalidInput) {
 		t.Fatalf("List(nil) error = %v", err)
 	}
 }
@@ -427,42 +493,48 @@ func newKiteClient(transport http.RoundTripper) *kiteconnect.Client {
 	return client
 }
 
-func openTestClient(t *testing.T, ctx context.Context, transport *catalogTransport, path string) *instrumentcatalog.Client {
+func openTestClient(t *testing.T, ctx context.Context, transport *catalogTransport, path string) *kiteconnect.InstrumentCatalog {
 	t.Helper()
 	client, _ := openTestClientWithRepository(t, ctx, transport, path)
 	return client
 }
 
-func openTestClientWithRepository(t *testing.T, ctx context.Context, transport *catalogTransport, path string) (*instrumentcatalog.Client, *DuckDB) {
+func openTestClientWithRepository(t *testing.T, ctx context.Context, transport *catalogTransport, path string) (*kiteconnect.InstrumentCatalog, *InstrumentsDuckDBRepository) {
 	t.Helper()
-	repository, err := NewDuckDB(ctx, path)
+	repository, err := NewInstrumentsDuckDBRepository(ctx, path)
 	if err != nil {
-		t.Fatalf("NewDuckDB() error = %v", err)
+		t.Fatalf("NewInstrumentsDuckDBRepository() error = %v", err)
 	}
-	client, err := instrumentcatalog.NewClient(ctx, newKiteClient(transport), repository)
+	client, err := attachCatalog(ctx, newKiteClient(transport), repository)
 	if err != nil {
-		_ = repository.Close()
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("attachCatalog() error = %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return client, repository
 }
 
-func newClientAtPath(ctx context.Context, kiteClient *kiteconnect.Client, path string) (*instrumentcatalog.Client, error) {
-	repository, err := NewDuckDB(ctx, path)
+func newClientAtPath(ctx context.Context, kiteClient *kiteconnect.Client, path string) (*kiteconnect.InstrumentCatalog, error) {
+	repository, err := NewInstrumentsDuckDBRepository(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	client, err := instrumentcatalog.NewClient(ctx, kiteClient, repository)
-	if err != nil {
-		_ = repository.Close()
-		return nil, err
-	}
-	return client, nil
+	return attachCatalog(ctx, kiteClient, repository)
 }
 
-func instrumentIDs(instruments []instrumentcatalog.Instrument) []instrumentcatalog.InstrumentID {
-	ids := make([]instrumentcatalog.InstrumentID, len(instruments))
+// attachCatalog attaches repository to kiteClient and refreshes it if stale,
+// closing the catalog on failure.
+func attachCatalog(ctx context.Context, kiteClient *kiteconnect.Client, repository *InstrumentsDuckDBRepository) (*kiteconnect.InstrumentCatalog, error) {
+	kiteClient.SetInstrumentRepository(repository)
+	catalog := kiteClient.Instruments()
+	if _, err := catalog.RefreshIfStale(ctx); err != nil {
+		_ = catalog.Close()
+		return nil, err
+	}
+	return catalog, nil
+}
+
+func instrumentIDs(instruments []models.Instrument) []models.InstrumentID {
+	ids := make([]models.InstrumentID, len(instruments))
 	for i, instrument := range instruments {
 		ids[i] = instrument.ID
 	}

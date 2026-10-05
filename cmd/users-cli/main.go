@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/config"
+	kiteconnect "github.com/devshoe/gokiteconnect"
 	"github.com/devshoe/gokiteconnect/credentials"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
 	"github.com/gdamore/tcell/v2"
@@ -60,11 +60,11 @@ type userApp struct {
 }
 
 func main() {
-	settings, err := config.Load()
+	settings, err := kiteconnect.LoadConfig()
 	if err != nil {
 		fatal(err)
 	}
-	databaseFlag := flag.String("db", settings.TradebotCredentialsDBPath, "SQLite database used for the credentials store")
+	databaseFlag := flag.String("db", settings.CredentialsPath, "SQLite database used for the credentials store")
 	flag.Parse()
 
 	if err := os.MkdirAll(filepath.Dir(*databaseFlag), 0o700); err != nil {
@@ -117,27 +117,31 @@ func newUserApp(ctx context.Context, manager *credentials.UserManager, database 
 	ui.status = tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextColor(tcell.ColorLightCyan).
-		SetText("  [yellow]↑↓[/] navigate  [green]Enter[/] edit  [a] add  [d] delete  [f] refresh session  [r] reload  [s] sudo  [q] quit")
+		SetText("  [yellow]↑↓[-] navigate  [green]Enter[-] edit  [a] add  [d] delete  [f] refresh session  [r] reload  [s] sudo  [q] quit")
 	ui.status.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
 
 	header := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText("[aqua::b]◆[/] [white::b]CREDENTIALS[/] [lightblue::b]USER CONSOLE[/]  [lightcyan]Local Kite session control[/]").
+		SetText("[aqua::b]◆[-] [white::b]CREDENTIALS[-] [lightblue::b]USER CONSOLE[-]  [lightcyan]Local Kite session control[-]").
 		SetTextAlign(tview.AlignCenter)
 	header.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
 	databaseView := tview.NewTextView().
 		SetDynamicColors(true).
+		SetWrap(false).
+		SetWordWrap(false).
 		SetTextAlign(tview.AlignRight).
-		SetText(fmt.Sprintf("[yellow::b]DB[/] %s", tview.Escape(ui.database)))
+		SetText(fmt.Sprintf("[yellow::b]DB[-] %s", tview.Escape(ui.database)))
 	databaseView.SetBorder(true).SetBorderColor(tcell.ColorLightYellow).SetTitle(" Connected database ").SetTitleColor(tcell.ColorLightYellow)
 	headerRow := tview.NewFlex().SetDirection(tview.FlexColumn).
-		AddItem(header, 0, 1, false).
-		AddItem(databaseView, 48, 0, false)
+		// Keep both sides visible even in a narrow terminal. A proportional
+		// database pane avoids the fixed-width pane being pushed off-screen.
+		AddItem(header, 0, 3, false).
+		AddItem(databaseView, 0, 2, false)
 
 	help := tview.NewTextView().
 		SetDynamicColors(true).
 		SetWrap(true).
-		SetText("[aqua::b]Selected user[/]\n\nUse the arrow keys to move through the table, or use the action buttons below it. Press Enter to edit the highlighted account.\n\n[green]READY[/] means a usable session token is stored. [yellow]LOGIN NEEDED[/] means the session should be refreshed.")
+		SetText("[aqua::b]Selected user[-]\n\nUse the arrow keys to move through the table, or use the action buttons below it. Press Enter to edit the highlighted account.\n\n[green]READY[-] means a usable session token is stored. [yellow]LOGIN NEEDED[-] means the session should be refreshed.")
 	help.SetBorder(true).SetTitle("About")
 	help.SetTitleColor(tcell.ColorLightPink)
 
@@ -313,7 +317,7 @@ func (ui *userApp) reload() error {
 		ui.table.Select(1, 0)
 		ui.updateDetail(users[0])
 	} else {
-		ui.detail.SetText("[yellow::b]No users yet[/]\n\nPress [green]A[/] to add your first Kite account.")
+		ui.detail.SetText("[yellow::b]No users yet[-]\n\nPress [green]A[-] to add your first Kite account.")
 	}
 	ui.setStatus(fmt.Sprintf("  %d %s stored", len(users), pluralize("user", len(users))))
 	return nil
@@ -332,7 +336,7 @@ func (ui *userApp) updateDetail(user credentials.Credentials) {
 	if !user.LastLogin.IsZero() {
 		lastLogin = user.LastLogin.Local().Format(time.RFC822)
 	}
-	detail := fmt.Sprintf("[aqua::b]%s[/]\n\n[white]Name[/]    %s\n[white]Email[/]   %s\n[white]Broker[/]  %s\n\n[white]Mode[/]    %s\n[white]Session[/] %s\n[white]Chat ID[/] %s\n\n[lightskyblue]Last login  %s[/]",
+	detail := fmt.Sprintf("[aqua::b]%s[-]\n\n[white]Name[-]    %s\n[white]Email[-]   %s\n[white]Broker[-]  %s\n\n[white]Mode[-]    %s\n[white]Session[-] %s\n[white]Chat ID[-] %s\n\n[lightskyblue]Last login  %s[-]",
 		tview.Escape(user.UserID),
 		tview.Escape(fallback(user.UserName, "—")),
 		tview.Escape(fallback(user.Email, "—")),
@@ -342,7 +346,7 @@ func (ui *userApp) updateDetail(user credentials.Credentials) {
 		tview.Escape(fallback(user.TelegramChatID, "—")),
 		tview.Escape(lastLogin))
 	if ui.sudo {
-		detail += fmt.Sprintf("\n\n[red::b]SENSITIVE DATA · SUDO ENABLED[/]\n[white]Password[/]       %s\n[white]TOTP secret[/]    %s\n[white]API key[/]        %s\n[white]API secret[/]     %s\n\n[white]Enc token[/]      %s\n[white]Request token[/]  %s\n[white]Access token[/]   %s\n[white]KF session[/]     %s\n[white]Public token[/]   %s",
+		detail += fmt.Sprintf("\n\n[red::b]SENSITIVE DATA · SUDO ENABLED[-]\n[white]Password[-]       %s\n[white]TOTP secret[-]    %s\n[white]API key[-]        %s\n[white]API secret[-]     %s\n\n[white]Enc token[-]      %s\n[white]Request token[-]  %s\n[white]Access token[-]   %s\n[white]KF session[-]     %s\n[white]Public token[-]   %s",
 			sensitiveValue(user.Password),
 			sensitiveValue(user.TOTPSecret),
 			sensitiveValue(user.APIKey),
@@ -353,7 +357,7 @@ func (ui *userApp) updateDetail(user credentials.Credentials) {
 			sensitiveValue(user.KFSessionToken),
 			sensitiveValue(user.PublicToken))
 	} else {
-		detail += "\n\n[gray]Sensitive credentials hidden · toggle Sudo [S] to reveal.[/]"
+		detail += "\n\n[gray]Sensitive credentials hidden · toggle Sudo [S] to reveal.[-]"
 	}
 	ui.detail.SetText(detail)
 }
@@ -362,7 +366,7 @@ func (ui *userApp) toggleSudo() {
 	ui.sudo = !ui.sudo
 	if ui.sudo {
 		ui.sudoButton.SetLabel(tview.Escape("⚠ Sudo ON [S]")).SetLabelColor(tcell.ColorRed)
-		ui.setStatus("  [red::b]SUDO ENABLED[/] · raw credentials are visible in the selected-user panel")
+		ui.setStatus("  [red::b]SUDO ENABLED[-] · raw credentials are visible in the selected-user panel")
 	} else {
 		ui.sudoButton.SetLabel(tview.Escape("⚠ Sudo OFF [S]")).SetLabelColor(tcell.ColorLightYellow)
 		ui.setStatus("  Sudo disabled · sensitive credentials are hidden")
@@ -625,13 +629,13 @@ func (ui *userApp) finishOperation(err error, success string) {
 		ui.showError(reloadErr)
 		return
 	}
-	ui.setStatus("  [green::b]✔[/] " + success)
+	ui.setStatus("  [green::b]✔[-] " + success)
 }
 
 func (ui *userApp) showBusy(message string) {
 	ui.busy = true
 	view := tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
-	view.SetText("\n\n[aqua::b]◆[/]\n\n" + message + "\n\n[lightcyan]Please wait…[/]")
+	view.SetText("\n\n[aqua::b]◆[-]\n\n" + message + "\n\n[lightcyan]Please wait…[-]")
 	view.SetBorder(true).SetTitle(" Working ").SetTitleColor(tcell.ColorLightCyan)
 	ui.overlay = busyPage
 	ui.pages.AddAndSwitchToPage(busyPage, view, true)
@@ -646,7 +650,7 @@ func (ui *userApp) showError(err error) {
 		ui.closeOverlay()
 	}
 	modal := tview.NewModal().
-		SetText("[red::b]Operation failed[/]\n\n" + err.Error()).
+		SetText("[red::b]Operation failed[-]\n\n" + err.Error()).
 		AddButtons([]string{"OK"}).
 		SetDoneFunc(func(int, string) { ui.closeOverlay() })
 	ui.overlay = modalPage

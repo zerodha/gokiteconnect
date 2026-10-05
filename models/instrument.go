@@ -1,15 +1,4 @@
-// Package instruments maintains a normalized, searchable local catalog of
-// Zerodha instruments backed by DuckDB.
-//
-// Open a catalog with NewClient and close it when it is no longer needed. A
-// newly opened client refreshes automatically when the catalog is missing or
-// stale for the current Asia/Kolkata calendar day. Long-running processes can
-// call Client.RefreshIfStale on their own schedule.
-//
-// The package owns the database schema at the supplied path. Use a new path or
-// one previously created by this package; legacy tradebot databases are
-// intentionally rejected rather than migrated in place.
-package instruments
+package models
 
 import (
 	"errors"
@@ -23,11 +12,11 @@ var (
 	ErrInvalidInput = errors.New("instruments: invalid input")
 	// ErrNotFound indicates that an instrument does not exist in the catalog.
 	ErrNotFound = errors.New("instruments: instrument not found")
-	// ErrIncompatibleDatabase indicates that a database was not created by this package.
-	ErrIncompatibleDatabase = errors.New("instruments: incompatible database")
 )
 
-// InstrumentID is the canonical EXCHANGE:TRADING_SYMBOL identifier for an instrument.
+// InstrumentID is the canonical EXCHANGE:TRADING_SYMBOL identifier for an
+// instrument. The first colon is the separator; a trading symbol may contain
+// additional colons.
 type InstrumentID string
 
 // ParseInstrumentID validates and canonicalizes an instrument ID.
@@ -35,7 +24,7 @@ func ParseInstrumentID(value string) (InstrumentID, error) {
 	exchange, tradingSymbol, ok := strings.Cut(strings.TrimSpace(value), ":")
 	exchange = strings.TrimSpace(exchange)
 	tradingSymbol = strings.TrimSpace(tradingSymbol)
-	if !ok || exchange == "" || tradingSymbol == "" || strings.Contains(tradingSymbol, ":") {
+	if !ok || exchange == "" || tradingSymbol == "" {
 		return "", fmt.Errorf("%w: instrument ID %q must use EXCHANGE:TRADING_SYMBOL", ErrInvalidInput, value)
 	}
 	return InstrumentID(strings.ToUpper(exchange) + ":" + strings.ToUpper(tradingSymbol)), nil

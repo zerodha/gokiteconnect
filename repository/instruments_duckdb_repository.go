@@ -3,17 +3,17 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/instruments"
-	_ "github.com/duckdb/duckdb-go/v2"
+	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/models"
+	duckdb "github.com/duckdb/duckdb-go/v2"
 )
-
-const catalogSchemaVersion = 1
 
 const instrumentColumns = `
 	id,
@@ -60,27 +60,31 @@ var requiredInstrumentColumns = []string{
 	"underlying_is_listed",
 	"options_count",
 	"futures_count",
+	"refreshed_at",
 }
 
-// DuckDB stores a normalized instrument catalog in a package-owned DuckDB schema.
-type DuckDB struct {
+// InstrumentsDuckDBRepository stores a normalized instrument catalog in a package-owned DuckDB schema.
+type InstrumentsDuckDBRepository struct {
 	db *sql.DB
 }
 
-var _ instruments.Repository = (*DuckDB)(nil)
+// ErrIncompatibleInstrumentsDatabase indicates that a database was not created by NewInstrumentsDuckDBRepository.
+var ErrIncompatibleInstrumentsDatabase = errors.New("instruments: incompatible database")
 
-// NewDuckDB opens databasePath. The path must be new or point to a database
+var _ kiteconnect.InstrumentRepository = (*InstrumentsDuckDBRepository)(nil)
+
+// NewInstrumentsDuckDBRepository opens databasePath. The path must be new or point to a database
 // previously created by this repository.
-func NewDuckDB(ctx context.Context, databasePath string) (*DuckDB, error) {
+func NewInstrumentsDuckDBRepository(ctx context.Context, databasePath string) (*InstrumentsDuckDBRepository, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("%w: context is required", instruments.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: context is required", models.ErrInvalidInput)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	databasePath = strings.TrimSpace(databasePath)
 	if databasePath == "" {
-		return nil, fmt.Errorf("%w: database path is required", instruments.ErrInvalidInput)
+		return nil, fmt.Errorf("%w: database path is required", models.ErrInvalidInput)
 	}
 
 	isMemory := databasePath == ":memory:"
@@ -90,7 +94,7 @@ func NewDuckDB(ctx context.Context, databasePath string) (*DuckDB, error) {
 		switch {
 		case err == nil:
 			if info.IsDir() {
-				return nil, fmt.Errorf("%w: database path is a directory", instruments.ErrInvalidInput)
+				return nil, fmt.Errorf("%w: database path is a directory", models.ErrInvalidInput)
 			}
 			existed = true
 		case errors.Is(err, os.ErrNotExist):
@@ -110,7 +114,7 @@ func NewDuckDB(ctx context.Context, databasePath string) (*DuckDB, error) {
 		return nil, fmt.Errorf("instruments: connect to DuckDB: %w", err)
 	}
 
-	store := &DuckDB{db: db}
+	store := &InstrumentsDuckDBRepository{db: db}
 	if existed {
 		if err := store.validateSchema(ctx); err != nil {
 			_ = db.Close()
@@ -125,28 +129,13 @@ func NewDuckDB(ctx context.Context, databasePath string) (*DuckDB, error) {
 	return store, nil
 }
 
-func (s *DuckDB) initializeSchema(ctx context.Context) error {
+func (s *InstrumentsDuckDBRepository) initializeSchema(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("instruments: begin schema initialization: %w", err)
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `
-		CREATE TABLE instrument_catalog_state (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			schema_version INTEGER NOT NULL,
-			refreshed_at TIMESTAMP
-		)
-	`); err != nil {
-		return fmt.Errorf("instruments: create catalog state: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO instrument_catalog_state (id, schema_version, refreshed_at) VALUES (1, ?, NULL)",
-		catalogSchemaVersion,
-	); err != nil {
-		return fmt.Errorf("instruments: initialize catalog state: %w", err)
-	}
 	if _, err := tx.ExecContext(ctx, createInstrumentTableSQL("instruments")); err != nil {
 		return fmt.Errorf("instruments: create catalog table: %w", err)
 	}
@@ -159,130 +148,141 @@ func (s *DuckDB) initializeSchema(ctx context.Context) error {
 	return nil
 }
 
-func (s *DuckDB) validateSchema(ctx context.Context) error {
-	var version int
-	if err := s.db.QueryRowContext(ctx,
-		"SELECT schema_version FROM instrument_catalog_state WHERE id = 1",
-	).Scan(&version); err != nil {
-		return fmt.Errorf("%w: missing package schema marker", instruments.ErrIncompatibleDatabase)
-	}
-	if version != catalogSchemaVersion {
-		return fmt.Errorf("%w: schema version %d, expected %d", instruments.ErrIncompatibleDatabase, version, catalogSchemaVersion)
-	}
-
+func (s *InstrumentsDuckDBRepository) validateSchema(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT column_name
 		FROM information_schema.columns
 		WHERE table_name = 'instruments'
 	`)
 	if err != nil {
-		return fmt.Errorf("%w: inspect instruments table: %v", instruments.ErrIncompatibleDatabase, err)
+		return fmt.Errorf("%w: inspect instruments table: %v", ErrIncompatibleInstrumentsDatabase, err)
 	}
 	defer rows.Close()
 	columns := make(map[string]struct{}, len(requiredInstrumentColumns))
 	for rows.Next() {
 		var column string
 		if err := rows.Scan(&column); err != nil {
-			return fmt.Errorf("%w: inspect instruments columns: %v", instruments.ErrIncompatibleDatabase, err)
+			return fmt.Errorf("%w: inspect instruments columns: %v", ErrIncompatibleInstrumentsDatabase, err)
 		}
 		columns[column] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("%w: inspect instruments columns: %v", instruments.ErrIncompatibleDatabase, err)
+		return fmt.Errorf("%w: inspect instruments columns: %v", ErrIncompatibleInstrumentsDatabase, err)
 	}
 	for _, required := range requiredInstrumentColumns {
 		if _, ok := columns[required]; !ok {
-			return fmt.Errorf("%w: instruments table is missing column %q", instruments.ErrIncompatibleDatabase, required)
+			return fmt.Errorf("%w: instruments table is missing column %q", ErrIncompatibleInstrumentsDatabase, required)
 		}
 	}
 	return nil
 }
 
 // Replace atomically replaces the complete catalog snapshot.
-func (s *DuckDB) Replace(ctx context.Context, catalog []instruments.Instrument, refreshedAt time.Time) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *InstrumentsDuckDBRepository) Replace(ctx context.Context, catalog []models.Instrument, refreshedAt time.Time) error {
+	connection, err := s.db.Conn(ctx)
 	if err != nil {
+		return fmt.Errorf("instruments: reserve refresh connection: %w", err)
+	}
+	defer connection.Close()
+
+	if _, err := connection.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
 		return fmt.Errorf("instruments: begin refresh: %w", err)
 	}
-	defer tx.Rollback()
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = connection.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		}
+	}()
 
-	if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS instruments_next"); err != nil {
+	if _, err := connection.ExecContext(ctx, "DROP TABLE IF EXISTS instruments_next"); err != nil {
 		return fmt.Errorf("instruments: clear refresh staging table: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, createInstrumentTableSQL("instruments_next")); err != nil {
+	if _, err := connection.ExecContext(ctx, createInstrumentTableSQL("instruments_next")); err != nil {
 		return fmt.Errorf("instruments: create refresh staging table: %w", err)
 	}
 
-	statement, err := tx.PrepareContext(ctx, `
-		INSERT INTO instruments_next (
-			id, exchange, trading_symbol, instrument_token, exchange_token,
-			name, display_name, search_string, search_key, expiry, expiry_number,
-			strike, tick_size, lot_size, instrument_type, segment, is_fo,
-			underlying_id, underlying_is_listed, options_count, futures_count
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("instruments: prepare catalog insert: %w", err)
-	}
-	defer statement.Close()
-
-	for _, instrument := range catalog {
-		if _, err := statement.ExecContext(ctx,
-			instrument.ID,
-			instrument.Exchange,
-			instrument.TradingSymbol,
-			instrument.InstrumentToken,
-			instrument.ExchangeToken,
-			nullableString(instrument.Name),
-			instrument.DisplayName,
-			instrument.SearchString,
-			strings.ToLower(instrument.SearchString),
-			nullableDate(instrument.Expiry),
-			nullableInt(instrument.ExpiryNumber),
-			instrument.Strike,
-			instrument.TickSize,
-			instrument.LotSize,
-			instrument.InstrumentType,
-			instrument.Segment,
-			instrument.IsFO,
-			nullableInstrumentID(instrument.UnderlyingID),
-			instrument.UnderlyingIsListed,
-			instrument.OptionsCount,
-			instrument.FuturesCount,
-		); err != nil {
-			return fmt.Errorf("instruments: insert %s: %w", instrument.ID, err)
-		}
-	}
-	if err := statement.Close(); err != nil {
-		return fmt.Errorf("instruments: finish catalog inserts: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, "DROP TABLE instruments"); err != nil {
-		return fmt.Errorf("instruments: replace old catalog: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "ALTER TABLE instruments_next RENAME TO instruments"); err != nil {
-		return fmt.Errorf("instruments: activate refreshed catalog: %w", err)
-	}
-	if err := createInstrumentIndexes(ctx, tx); err != nil {
+	if err := appendCatalog(ctx, connection, catalog, refreshedAt); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE instrument_catalog_state SET refreshed_at = ? WHERE id = 1",
-		refreshedAt.UTC(),
-	); err != nil {
-		return fmt.Errorf("instruments: record refresh time: %w", err)
+
+	if _, err := connection.ExecContext(ctx, "DROP TABLE instruments"); err != nil {
+		return fmt.Errorf("instruments: replace old catalog: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := connection.ExecContext(ctx, "ALTER TABLE instruments_next RENAME TO instruments"); err != nil {
+		return fmt.Errorf("instruments: activate refreshed catalog: %w", err)
+	}
+	if err := createInstrumentIndexes(ctx, connection); err != nil {
+		return err
+	}
+	if _, err := connection.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("instruments: commit refresh: %w", err)
 	}
+	committed = true
 	return nil
 }
 
+func appendCatalog(ctx context.Context, connection *sql.Conn, catalog []models.Instrument, refreshedAt time.Time) error {
+	return connection.Raw(func(driverConnection any) error {
+		rawConnection, ok := driverConnection.(driver.Conn)
+		if !ok {
+			return errors.New("instruments: DuckDB connection does not expose a driver connection")
+		}
+		appender, err := duckdb.NewAppenderFromConn(rawConnection, "", "instruments_next")
+		if err != nil {
+			return fmt.Errorf("instruments: create catalog appender: %w", err)
+		}
+		closed := false
+		defer func() {
+			if !closed {
+				_ = appender.Close()
+			}
+		}()
+
+		for index, instrument := range catalog {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := appender.AppendRow(
+				string(instrument.ID),
+				instrument.Exchange,
+				instrument.TradingSymbol,
+				instrument.InstrumentToken,
+				instrument.ExchangeToken,
+				nullableString(instrument.Name),
+				instrument.DisplayName,
+				instrument.SearchString,
+				strings.ToLower(instrument.SearchString),
+				nullableDate(instrument.Expiry),
+				nullableInt(instrument.ExpiryNumber),
+				instrument.Strike,
+				instrument.TickSize,
+				instrument.LotSize,
+				instrument.InstrumentType,
+				instrument.Segment,
+				instrument.IsFO,
+				nullableInstrumentID(instrument.UnderlyingID),
+				instrument.UnderlyingIsListed,
+				instrument.OptionsCount,
+				instrument.FuturesCount,
+				refreshedAt.UTC(),
+			); err != nil {
+				return fmt.Errorf("instruments: append catalog row %d (%s): %w", index+1, instrument.ID, err)
+			}
+		}
+		if err := appender.Close(); err != nil {
+			return fmt.Errorf("instruments: finish catalog append: %w", err)
+		}
+		closed = true
+		return nil
+	})
+}
+
 // LastRefreshedAt returns the time of the last successful replacement.
-func (s *DuckDB) LastRefreshedAt(ctx context.Context) (time.Time, error) {
+func (s *InstrumentsDuckDBRepository) LastRefreshedAt(ctx context.Context) (time.Time, error) {
 	var refreshedAt sql.NullTime
 	if err := s.db.QueryRowContext(ctx,
-		"SELECT refreshed_at FROM instrument_catalog_state WHERE id = 1",
+		"SELECT max(refreshed_at) FROM instruments",
 	).Scan(&refreshedAt); err != nil {
 		return time.Time{}, fmt.Errorf("instruments: read refresh time: %w", err)
 	}
@@ -293,7 +293,7 @@ func (s *DuckDB) LastRefreshedAt(ctx context.Context) (time.Time, error) {
 }
 
 // List returns the catalog, optionally restricted to exchanges.
-func (s *DuckDB) List(ctx context.Context, exchanges []string) ([]instruments.Instrument, error) {
+func (s *InstrumentsDuckDBRepository) List(ctx context.Context, exchanges []string) ([]models.Instrument, error) {
 	query := "SELECT " + instrumentColumns + " FROM instruments"
 	args := make([]any, 0, len(exchanges))
 	if len(exchanges) > 0 {
@@ -307,7 +307,7 @@ func (s *DuckDB) List(ctx context.Context, exchanges []string) ([]instruments.In
 }
 
 // Get returns one instrument by ID.
-func (s *DuckDB) Get(ctx context.Context, id instruments.InstrumentID) (instruments.Instrument, error) {
+func (s *InstrumentsDuckDBRepository) Get(ctx context.Context, id models.InstrumentID) (models.Instrument, error) {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT "+instrumentColumns+" FROM instruments WHERE id = ?",
 		id,
@@ -316,7 +316,7 @@ func (s *DuckDB) Get(ctx context.Context, id instruments.InstrumentID) (instrume
 }
 
 // GetByToken returns one instrument by token.
-func (s *DuckDB) GetByToken(ctx context.Context, token int64) (instruments.Instrument, error) {
+func (s *InstrumentsDuckDBRepository) GetByToken(ctx context.Context, token int64) (models.Instrument, error) {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT "+instrumentColumns+" FROM instruments WHERE instrument_token = ?",
 		token,
@@ -325,7 +325,7 @@ func (s *DuckDB) GetByToken(ctx context.Context, token int64) (instruments.Instr
 }
 
 // ListFO returns listed underlyings with active futures or options.
-func (s *DuckDB) ListFO(ctx context.Context, exchanges []string) ([]instruments.Instrument, error) {
+func (s *InstrumentsDuckDBRepository) ListFO(ctx context.Context, exchanges []string) ([]models.Instrument, error) {
 	query := "SELECT " + instrumentColumns + `
 		FROM instruments
 		WHERE (options_count > 0 OR futures_count > 0)
@@ -343,7 +343,7 @@ func (s *DuckDB) ListFO(ctx context.Context, exchanges []string) ([]instruments.
 }
 
 // ListUnderlyingIDs returns distinct derivative underlying IDs.
-func (s *DuckDB) ListUnderlyingIDs(ctx context.Context, exchanges []string) ([]instruments.InstrumentID, error) {
+func (s *InstrumentsDuckDBRepository) ListUnderlyingIDs(ctx context.Context, exchanges []string) ([]models.InstrumentID, error) {
 	query := "SELECT DISTINCT underlying_id FROM instruments WHERE underlying_id IS NOT NULL"
 	args := make([]any, 0, len(exchanges))
 	if len(exchanges) > 0 {
@@ -358,9 +358,9 @@ func (s *DuckDB) ListUnderlyingIDs(ctx context.Context, exchanges []string) ([]i
 		return nil, fmt.Errorf("instruments: list underlying IDs: %w", err)
 	}
 	defer rows.Close()
-	ids := make([]instruments.InstrumentID, 0)
+	ids := make([]models.InstrumentID, 0)
 	for rows.Next() {
-		var id instruments.InstrumentID
+		var id models.InstrumentID
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("instruments: scan underlying ID: %w", err)
 		}
@@ -373,7 +373,7 @@ func (s *DuckDB) ListUnderlyingIDs(ctx context.Context, exchanges []string) ([]i
 }
 
 // GetFutures returns futures matching filter.
-func (s *DuckDB) GetFutures(ctx context.Context, filter instruments.FuturesFilter) ([]instruments.Instrument, error) {
+func (s *InstrumentsDuckDBRepository) GetFutures(ctx context.Context, filter models.FuturesFilter) ([]models.Instrument, error) {
 	query := "SELECT " + instrumentColumns + " FROM instruments WHERE underlying_id = ? AND instrument_type = 'FUT'"
 	args := []any{filter.UnderlyingID}
 	query, args = appendExpiryFilters(query, args, filter.ExpiryNumbers, filter.ExpiryDates)
@@ -382,7 +382,7 @@ func (s *DuckDB) GetFutures(ctx context.Context, filter instruments.FuturesFilte
 }
 
 // GetOptions returns options matching filter.
-func (s *DuckDB) GetOptions(ctx context.Context, filter instruments.OptionsFilter) ([]instruments.Instrument, error) {
+func (s *InstrumentsDuckDBRepository) GetOptions(ctx context.Context, filter models.OptionsFilter) ([]models.Instrument, error) {
 	query := "SELECT " + instrumentColumns + " FROM instruments WHERE underlying_id = ?"
 	args := []any{filter.UnderlyingID}
 	if len(filter.Types) == 0 {
@@ -409,7 +409,7 @@ func (s *DuckDB) GetOptions(ctx context.Context, filter instruments.OptionsFilte
 }
 
 // Search returns instruments ranked by exact, prefix, and tokenized matches.
-func (s *DuckDB) Search(ctx context.Context, queryText string, limit int) ([]instruments.Instrument, error) {
+func (s *InstrumentsDuckDBRepository) Search(ctx context.Context, queryText string, limit int) ([]models.Instrument, error) {
 	escapedQuery := escapeLike(queryText)
 	pattern := "%" + escapedQuery + "%"
 	prefix := escapedQuery + "%"
@@ -446,13 +446,13 @@ func (s *DuckDB) Search(ctx context.Context, queryText string, limit int) ([]ins
 	return s.queryInstruments(ctx, query, args...)
 }
 
-func (s *DuckDB) queryInstruments(ctx context.Context, query string, args ...any) ([]instruments.Instrument, error) {
+func (s *InstrumentsDuckDBRepository) queryInstruments(ctx context.Context, query string, args ...any) ([]models.Instrument, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("instruments: query catalog: %w", err)
 	}
 	defer rows.Close()
-	catalog := make([]instruments.Instrument, 0)
+	catalog := make([]models.Instrument, 0)
 	for rows.Next() {
 		instrument, err := scanInstrument(rows)
 		if err != nil {
@@ -467,7 +467,7 @@ func (s *DuckDB) queryInstruments(ctx context.Context, query string, args ...any
 }
 
 // Close checkpoints and closes the database.
-func (s *DuckDB) Close() error {
+func (s *InstrumentsDuckDBRepository) Close() error {
 	checkpointErr := func() error {
 		_, err := s.db.Exec("CHECKPOINT")
 		return err
@@ -479,9 +479,9 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanInstrument(row scanner) (instruments.Instrument, error) {
+func scanInstrument(row scanner) (models.Instrument, error) {
 	var (
-		instrument   instruments.Instrument
+		instrument   models.Instrument
 		name         sql.NullString
 		expiry       sql.NullTime
 		expiryNumber sql.NullInt64
@@ -510,10 +510,10 @@ func scanInstrument(row scanner) (instruments.Instrument, error) {
 		&instrument.FuturesCount,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return instruments.Instrument{}, instruments.ErrNotFound
+		return models.Instrument{}, models.ErrNotFound
 	}
 	if err != nil {
-		return instruments.Instrument{}, fmt.Errorf("instruments: scan catalog row: %w", err)
+		return models.Instrument{}, fmt.Errorf("instruments: scan catalog row: %w", err)
 	}
 	if name.Valid {
 		instrument.Name = stringPointer(name.String)
@@ -525,7 +525,7 @@ func scanInstrument(row scanner) (instruments.Instrument, error) {
 		instrument.ExpiryNumber = intPointer(int(expiryNumber.Int64))
 	}
 	if underlyingID.Valid {
-		id := instruments.InstrumentID(underlyingID.String)
+		id := models.InstrumentID(underlyingID.String)
 		instrument.UnderlyingID = &id
 	}
 	return instrument, nil
@@ -554,19 +554,24 @@ func createInstrumentTableSQL(table string) string {
 			underlying_id VARCHAR,
 			underlying_is_listed BOOLEAN NOT NULL,
 			options_count INTEGER NOT NULL,
-			futures_count INTEGER NOT NULL
+			futures_count INTEGER NOT NULL,
+			refreshed_at TIMESTAMP NOT NULL
 		)
 	`, table)
 }
 
-func createInstrumentIndexes(ctx context.Context, tx *sql.Tx) error {
+type contextExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func createInstrumentIndexes(ctx context.Context, execer contextExecer) error {
 	statements := []string{
 		"CREATE INDEX idx_instruments_underlying ON instruments (underlying_id)",
 		"CREATE INDEX idx_instruments_exchange ON instruments (exchange)",
 		"CREATE INDEX idx_instruments_expiry ON instruments (underlying_id, expiry, instrument_type)",
 	}
 	for _, statement := range statements {
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
+		if _, err := execer.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("instruments: create catalog index: %w", err)
 		}
 	}
@@ -612,7 +617,8 @@ func nullableDate(value *time.Time) any {
 	if value == nil {
 		return nil
 	}
-	return dateKey(*value)
+	inIndia := value.In(indiaLocation)
+	return time.Date(inIndia.Year(), inIndia.Month(), inIndia.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func nullableInt(value *int) any {
@@ -622,11 +628,11 @@ func nullableInt(value *int) any {
 	return *value
 }
 
-func nullableInstrumentID(value *instruments.InstrumentID) any {
+func nullableInstrumentID(value *models.InstrumentID) any {
 	if value == nil {
 		return nil
 	}
-	return *value
+	return string(*value)
 }
 
 var indiaLocation = time.FixedZone("Asia/Kolkata", 5*60*60+30*60)

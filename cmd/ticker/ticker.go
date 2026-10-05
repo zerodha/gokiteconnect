@@ -35,8 +35,10 @@
 //
 // Only one ticker process should run for a Zerodha account. GET /health returns
 // whether the complete consumer/socket/NATS pipeline is ready; add ?subs=true
-// for detailed subscriptions. SIGINT and SIGTERM stop heartbeat intake, drain
-// accepted socket events, flush NATS, and then close local stores.
+// for detailed subscriptions. An interactive terminal also shows a live
+// subscription dashboard; press L to inspect its captured logs. SIGINT and
+// SIGTERM stop heartbeat intake, drain accepted socket events, flush NATS, and
+// then close local stores.
 package main
 
 import (
@@ -60,10 +62,8 @@ import (
 	kiteconnect "github.com/devshoe/gokiteconnect"
 	"github.com/devshoe/gokiteconnect/cmd/ticker/consumer"
 	"github.com/devshoe/gokiteconnect/cmd/ticker/producer"
-	baseconfig "github.com/devshoe/gokiteconnect/config"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
-	"github.com/devshoe/gokiteconnect/instruments"
-	instrumentstore "github.com/devshoe/gokiteconnect/instruments/repository"
+	instrumentstore "github.com/devshoe/gokiteconnect/repository"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -110,16 +110,16 @@ func (p *catalogIndexProvider) Snapshot(ctx context.Context) (consumer.TokenReso
 	} else {
 		kite.SetEncToken(session.EncToken)
 	}
-	repository, err := instrumentstore.NewDuckDB(ctx, p.path)
+	repository, err := instrumentstore.NewInstrumentsDuckDBRepository(ctx, p.path)
 	if err != nil {
 		return nil, err
 	}
-	catalog, err := instruments.NewClient(ctx, kite, repository)
-	if err != nil {
-		_ = repository.Close()
-		return nil, err
-	}
+	kite.SetInstrumentRepository(repository)
+	catalog := kite.Instruments()
 	defer catalog.Close()
+	if _, err := catalog.RefreshIfStale(ctx); err != nil {
+		return nil, err
+	}
 	return catalog.TokenIndex(ctx)
 }
 
@@ -142,15 +142,27 @@ type heartbeatStatusProvider interface {
 }
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	interactive := tickerCLIAvailable()
+	var logs *tickerLogBuffer
+	var logger *slog.Logger
+	if interactive {
+		logs = newTickerLogBuffer(defaultTickerLogLimit)
+		logger = slog.New(slog.NewTextHandler(logs, nil))
+	} else {
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	}
 	slog.SetDefault(logger)
-	if err := run(logger); err != nil {
-		logger.Error("ticker stopped", "error", err)
+	if err := run(logger, logs); err != nil {
+		if interactive {
+			fmt.Fprintf(os.Stderr, "ticker stopped: %v\n", err)
+		} else {
+			logger.Error("ticker stopped", "error", err)
+		}
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(logger *slog.Logger, logs *tickerLogBuffer) error {
 	config, err := loadTickerConfig()
 	if err != nil {
 		return err
@@ -251,16 +263,45 @@ func run(logger *slog.Logger) error {
 	}()
 	logger.Info("ticker started", "address", server.Addr, "user_id", config.UserID, "heartbeat_topic", config.HeartbeatTopic)
 
+	var dashboard *tickerApp
+	var dashboardErr chan error
+	if logs != nil {
+		dashboard = newTickerApp(serviceCtx, config, tickProducer, manager, heartbeat, logs)
+		dashboardErr = make(chan error, 1)
+		go func() {
+			dashboardErr <- dashboard.run()
+		}()
+	}
+
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 	var runErr error
+	dashboardExited := false
 	select {
 	case signalValue := <-signals:
 		logger.Info("shutting down ticker", "signal", signalValue.String())
 	case err := <-serverErr:
 		if err != nil {
 			runErr = fmt.Errorf("serve ticker health: %w", err)
+		}
+	case err := <-dashboardErr:
+		dashboardExited = true
+		if err != nil && !errors.Is(err, context.Canceled) {
+			runErr = fmt.Errorf("run ticker dashboard: %w", err)
+		}
+	}
+	if dashboard != nil {
+		dashboard.stop()
+		if !dashboardExited {
+			select {
+			case err := <-dashboardErr:
+				if err != nil && !errors.Is(err, context.Canceled) {
+					runErr = errors.Join(runErr, fmt.Errorf("stop ticker dashboard: %w", err))
+				}
+			case <-time.After(2 * time.Second):
+				runErr = errors.Join(runErr, errors.New("stop ticker dashboard: timed out"))
+			}
 		}
 	}
 
@@ -281,6 +322,13 @@ func run(logger *slog.Logger) error {
 	}
 	serviceCancel()
 	return runErr
+}
+
+func tickerCLIAvailable() bool {
+	input, inputErr := os.Stdin.Stat()
+	output, outputErr := os.Stdout.Stat()
+	return inputErr == nil && outputErr == nil &&
+		input.Mode()&os.ModeCharDevice != 0 && output.Mode()&os.ModeCharDevice != 0
 }
 
 func healthHandler(tickProducer producerStatusProvider, manager subscriptionStatusProvider, heartbeat heartbeatStatusProvider) http.Handler {
@@ -321,11 +369,11 @@ func writeJSON(writer http.ResponseWriter, status int, value any) {
 }
 
 func loadTickerConfig() (tickerConfig, error) {
-	base, err := baseconfig.Load()
+	base, err := kiteconnect.LoadConfig()
 	if err != nil {
 		return tickerConfig{}, err
 	}
-	userID := strings.TrimSpace(os.Getenv("TRADEBOT_TICKER_USER_ID"))
+	userID := base.TickerUserID
 	if userID == "" {
 		return tickerConfig{}, errors.New("TRADEBOT_TICKER_USER_ID is required")
 	}
@@ -356,21 +404,12 @@ func loadTickerConfig() (tickerConfig, error) {
 	if err != nil {
 		return tickerConfig{}, err
 	}
-	instrumentsPath := strings.TrimSpace(os.Getenv("TRADEBOT_INSTRUMENTS_DUCKDB_PATH"))
-	if instrumentsPath == "" {
-		instrumentsPath = filepath.Join(base.TradebotLocalStorageRoot, "instruments.duckdb")
-	} else {
-		instrumentsPath, err = expandHome(instrumentsPath)
-		if err != nil {
-			return tickerConfig{}, err
-		}
-	}
 	return tickerConfig{
 		UserID:                 userID,
 		NATSURL:                natsURL,
 		HeartbeatTopic:         envDefault("TRADEBOT_HEARTBEAT_TOPIC", defaultHeartbeatTopic),
-		CredentialsPath:        base.TradebotCredentialsDBPath,
-		InstrumentsPath:        filepath.Clean(instrumentsPath),
+		CredentialsPath:        base.CredentialsPath,
+		InstrumentsPath:        base.InstrumentsPath,
 		Port:                   port,
 		SubscriptionTTL:        ttl,
 		TokenPollInterval:      tokenPoll,
@@ -395,23 +434,6 @@ func envDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func expandHome(path string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	if path == "$HOME" || path == "~" {
-		return home, nil
-	}
-	if strings.HasPrefix(path, "$HOME/") {
-		return filepath.Join(home, strings.TrimPrefix(path, "$HOME/")), nil
-	}
-	if strings.HasPrefix(path, "~/") {
-		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
-	}
-	return path, nil
 }
 
 func validateNATSURLs(value string) error {

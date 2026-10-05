@@ -584,8 +584,6 @@ func (t *Ticker) Resubscribe() error {
 		}
 	}
 
-	fmt.Println("Subscribe again: ", tokens, t.subscribedTokens)
-
 	// Subscribe to tokens
 	if len(tokens) > 0 {
 		if err := t.Subscribe(tokens); err != nil {

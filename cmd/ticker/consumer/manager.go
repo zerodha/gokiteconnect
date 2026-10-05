@@ -12,12 +12,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/instruments"
+	"github.com/devshoe/gokiteconnect/models"
 )
 
 // TokenResolver resolves canonical instrument IDs in one catalog snapshot.
 type TokenResolver interface {
-	Token(instruments.InstrumentID) (int64, bool)
+	Token(models.InstrumentID) (int64, bool)
 }
 
 // IndexProvider returns a current local instrument-token snapshot.
@@ -144,11 +144,11 @@ func (m *Manager) HandleHeartbeat(payload []byte) error {
 		return fmt.Errorf("decode heartbeat: %w", err)
 	}
 	now := m.now().UTC()
-	seen := make(map[instruments.InstrumentID]struct{}, len(heartbeat.IDs))
+	seen := make(map[models.InstrumentID]struct{}, len(heartbeat.IDs))
 	var invalid []error
 	m.mu.Lock()
 	for _, rawID := range heartbeat.IDs {
-		id, err := instruments.ParseInstrumentID(rawID)
+		id, err := models.ParseInstrumentID(rawID)
 		if err != nil {
 			invalid = append(invalid, err)
 			continue
@@ -268,7 +268,7 @@ func (m *Manager) reconcile(ctx context.Context, refresh bool) {
 	sort.Strings(ids)
 	now := m.now().UTC()
 	for _, id := range ids {
-		instrumentID := instruments.InstrumentID(id)
+		instrumentID := models.InstrumentID(id)
 		token, ok := resolver.Token(instrumentID)
 		if !ok || token <= 0 || token > math.MaxUint32 {
 			m.setMappingError(id, "instrument not found")

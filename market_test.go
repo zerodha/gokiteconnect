@@ -14,7 +14,9 @@ func (ts *TestSuite) TestGetQuote(t *testing.T) {
 		t.Errorf("Error while fetching MF orders. %v", err)
 	}
 
-	if q, ok := marketQuote["NSE:INFY"]; ok {
+	var q QuoteData
+	q, ok := marketQuote["NSE:INFY"]
+	if ok {
 		if q.InstrumentToken != 408065 {
 			t.Errorf("Incorrect values set. %v", err)
 		}

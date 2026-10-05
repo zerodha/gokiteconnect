@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/instruments"
+	"github.com/devshoe/gokiteconnect/models"
 )
 
-type fakeResolver map[instruments.InstrumentID]int64
+type fakeResolver map[models.InstrumentID]int64
 
-func (r fakeResolver) Token(id instruments.InstrumentID) (int64, bool) {
+func (r fakeResolver) Token(id models.InstrumentID) (int64, bool) {
 	token, ok := r[id]
 	return token, ok
 }
