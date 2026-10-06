@@ -1,0 +1,28 @@
+{
+  "status": "success",
+  "data": {
+    "status": "ACTIVE",
+    "sip_reg_num": null,
+    "pending_instalments": -1,
+    "created": "2022-02-15 13:39:44",
+    "step_up": {
+      "15-02": 10
+    },
+    "dividend_type": "growth",
+    "instalment_amount": 5000.00,
+    "tag": "coiniossip",
+    "instalments": -1,
+    "next_instalment": "2022-02-22",
+    "transaction_type": "BUY",
+    "trigger_price": 0,
+    "fund": "Aditya Birla Sun Life Overnight Fund - Direct Plan",
+    "tradingsymbol": "INF209KB1ZH2",
+    "frequency": "weekly",
+    "last_instalment": "2022-02-15 13:39:44",
+    "instalment_day": 0,
+    "sip_type": "sip",
+    "fund_source": "pool",
+    "completed_instalments": 0,
+    "sip_id": "181635213661372"
+  }
+}

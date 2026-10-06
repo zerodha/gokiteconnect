@@ -1,0 +1,80 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "transaction_type": "BUY",
+      "tradingsymbol": "SBIN",
+      "exchange": "NSE",
+      "variety": "regular",
+      "product": "CNC",
+      "order_type": "MARKET",
+      "quantity": 1,
+      "price": 560,
+      "charges": {
+        "transaction_tax": 0.56,
+        "transaction_tax_type": "stt",
+        "exchange_turnover_charge": 0.01876,
+        "sebi_turnover_charge": 0.00056,
+        "brokerage": 0,
+        "stamp_duty": 0,
+        "gst": {
+          "igst": 0.0033767999999999997,
+          "cgst": 0,
+          "sgst": 0,
+          "total": 0.0033767999999999997
+        },
+        "total": 0.5826968
+      }
+    },
+    {
+      "transaction_type": "SELL",
+      "tradingsymbol": "GOLDPETAL23JULFUT",
+      "exchange": "MCX",
+      "variety": "regular",
+      "product": "NRML",
+      "order_type": "LIMIT",
+      "quantity": 1,
+      "price": 5862,
+      "charges": {
+        "transaction_tax": 0.5862,
+        "transaction_tax_type": "ctt",
+        "exchange_turnover_charge": 0.152412,
+        "sebi_turnover_charge": 0.005862,
+        "brokerage": 1.7586,
+        "stamp_duty": 0,
+        "gst": {
+          "igst": 0.34503732,
+          "cgst": 0,
+          "sgst": 0,
+          "total": 0.34503732
+        },
+        "total": 2.84811132
+      }
+    },
+    {
+      "transaction_type": "BUY",
+      "tradingsymbol": "NIFTY2371317900PE",
+      "exchange": "NFO",
+      "variety": "regular",
+      "product": "NRML",
+      "order_type": "LIMIT",
+      "quantity": 100,
+      "price": 1.5,
+      "charges": {
+        "transaction_tax": 0,
+        "transaction_tax_type": "stt",
+        "exchange_turnover_charge": 0.07575,
+        "sebi_turnover_charge": 0.00015,
+        "brokerage": 20,
+        "stamp_duty": 0,
+        "gst": {
+          "igst": 3.613527,
+          "cgst": 0,
+          "sgst": 0,
+          "total": 3.613527
+        },
+        "total": 23.689427000000002
+      }
+    }
+  ]
+}

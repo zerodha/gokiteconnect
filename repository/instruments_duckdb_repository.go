@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 	duckdb "github.com/duckdb/duckdb-go/v2"
 )
@@ -71,7 +71,7 @@ type InstrumentsDuckDBRepository struct {
 // ErrIncompatibleInstrumentsDatabase indicates that a database was not created by NewInstrumentsDuckDBRepository.
 var ErrIncompatibleInstrumentsDatabase = errors.New("instruments: incompatible database")
 
-var _ kiteconnect.InstrumentRepository = (*InstrumentsDuckDBRepository)(nil)
+var _ kite.InstrumentRepository = (*InstrumentsDuckDBRepository)(nil)
 
 // NewInstrumentsDuckDBRepository opens databasePath. The path must be new or point to a database
 // previously created by this repository.

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 )
 
 type currentlyLoadedUsers map[string]*User
@@ -239,7 +239,7 @@ func (manager *UserManager) persistAuthenticatedUser(ctx context.Context, user *
 	return nil
 }
 
-func applyProfile(user *User, profile *kiteconnect.UserProfile) {
+func applyProfile(user *User, profile *kite.UserProfile) {
 	if profile == nil {
 		return
 	}

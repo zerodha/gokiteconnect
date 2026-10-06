@@ -78,29 +78,29 @@ import (
 	"context"
 	"log"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 	"github.com/devshoe/gokiteconnect/repository"
 )
 
 func main() {
 	ctx := context.Background()
-	kite := kiteconnect.New("my_api_key")
-	kite.SetAccessToken("my_access_token")
+	client := kite.New("my_api_key")
+	client.SetAccessToken("my_access_token")
 
 	instruments, err := repository.NewInstrumentsDuckDBRepository(ctx, "instruments.duckdb")
 	if err != nil {
 		log.Fatal(err)
 	}
-	kite.SetInstrumentRepository(instruments)
-	defer kite.Instruments().Close()
+	client.SetInstrumentRepository(instruments)
+	defer client.Instruments().Close()
 
 	// Refresh when the catalog has not been updated today in Asia/Kolkata.
-	if _, err := kite.Instruments().RefreshIfStale(ctx); err != nil {
+	if _, err := client.Instruments().RefreshIfStale(ctx); err != nil {
 		log.Fatal(err)
 	}
 
-	options, err := kite.Instruments().GetOptions(ctx, models.OptionsFilter{
+	options, err := client.Instruments().GetOptions(ctx, models.OptionsFilter{
 		UnderlyingID: "NSE:NIFTY 50",
 		Types:        []models.OptionType{models.OptionTypeCall},
 	})
@@ -231,28 +231,12 @@ func main() {
 }
 ```
 
-## Examples
-
-Check [examples folder](https://github.com/zerodha/gokiteconnect/tree/master/examples) for more examples.
-
-You can run the following after updating the API Keys in the examples:
-
-```bash
-go run examples/connect/basic/connect.go
-```
-
 ## Development
 
-#### Fetch mock responses for testcases
-
-This needs to be run initially
-
-```
-git submodule update --init --recursive
-```
+Test fixtures live in `kite/testdata/` and `kite/ticker/testdata/`; no setup is needed.
 
 #### Run unit tests
 
 ```
-go test -v
+go test ./...
 ```

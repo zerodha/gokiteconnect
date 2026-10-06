@@ -1,0 +1,152 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "63MOONS",
+      "instrument_token": 3038209,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "AARON",
+      "instrument_token": 263681,
+      "t1_quantity": 0,
+      "quantity": 2
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "ADL",
+      "instrument_token": 62721,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "ASHOKLEY",
+      "instrument_token": 54273,
+      "t1_quantity": 0,
+      "quantity": 2
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "BHEL",
+      "instrument_token": 112129,
+      "t1_quantity": 0,
+      "quantity": 40
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "BRNL",
+      "instrument_token": 5550849,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "DLF",
+      "instrument_token": 3771393,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "BSE",
+      "tradingsymbol": "FEDERALBNK",
+      "instrument_token": 128120068,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "BSE",
+      "tradingsymbol": "GAIL",
+      "instrument_token": 136231684,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "GPIL",
+      "instrument_token": 3432705,
+      "t1_quantity": 0,
+      "quantity": 5
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "IDFCFIRSTB",
+      "instrument_token": 2863105,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "BSE",
+      "tradingsymbol": "IOC",
+      "instrument_token": 135927044,
+      "t1_quantity": 0,
+      "quantity": 2
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "JIOFIN",
+      "instrument_token": 4644609,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "MMTC",
+      "instrument_token": 4596993,
+      "t1_quantity": 0,
+      "quantity": 14
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "NITINSPIN",
+      "instrument_token": 3372801,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "BSE",
+      "tradingsymbol": "PNBHOUSING",
+      "instrument_token": 138284292,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "RECLTD",
+      "instrument_token": 3930881,
+      "t1_quantity": 0,
+      "quantity": 2
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "RELIANCE",
+      "instrument_token": 738561,
+      "t1_quantity": 0,
+      "quantity": 2
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "RELINFRA-BE",
+      "instrument_token": 1226497,
+      "t1_quantity": 0,
+      "quantity": 1
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "SAIL",
+      "instrument_token": 758529,
+      "t1_quantity": 0,
+      "quantity": 2
+    },
+    {
+      "exchange": "NSE",
+      "tradingsymbol": "SBIN",
+      "instrument_token": 779521,
+      "t1_quantity": 0,
+      "quantity": 32
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "type": "simple",
+      "user_id": "AB1234",
+      "uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "NIFTY 50",
+      "status": "enabled",
+      "disabled_reason": "",
+      "lhs_attribute": "LastTradedPrice",
+      "lhs_exchange": "INDICES",
+      "lhs_tradingsymbol": "NIFTY 50",
+      "operator": ">=",
+      "rhs_type": "constant",
+      "rhs_attribute": "",
+      "rhs_exchange": "",
+      "rhs_tradingsymbol": "",
+      "rhs_constant": 27000,
+      "alert_count": 0,
+      "created_at": "2025-05-26 12:07:50",
+      "updated_at": "2025-05-26 12:07:50"
+    },
+    {
+      "type": "ato",
+      "user_id": "AB1234",
+      "uuid": "e888ed4a-6801-406f-bdc2-002db5a8411d",
+      "name": "buy gold",
+      "status": "disabled",
+      "disabled_reason": "",
+      "basket": {
+        "items": [
+          {
+            "id": 275218517,
+            "tradingsymbol": "GOLDBEES",
+            "exchange": "NSE",
+            "instrument_token": 3693569,
+            "weight": 10000,
+            "params": {
+              "validity": "DAY",
+              "validity_ttl": 0,
+              "variety": "regular",
+              "product": "CNC",
+              "order_type": "LIMIT",
+              "transaction_type": "BUY",
+              "quantity": 10000,
+              "disclosed_quantity": 0,
+              "price": 72.22,
+              "trigger_price": 0,
+              "squareoff": 0,
+              "stoploss": 0,
+              "trailing_stoploss": 0,
+              "gtt": {
+                "target": 0,
+                "stoploss": 0
+              },
+              "tags": []
+            }
+          }
+        ]
+      },
+      "lhs_attribute": "LastTradedPrice",
+      "lhs_exchange": "NSE",
+      "lhs_tradingsymbol": "GOLDBEES",
+      "operator": "<=",
+      "rhs_type": "constant",
+      "rhs_attribute": "",
+      "rhs_exchange": "",
+      "rhs_tradingsymbol": "",
+      "rhs_constant": 71.8,
+      "alert_count": 1,
+      "created_at": "2025-02-17 08:24:10",
+      "updated_at": "2025-02-17 09:15:20"
+    }
+  ]
+}

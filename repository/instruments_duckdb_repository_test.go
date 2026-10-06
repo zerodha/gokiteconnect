@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 )
 
@@ -138,7 +138,7 @@ func TestSearchUsesDefaultAndExplicitLimits(t *testing.T) {
 	ctx := context.Background()
 	client := openTestClient(t, ctx, &catalogTransport{body: csv.String()}, filepath.Join(t.TempDir(), "catalog.duckdb"))
 	results, err := client.Search(ctx, "match", 0)
-	if err != nil || len(results) != kiteconnect.DefaultInstrumentSearchLimit {
+	if err != nil || len(results) != kite.DefaultInstrumentSearchLimit {
 		t.Fatalf("Search(default limit) returned %d rows, %v", len(results), err)
 	}
 	results, err = client.Search(ctx, "match", 7)
@@ -487,19 +487,19 @@ func (t *catalogTransport) callCount() int {
 	return t.calls
 }
 
-func newKiteClient(transport http.RoundTripper) *kiteconnect.Client {
-	client := kiteconnect.New("test-api-key")
+func newKiteClient(transport http.RoundTripper) *kite.Client {
+	client := kite.New("test-api-key")
 	client.SetHTTPClient(&http.Client{Transport: transport})
 	return client
 }
 
-func openTestClient(t *testing.T, ctx context.Context, transport *catalogTransport, path string) *kiteconnect.InstrumentCatalog {
+func openTestClient(t *testing.T, ctx context.Context, transport *catalogTransport, path string) *kite.InstrumentCatalog {
 	t.Helper()
 	client, _ := openTestClientWithRepository(t, ctx, transport, path)
 	return client
 }
 
-func openTestClientWithRepository(t *testing.T, ctx context.Context, transport *catalogTransport, path string) (*kiteconnect.InstrumentCatalog, *InstrumentsDuckDBRepository) {
+func openTestClientWithRepository(t *testing.T, ctx context.Context, transport *catalogTransport, path string) (*kite.InstrumentCatalog, *InstrumentsDuckDBRepository) {
 	t.Helper()
 	repository, err := NewInstrumentsDuckDBRepository(ctx, path)
 	if err != nil {
@@ -513,7 +513,7 @@ func openTestClientWithRepository(t *testing.T, ctx context.Context, transport *
 	return client, repository
 }
 
-func newClientAtPath(ctx context.Context, kiteClient *kiteconnect.Client, path string) (*kiteconnect.InstrumentCatalog, error) {
+func newClientAtPath(ctx context.Context, kiteClient *kite.Client, path string) (*kite.InstrumentCatalog, error) {
 	repository, err := NewInstrumentsDuckDBRepository(ctx, path)
 	if err != nil {
 		return nil, err
@@ -523,7 +523,7 @@ func newClientAtPath(ctx context.Context, kiteClient *kiteconnect.Client, path s
 
 // attachCatalog attaches repository to kiteClient and refreshes it if stale,
 // closing the catalog on failure.
-func attachCatalog(ctx context.Context, kiteClient *kiteconnect.Client, repository *InstrumentsDuckDBRepository) (*kiteconnect.InstrumentCatalog, error) {
+func attachCatalog(ctx context.Context, kiteClient *kite.Client, repository *InstrumentsDuckDBRepository) (*kite.InstrumentCatalog, error) {
 	kiteClient.SetInstrumentRepository(repository)
 	catalog := kiteClient.Instruments()
 	if _, err := catalog.RefreshIfStale(ctx); err != nil {

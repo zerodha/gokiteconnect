@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/config"
 	"github.com/devshoe/gokiteconnect/credentials"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
 	"github.com/gdamore/tcell/v2"
@@ -60,7 +60,7 @@ type userApp struct {
 }
 
 func main() {
-	settings, err := kiteconnect.LoadConfig()
+	settings, err := config.Load()
 	if err != nil {
 		fatal(err)
 	}

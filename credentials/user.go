@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
-	kiteticker "github.com/devshoe/gokiteconnect/ticker"
+	"github.com/devshoe/gokiteconnect/kite"
+	kiteticker "github.com/devshoe/gokiteconnect/kite/ticker"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -61,7 +61,7 @@ func NewUser(credentials Credentials) (*User, error) {
 
 // LoginIfRequired checks whether the current token is valid and logs in when
 // Zerodha reports that it has expired. It returns whether a login occurred.
-func (user *User) LoginIfRequired() (*kiteconnect.UserProfile, bool, error) {
+func (user *User) LoginIfRequired() (*kite.UserProfile, bool, error) {
 	// A newly created user has no session token yet. Do not make an
 	// unauthenticated profile request first: web users intentionally have no
 	// API key, and Kite reports that preflight request as "invalid api_key or
@@ -97,8 +97,8 @@ func (user *User) hasSessionToken() bool {
 }
 
 func shouldLoginAfterProfileError(err error) bool {
-	var kiteErr kiteconnect.Error
-	return errors.As(err, &kiteErr) && kiteErr.ErrorType == kiteconnect.TokenError
+	var kiteErr kite.Error
+	return errors.As(err, &kiteErr) && kiteErr.ErrorType == kite.TokenError
 }
 
 // Login force logs in to Zerodha and updates the resulting session tokens.
@@ -170,8 +170,8 @@ func (user *User) Login() error {
 }
 
 // KiteClient returns a new Kite client using the current credentials.
-func (user *User) KiteClient() *kiteconnect.Client {
-	c := kiteconnect.New(user.APIKey)
+func (user *User) KiteClient() *kite.Client {
+	c := kite.New(user.APIKey)
 	c.SetHTTPClient(user.kiteHTTPClient)
 	if user.isAPIUser() {
 		c.SetAccessToken(user.AccessToken)
@@ -227,7 +227,7 @@ func (user *User) generateWebSessionTokens() error {
 // generateAccessToken generates an access token by building a Kite API session.
 func (user *User) generateAccessToken() error {
 	var (
-		session             kiteconnect.UserSession
+		session             kite.UserSession
 		baseRequestTokenURL = fmt.Sprintf("https://kite.trade/connect/login?api_key=%s", user.APIKey)
 		firstTimeAuthURL    = fmt.Sprintf("https://kite.zerodha.com/connect/login?v=3&api_key=%s", user.APIKey)
 	)
@@ -249,7 +249,7 @@ func (user *User) generateAccessToken() error {
 		return errors.New("credentials.generateAccessToken: request token not found; check subscription or first-time authorization")
 	}
 
-	sessionClient := kiteconnect.New(user.APIKey)
+	sessionClient := kite.New(user.APIKey)
 	sessionClient.SetHTTPClient(user.kiteHTTPClient)
 	if session, err = sessionClient.GenerateSession(requestToken, user.APISecret); err != nil {
 		return fmt.Errorf("credentials.generateAccessToken: generate Kite session: %w", err)

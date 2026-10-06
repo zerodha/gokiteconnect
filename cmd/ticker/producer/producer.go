@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 )
 
@@ -28,7 +28,7 @@ type tickState struct {
 
 type orderInput struct {
 	receivedAt time.Time
-	order      kiteconnect.Order
+	order      kite.Order
 }
 
 type counters struct {
@@ -314,7 +314,7 @@ func (p *Producer) replaceSocket(session Session, fingerprint string) error {
 	callbacks := SocketCallbacks{
 		OnConnect:     func() { p.socketDidConnect(generation) },
 		OnTick:        func(tick models.Tick) { p.socketTick(generation, tick) },
-		OnOrder:       func(order kiteconnect.Order) { p.socketOrder(generation, order) },
+		OnOrder:       func(order kite.Order) { p.socketOrder(generation, order) },
 		OnError:       func(err error) { p.socketError(generation, err) },
 		OnReconnect:   func(attempt int, delay time.Duration) { p.socketReconnect(generation, attempt, delay) },
 		OnClose:       func(code int, reason string) { p.socketClosed(generation, code, reason) },
@@ -416,7 +416,7 @@ func (p *Producer) socketTick(generation uint64, tick models.Tick) {
 	p.signal(p.tickWake)
 }
 
-func (p *Producer) socketOrder(generation uint64, order kiteconnect.Order) {
+func (p *Producer) socketOrder(generation uint64, order kite.Order) {
 	if !p.isCurrentGeneration(generation) || !p.accepting.Load() {
 		return
 	}

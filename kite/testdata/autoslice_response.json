@@ -1,0 +1,25 @@
+{
+  "status": "success",
+  "data": {
+    "order_id": "1914227164488687616",
+    "children": [
+      {
+        "order_id": "1914227164534824960"
+      },
+      {
+        "order_id": "1914227164580962304"
+      },
+      {
+        "error": {
+          "code": 400,
+          "error_type": "MarginException",
+          "message": "Insufficient funds. Required margin is 228365.92 but available margin is 228358.50.",
+          "data": null
+        }
+      },
+      {
+        "order_id": "1914227164681625600"
+      }
+    ]
+  }
+}

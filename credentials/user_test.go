@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 )
 
 func validCredentials() Credentials {
@@ -242,10 +242,10 @@ func TestLoginIfRequiredIgnoresMissingOptionalWebSessionTokens(t *testing.T) {
 }
 
 func TestShouldLoginAfterProfileErrorOnlyForTokenErrors(t *testing.T) {
-	if !shouldLoginAfterProfileError(kiteconnect.NewError(kiteconnect.TokenError, "expired", nil)) {
+	if !shouldLoginAfterProfileError(kite.NewError(kite.TokenError, "expired", nil)) {
 		t.Fatal("token error should trigger login")
 	}
-	if shouldLoginAfterProfileError(kiteconnect.NewError(kiteconnect.NetworkError, "network", nil)) {
+	if shouldLoginAfterProfileError(kite.NewError(kite.NetworkError, "network", nil)) {
 		t.Fatal("network error should not trigger login")
 	}
 	if shouldLoginAfterProfileError(errors.New("unexpected")) {

@@ -59,10 +59,11 @@ import (
 	"syscall"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
 	"github.com/devshoe/gokiteconnect/cmd/ticker/consumer"
 	"github.com/devshoe/gokiteconnect/cmd/ticker/producer"
+	baseconfig "github.com/devshoe/gokiteconnect/config"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
+	"github.com/devshoe/gokiteconnect/kite"
 	instrumentstore "github.com/devshoe/gokiteconnect/repository"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -104,18 +105,18 @@ func (p *catalogIndexProvider) Snapshot(ctx context.Context) (consumer.TokenReso
 	if err != nil {
 		return nil, err
 	}
-	kite := kiteconnect.New(session.APIKey)
+	client := kite.New(session.APIKey)
 	if session.IsAPIUser {
-		kite.SetAccessToken(session.AccessToken)
+		client.SetAccessToken(session.AccessToken)
 	} else {
-		kite.SetEncToken(session.EncToken)
+		client.SetEncToken(session.EncToken)
 	}
 	repository, err := instrumentstore.NewInstrumentsDuckDBRepository(ctx, p.path)
 	if err != nil {
 		return nil, err
 	}
-	kite.SetInstrumentRepository(repository)
-	catalog := kite.Instruments()
+	client.SetInstrumentRepository(repository)
+	catalog := client.Instruments()
 	defer catalog.Close()
 	if _, err := catalog.RefreshIfStale(ctx); err != nil {
 		return nil, err
@@ -369,7 +370,7 @@ func writeJSON(writer http.ResponseWriter, status int, value any) {
 }
 
 func loadTickerConfig() (tickerConfig, error) {
-	base, err := kiteconnect.LoadConfig()
+	base, err := baseconfig.Load()
 	if err != nil {
 		return tickerConfig{}, err
 	}

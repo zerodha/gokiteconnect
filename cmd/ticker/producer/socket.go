@@ -8,16 +8,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
+	kiteticker "github.com/devshoe/gokiteconnect/kite/ticker"
 	"github.com/devshoe/gokiteconnect/models"
-	kiteticker "github.com/devshoe/gokiteconnect/ticker"
 )
 
 // SocketCallbacks receives events from a broker socket.
 type SocketCallbacks struct {
 	OnConnect     func()
 	OnTick        func(models.Tick)
-	OnOrder       func(kiteconnect.Order)
+	OnOrder       func(kite.Order)
 	OnError       func(error)
 	OnReconnect   func(int, time.Duration)
 	OnClose       func(int, string)
@@ -80,7 +80,7 @@ func (s *zerodhaSocket) installCallbacks() {
 			s.callbacks.OnTick(tick)
 		}
 	})
-	s.ticker.OnOrderUpdate(func(order kiteconnect.Order) {
+	s.ticker.OnOrderUpdate(func(order kite.Order) {
 		if s.callbacks.OnOrder != nil {
 			s.callbacks.OnOrder(order)
 		}

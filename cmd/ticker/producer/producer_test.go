@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 )
 
@@ -227,7 +227,7 @@ func TestStaleSocketCallbacksAreIgnored(t *testing.T) {
 	p.desired["NSE:INFY"] = 123
 	p.reverse[123] = "NSE:INFY"
 	p.socketTick(1, models.Tick{InstrumentToken: 123, LastPrice: 100})
-	p.socketOrder(1, kiteconnect.Order{AccountID: "U1", OrderID: "O1"})
+	p.socketOrder(1, kite.Order{AccountID: "U1", OrderID: "O1"})
 	if len(p.ticks) != 0 || len(p.orders) != 0 {
 		t.Fatalf("stale callbacks changed state: ticks=%v orders=%d", p.ticks, len(p.orders))
 	}
@@ -272,7 +272,7 @@ func TestCloseDrainsAcceptedOrderBeforeClosingBus(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForProducer(t, func() bool { return len(factory.snapshot()) == 1 && p.Status().Ready() })
-	factory.snapshot()[0].callbacks.OnOrder(kiteconnect.Order{AccountID: "U1", OrderID: "O1"})
+	factory.snapshot()[0].callbacks.OnOrder(kite.Order{AccountID: "U1", OrderID: "O1"})
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), time.Second)
 	defer closeCancel()
 	if err := p.Close(closeCtx); err != nil {

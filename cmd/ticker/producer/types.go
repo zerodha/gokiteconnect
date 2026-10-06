@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 )
 
@@ -47,13 +47,13 @@ type Tick struct {
 // OrderEvent is the durable envelope used between the socket callback and the
 // compatibility accounts.<account>.orders publication.
 type OrderEvent struct {
-	EventID    string            `json:"event_id"`
-	ReceivedAt time.Time         `json:"received_at"`
-	Order      kiteconnect.Order `json:"-"`
+	EventID    string     `json:"event_id"`
+	ReceivedAt time.Time  `json:"received_at"`
+	Order      kite.Order `json:"-"`
 	orderJSON  json.RawMessage
 }
 
-func newOrderEvent(userID string, receivedAt time.Time, order kiteconnect.Order) (OrderEvent, error) {
+func newOrderEvent(userID string, receivedAt time.Time, order kite.Order) (OrderEvent, error) {
 	payload, err := json.Marshal(order)
 	if err != nil {
 		return OrderEvent{}, err
@@ -91,7 +91,7 @@ func (e OrderEvent) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON extracts the routing account while retaining the raw order.
 // models.Time intentionally rejects its zero value, which may appear on valid
 // partial order updates, so the durable envelope must not require a complete
-// kiteconnect.Order decode.
+// kite.Order decode.
 func (e *OrderEvent) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		EventID    string          `json:"event_id"`
@@ -109,7 +109,7 @@ func (e *OrderEvent) UnmarshalJSON(data []byte) error {
 	}
 	e.EventID = wire.EventID
 	e.ReceivedAt = wire.ReceivedAt
-	e.Order = kiteconnect.Order{AccountID: routing.AccountID}
+	e.Order = kite.Order{AccountID: routing.AccountID}
 	e.orderJSON = append(e.orderJSON[:0], wire.Order...)
 	return nil
 }

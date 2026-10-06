@@ -1,0 +1,40 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "type": "simple",
+      "meta": [
+        {
+          "instrument_token": 270857,
+          "tradingsymbol": "NIFTY NEXT 50",
+          "timestamp": "2025-02-17 09:16:46",
+          "last_price": 58288.05,
+          "ohlc": {
+            "open": 59221.95,
+            "high": 59241.8,
+            "low": 58283.7,
+            "close": 59557.95
+          },
+          "net_change": -1269.9,
+          "exchange": "INDICES",
+          "last_trade_time": "0001-01-01 00:00:00",
+          "last_quantity": 0,
+          "buy_quantity": 0,
+          "sell_quantity": 0,
+          "volume": 0,
+          "volume_tick": 0,
+          "average_price": 0,
+          "oi": 0,
+          "oi_day_high": 0,
+          "oi_day_low": 0,
+          "lower_circuit_limit": 0,
+          "upper_circuit_limit": 0
+        }
+      ],
+      "condition": "LastTradedPrice(\"INDICES:NIFTY NEXT 50\") <= 58290.35",
+      "created_at": "2025-02-17 09:16:46",
+      "order_meta": null
+    }
+  ]
+}

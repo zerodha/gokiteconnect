@@ -14,7 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/config"
+	"github.com/devshoe/gokiteconnect/kite"
 	instrumentstore "github.com/devshoe/gokiteconnect/repository"
 )
 
@@ -28,7 +29,7 @@ func main() {
 }
 
 func run() error {
-	settings, err := kiteconnect.LoadConfig()
+	settings, err := config.Load()
 	if err != nil {
 		return err
 	}
@@ -53,11 +54,11 @@ func run() error {
 		if err != nil {
 			return nil, err
 		}
-		kite := kiteconnect.New("")
-		kite.SetAppName("instruments-cli")
-		kite.SetTimeout(kiteRequestTimeout)
-		kite.SetInstrumentRepository(repository)
-		instruments := kite.Instruments()
+		client := kite.New("")
+		client.SetAppName("instruments-cli")
+		client.SetTimeout(kiteRequestTimeout)
+		client.SetInstrumentRepository(repository)
+		instruments := client.Instruments()
 		if _, err := instruments.RefreshIfStale(ctx); err != nil {
 			_ = instruments.Close()
 			return nil, err

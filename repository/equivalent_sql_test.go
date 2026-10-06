@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 )
 
 func TestEquivalentSQLMatchesGoNormalization(t *testing.T) {
 	nearExpiry := instrumentDate(2026, time.June, 25)
 	farExpiry := instrumentDate(2026, time.July, 30)
-	source := kiteconnect.Instruments{
+	source := kite.Instruments{
 		rawInstrument(256265, " nse ", "nifty 50", "NIFTY 50", "indices", "eq", time.Time{}, 0),
 		rawInstrument(408065, "NSE", "infy", " Infosys ", "nse", "eq", time.Time{}, 0),
 		rawInstrument(1004, "BSE", "sensex", "SENSEX", "indices", "eq", time.Time{}, 0),
@@ -107,8 +107,8 @@ func TestEquivalentSQLMatchesGoNormalization(t *testing.T) {
 		}
 	}
 }
-func rawInstrument(token int, exchange, symbol, name, segment, instrumentType string, expiry time.Time, strike float64) kiteconnect.Instrument {
-	return kiteconnect.Instrument{
+func rawInstrument(token int, exchange, symbol, name, segment, instrumentType string, expiry time.Time, strike float64) kite.Instrument {
+	return kite.Instrument{
 		InstrumentToken: token,
 		ExchangeToken:   token + 10,
 		Tradingsymbol:   symbol,
@@ -171,7 +171,7 @@ func scanNormalizedInstrument(rows *sql.Rows) (models.Instrument, error) {
 	return instrument, nil
 }
 
-// equivalentSQL is the DuckDB equivalent of kiteconnect.Instruments.Normalize
+// equivalentSQL is the DuckDB equivalent of kite.Instruments.Normalize
 // for a source_instruments relation containing the Kite instrument-master
 // columns. Normalization stays in Go so refreshing never depends on DuckDB
 // reading or validating external data; this query documents the transformation.

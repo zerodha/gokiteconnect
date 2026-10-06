@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	kiteconnect "github.com/devshoe/gokiteconnect"
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -83,7 +83,7 @@ func TestPublishTickJoinsIndependentPublishErrors(t *testing.T) {
 }
 
 func TestDurableOrderPublishesCompatibilityMessageBeforeAck(t *testing.T) {
-	event, err := newOrderEvent("U1", time.Now(), kiteconnect.Order{AccountID: "U1", OrderID: "O1"})
+	event, err := newOrderEvent("U1", time.Now(), kite.Order{AccountID: "U1", OrderID: "O1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestDurableOrderPublishesCompatibilityMessageBeforeAck(t *testing.T) {
 }
 
 func TestDurableOrderFailureNAKsWithBoundedBackoff(t *testing.T) {
-	event, _ := newOrderEvent("U1", time.Now(), kiteconnect.Order{AccountID: "U1", OrderID: "O1"})
+	event, _ := newOrderEvent("U1", time.Now(), kite.Order{AccountID: "U1", OrderID: "O1"})
 	payload, _ := json.Marshal(event)
 	message := &fakeJetStreamMessage{data: payload, delivered: 10}
 	bus := &NATSBus{publisher: &recordingAcknowledged{err: errors.New("publish failed")}, logger: discardLogger()}

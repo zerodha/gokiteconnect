@@ -1,0 +1,71 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "tradingsymbol": "AARON",
+      "exchange": "NSE",
+      "instrument_token": 263681,
+      "isin": "INE721Z01010",
+      "product": "CNC",
+      "price": 0,
+      "quantity": 1,
+      "used_quantity": 0,
+      "t1_quantity": 0,
+      "realised_quantity": 1,
+      "authorised_quantity": 0,
+      "authorised_date": "2025-01-17 00:00:00",
+      "authorisation": {},
+      "opening_quantity": 1,
+      "short_quantity": 0,
+      "collateral_quantity": 0,
+      "collateral_type": "",
+      "discrepancy": false,
+      "average_price": 161,
+      "last_price": 352.95,
+      "close_price": 352.35,
+      "pnl": 191.95,
+      "day_change": 0.5999999999999659,
+      "day_change_percentage": 0.17028522775648244,
+      "mtf": {
+        "quantity": 1000,
+        "used_quantity": 0,
+        "average_price": 100,
+        "value": 100000,
+        "initial_margin": 0
+      }
+    },
+    {
+      "tradingsymbol": "SBIN",
+      "exchange": "BSE",
+      "instrument_token": 128028676,
+      "isin": "INE062A01020",
+      "product": "CNC",
+      "price": 0,
+      "quantity": 16,
+      "used_quantity": 0,
+      "t1_quantity": 0,
+      "realised_quantity": 16,
+      "authorised_quantity": 0,
+      "authorised_date": "2025-01-17 00:00:00",
+      "authorisation": {},
+      "opening_quantity": 16,
+      "short_quantity": 0,
+      "collateral_quantity": 0,
+      "collateral_type": "",
+      "discrepancy": false,
+      "average_price": 801.78125,
+      "last_price": 762.45,
+      "close_price": 766.4,
+      "pnl": -629.2999999999993,
+      "day_change": -3.949999999999932,
+      "day_change_percentage": -0.5153966597077155,
+      "mtf": {
+        "quantity": 0,
+        "used_quantity": 0,
+        "average_price": 0,
+        "value": 0,
+        "initial_margin": 0
+      }
+    }
+  ]
+}

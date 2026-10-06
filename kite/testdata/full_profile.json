@@ -1,0 +1,60 @@
+{
+  "status": "success",
+  "data": {
+    "user_id": "AB1234",
+    "twofa_type": "totp",
+    "user_name": "AxAx Bxx",
+    "user_type": "individual",
+    "email": "xxxyyy@gmail.com",
+    "phone": "*9999",
+    "broker": "ZERODHA",
+    "bank_accounts": [
+      {
+        "name": "HDFC BANK",
+        "branch": "",
+        "account": "*9999"
+      },
+      {
+        "name": "State Bank of India",
+        "branch": "",
+        "account": "*9999"
+      }
+    ],
+    "dp_ids": [
+      "0xx0xxx0xxxx0xx0"
+    ],
+    "products": [
+      "CNC",
+      "NRML",
+      "MIS",
+      "BO",
+      "CO"
+    ],
+    "order_types": [
+      "MARKET",
+      "LIMIT",
+      "SL",
+      "SL-M"
+    ],
+    "exchanges": [
+      "MF",
+      "BCD",
+      "BSE",
+      "BFO",
+      "NFO",
+      "CDS",
+      "NSE"
+    ],
+    "pan": "*xxxI",
+    "user_shortname": "AxAx",
+    "avatar_url": null,
+    "tags": [],
+    "password_timestamp": "1970-01-01 00:00:00",
+    "twofa_timestamp": "1970-01-01 00:00:00",
+    "meta": {
+      "poa": "physical",
+      "silo": "x",
+      "account_blocks": []
+    }
+  }
+}

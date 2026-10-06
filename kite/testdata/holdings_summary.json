@@ -1,0 +1,11 @@
+{
+  "status": "success",
+  "data": {
+    "total_pnl": 6798.235950000001,
+    "total_pnl_percent": 16.56312500412587,
+    "today_pnl": -76.79999999999775,
+    "today_pnl_percent": -0.16026898477945015,
+    "invested_amount": 41044.40405,
+    "current_value": 47842.64000000001
+  }
+}

@@ -1,0 +1,298 @@
+package kite
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"time"
+)
+
+// PlainResponse is a helper for receiving blank HTTP
+// envelop responses without any payloads.
+type PlainResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"string"`
+}
+
+// Client represents interface for Kite Connect client.
+type Client struct {
+	apiKey      string
+	accessToken string
+	enctoken    string
+	debug       bool
+	baseURI     string
+	appName     string
+	httpClient  HTTPClient
+	instruments *InstrumentCatalog
+}
+
+const (
+	name           string        = "gokiteconnect"
+	version        string        = "4.4.x"
+	requestTimeout time.Duration = 7000 * time.Millisecond
+	baseURI        string        = "https://api.kite.trade"
+	kiteBaseURI    string        = "https://kite.zerodha.com"
+	// Kite connect header version
+	kiteHeaderVersion string = "3"
+)
+
+// Useful public constants
+const (
+	// Varieties
+	VarietyRegular = "regular"
+	VarietyAMO     = "amo"
+	VarietyBO      = "bo"
+	VarietyCO      = "co"
+	VarietyIceberg = "iceberg"
+	VarietyAuction = "auction"
+
+	// Products
+	ProductBO   = "BO"
+	ProductCO   = "CO"
+	ProductMIS  = "MIS"
+	ProductCNC  = "CNC"
+	ProductNRML = "NRML"
+	ProductMTF  = "MTF"
+
+	// Order types
+	OrderTypeMarket = "MARKET"
+	OrderTypeLimit  = "LIMIT"
+	OrderTypeSL     = "SL"
+	OrderTypeSLM    = "SL-M"
+
+	// Market protection
+	MarketProtectionAuto = -1
+
+	// Validities
+	ValidityDay = "DAY"
+	ValidityIOC = "IOC"
+	ValidityTTL = "TTL"
+
+	// Position Type
+	PositionTypeDay       = "day"
+	PositionTypeOvernight = "overnight"
+
+	// Transaction type
+	TransactionTypeBuy  = "BUY"
+	TransactionTypeSell = "SELL"
+
+	// Exchanges
+	ExchangeNSE = "NSE"
+	ExchangeBSE = "BSE"
+	ExchangeMCX = "MCX"
+	ExchangeNFO = "NFO"
+	ExchangeBFO = "BFO"
+	ExchangeCDS = "CDS"
+	ExchangeBCD = "BCD"
+
+	// Margins segments
+	MarginsEquity    = "equity"
+	MarginsCommodity = "commodity"
+
+	// Order status
+	OrderStatusComplete  = "COMPLETE"
+	OrderStatusRejected  = "REJECTED"
+	OrderStatusCancelled = "CANCELLED"
+)
+
+// API endpoints
+const (
+	URIUserSession           string = "/session/token"
+	URIUserSessionInvalidate string = "/session/token"
+	URIUserSessionRenew      string = "/session/refresh_token"
+	URIUserProfile           string = "/user/profile"
+	URIFullUserProfile       string = "/user/profile/full"
+	URIUserMargins           string = "/user/margins"
+	URIUserMarginsSegment    string = "/user/margins/%s" // "/user/margins/{segment}"
+
+	URIGetOrders       string = "/orders"
+	URIGetTrades       string = "/trades"
+	URIGetOrderHistory string = "/orders/%s"        // "/orders/{order_id}"
+	URIGetOrderTrades  string = "/orders/%s/trades" // "/orders/{order_id}/trades"
+	URIPlaceOrder      string = "/orders/%s"        // "/orders/{variety}"
+	URIModifyOrder     string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
+	URICancelOrder     string = "/orders/%s/%s"     // "/orders/{variety}/{order_id}"
+
+	URIGetPositions       string = "/portfolio/positions"
+	URIGetHoldings        string = "/portfolio/holdings"
+	URIGetHoldingsSummary string = "/portfolio/holdings/summary"
+	URIGetHoldingsCompact string = "/portfolio/holdings/compact"
+	URIInitHoldingsAuth   string = "/portfolio/holdings/authorise"
+	URIAuctionInstruments string = "/portfolio/holdings/auctions"
+	URIConvertPosition    string = "/portfolio/positions"
+
+	URIOrderMargins  string = "/margins/orders"
+	URIBasketMargins string = "/margins/basket"
+	URIOrderCharges  string = "/charges/orders"
+
+	// MF endpoints
+	URIGetMFOrders      string = "/mf/orders"
+	URIGetMFOrderInfo   string = "/mf/orders/%s" // "/mf/orders/{order_id}"
+	URIPlaceMFOrder     string = "/mf/orders"
+	URICancelMFOrder    string = "/mf/orders/%s" // "/mf/orders/{order_id}"
+	URIGetMFSIPs        string = "/mf/sips"
+	URIGetMFSIPInfo     string = "/mf/sips/%s" //  "/mf/sips/{sip_id}"
+	URIPlaceMFSIP       string = "/mf/sips"
+	URIModifyMFSIP      string = "/mf/sips/%s" //  "/mf/sips/{sip_id}"
+	URICancelMFSIP      string = "/mf/sips/%s" //  "/mf/sips/{sip_id}"
+	URIGetMFHoldings    string = "/mf/holdings"
+	URIGetMFHoldingInfo string = "/mf/holdings/%s" //  "/mf/holdings/{isin}"
+	URIGetAllotedISINs  string = "/mf/allotments"
+
+	// GTT endpoints
+	URIPlaceGTT  string = "/gtt/triggers"
+	URIGetGTTs   string = "/gtt/triggers"
+	URIGetGTT    string = "/gtt/triggers/%d"
+	URIModifyGTT string = "/gtt/triggers/%d"
+	URIDeleteGTT string = "/gtt/triggers/%d"
+
+	URIGetInstruments         string = "/instruments"
+	URIGetMFInstruments       string = "/mf/instruments"
+	URIGetInstrumentsExchange string = "/instruments/%s"                  // "/instruments/{exchange}"
+	URIGetHistorical          string = "/instruments/historical/%d/%s"    // "/instruments/historical/{instrument_token}/{interval}"
+	URIGetTriggerRange        string = "/instruments/%s/%s/trigger_range" // "/instruments/{exchange}/{tradingsymbol}/trigger_range"
+
+	URIGetQuote string = "/quote"
+	URIGetLTP   string = "/quote/ltp"
+	URIGetOHLC  string = "/quote/ohlc"
+)
+
+// New creates a new Kite Connect client.
+func New(apiKey string) *Client {
+	client := &Client{
+		apiKey:  apiKey,
+		baseURI: baseURI,
+	}
+
+	// Create a default http handler with default timeout.
+	client.SetHTTPClient(&http.Client{
+		Timeout: requestTimeout,
+	})
+
+	return client
+}
+
+// SetHTTPClient overrides default http handler with a custom one.
+// This can be used to set custom timeouts and transport.
+func (c *Client) SetHTTPClient(h *http.Client) {
+	c.httpClient = NewHTTPClient(h, nil, c.debug)
+}
+
+// SetDebug sets debug mode to enable HTTP logs.
+func (c *Client) SetDebug(debug bool) {
+	c.debug = debug
+	c.httpClient.GetClient().debug = debug
+}
+
+// SetBaseURI overrides the base Kiteconnect API endpoint with custom url.
+func (c *Client) SetBaseURI(baseURI string) {
+	c.baseURI = baseURI
+}
+
+// SetTimeout sets request timeout for default http client.
+func (c *Client) SetTimeout(timeout time.Duration) {
+	hClient := c.httpClient.GetClient().client
+	hClient.Timeout = timeout
+}
+
+// SetAccessToken sets the access token to the Kite Connect instance.
+func (c *Client) SetAccessToken(accessToken string) {
+	c.accessToken = accessToken
+}
+
+// SetEncToken sets the encryption token to the Kite Connect instance.
+func (c *Client) SetEncToken(enctoken string) {
+	c.enctoken = enctoken
+	c.baseURI = kiteBaseURI + "/oms"
+}
+
+// GetLoginURL gets Kite Connect login endpoint.
+func (c *Client) GetLoginURL() string {
+	return fmt.Sprintf("%s/connect/login?api_key=%s&v=%s", kiteBaseURI, c.apiKey, kiteHeaderVersion)
+}
+
+// GetLoginURL gets Kite Connect login endpoint with redirect params appended.
+func (c *Client) GetLoginURLWithparams(p url.Values) string {
+	return fmt.Sprintf("%s/connect/login?api_key=%s&v=%s&redirect_params=%s",
+		kiteBaseURI, c.apiKey, kiteHeaderVersion, url.QueryEscape(p.Encode()))
+}
+
+// SetAppName sets the application name to the Kite Connect instance. It is used to
+// identify the application making the API calls using the user agent.
+func (c *Client) SetAppName(appName string) {
+	c.appName = appName
+}
+
+func (c *Client) userAgent() string {
+	if c.appName != "" {
+		return fmt.Sprintf("%s/%s/%s", name, version, c.appName)
+	}
+	return fmt.Sprintf("%s/%s", name, version)
+}
+
+func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.Header, v interface{}) error {
+	if params == nil {
+		params = url.Values{}
+	}
+
+	// Send custom headers set
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+
+	// Add Kite Connect version to header
+	headers.Add("X-Kite-Version", kiteHeaderVersion)
+	headers.Add("User-Agent", c.userAgent())
+
+	if c.apiKey != "" && c.accessToken != "" {
+		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+		headers.Add("Authorization", authHeader)
+	} else if c.enctoken != "" {
+		authHeader := fmt.Sprintf("enctoken %s", c.enctoken)
+		headers.Add("Authorization", authHeader)
+	}
+
+	return c.httpClient.DoEnvelope(method, c.baseURI+uri, params, headers, v)
+}
+
+func (c *Client) do(method, uri string, params url.Values, headers http.Header) (HTTPResponse, error) {
+	if params == nil {
+		params = url.Values{}
+	}
+
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+
+	headers.Add("X-Kite-Version", kiteHeaderVersion)
+	headers.Add("User-Agent", c.userAgent())
+
+	if c.apiKey != "" && c.accessToken != "" {
+		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+		headers.Add("Authorization", authHeader)
+	} else if c.enctoken != "" {
+		authHeader := fmt.Sprintf("enctoken %s", c.enctoken)
+		headers.Add("Authorization", authHeader)
+	}
+
+	return c.httpClient.Do(method, c.baseURI+uri, params, headers)
+}
+
+func (c *Client) doRaw(method, uri string, reqBody []byte, headers http.Header) (HTTPResponse, error) {
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+
+	headers.Add("X-Kite-Version", kiteHeaderVersion)
+	headers.Add("User-Agent", c.userAgent())
+
+	if c.apiKey != "" && c.accessToken != "" {
+		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+		headers.Add("Authorization", authHeader)
+	} else if c.enctoken != "" {
+		authHeader := fmt.Sprintf("enctoken %s", c.enctoken)
+		headers.Add("Authorization", authHeader)
+	}
+
+	return c.httpClient.DoRaw(method, c.baseURI+uri, reqBody, headers)
+}
