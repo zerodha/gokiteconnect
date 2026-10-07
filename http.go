@@ -6,6 +6,7 @@ package kiteconnect
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"io/ioutil"
@@ -32,7 +33,8 @@ type httpClient struct {
 	debug  bool
 }
 
-// HTTPResponse encompasses byte body  + the response of an HTTP request.
+// HTTPResponse contains the buffered body and metadata of an HTTP response.
+// Response.Body has already been read and closed; use Body to access its contents.
 type HTTPResponse struct {
 	Body     []byte
 	Response *http.Response
@@ -81,43 +83,85 @@ func (h *httpClient) Do(method, rURL string, params url.Values, headers http.Hea
 	return h.DoRaw(method, rURL, []byte(params.Encode()), headers)
 }
 
-// Do executes an HTTP request and returns the response.
+// DoRaw executes an HTTP request using the existing query/form conventions:
+// GET and DELETE replace the URL query, POST and PUT send a form body, and other
+// methods ignore reqBody. Use Client.DoRaw to send a body with any method.
 func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Header) (HTTPResponse, error) {
-	var (
-		resp     = HTTPResponse{}
-		err      error
-		postBody io.Reader
-	)
-
-	// Encode POST / PUT params.
+	var postBody io.Reader
 	if method == http.MethodPost || method == http.MethodPut {
 		postBody = bytes.NewReader(reqBody)
 	}
-
 	req, err := http.NewRequest(method, rURL, postBody)
+	if err != nil {
+		h.hLog.Printf("Request preparation failed: %v", err)
+		return HTTPResponse{}, NewError(NetworkError, "Request preparation failed.", nil)
+	}
+	if headers != nil {
+		req.Header = headers
+	}
+	if req.Header.Get("Content-Type") == "" && (method == http.MethodPost || method == http.MethodPut) {
+		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if method == http.MethodGet || method == http.MethodDelete {
+		req.URL.RawQuery = string(reqBody)
+	}
+	return h.sendRequest(req.Context(), method, req)
+}
+
+func (h *httpClient) doParamsWithContext(ctx context.Context, method, rURL string, params []byte, headers http.Header) (HTTPResponse, error) {
+	if method == "" {
+		method = http.MethodGet
+	}
+	if method == http.MethodGet || method == http.MethodDelete || method == http.MethodHead {
+		return h.doRequestWithContext(ctx, method, rURL, nil, string(params), headers)
+	}
+	return h.doRawWithContext(ctx, method, rURL, params, headers)
+}
+
+func (h *httpClient) doRawWithContext(ctx context.Context, method, rURL string, reqBody []byte, headers http.Header) (HTTPResponse, error) {
+	return h.doRequestWithContext(ctx, method, rURL, reqBody, "", headers)
+}
+
+func (h *httpClient) doRequestWithContext(ctx context.Context, method, rURL string, reqBody []byte, query string, headers http.Header) (HTTPResponse, error) {
+	resp := HTTPResponse{}
+	if method == "" {
+		method = http.MethodGet
+	}
+	req, err := http.NewRequestWithContext(ctx, method, rURL, bytes.NewReader(reqBody))
 	if err != nil {
 		h.hLog.Printf("Request preparation failed: %v", err)
 		return resp, NewError(NetworkError, "Request preparation failed.", nil)
 	}
 
 	if headers != nil {
-		req.Header = headers
+		req.Header = headers.Clone()
 	}
 
 	// If a content-type isn't set, set the default one.
 	if req.Header.Get("Content-Type") == "" {
-		if method == http.MethodPost || method == http.MethodPut {
+		if len(reqBody) > 0 || (method != http.MethodGet && method != http.MethodDelete && method != http.MethodHead) {
 			req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 		}
 	}
 
-	// If the request method is GET or DELETE, add the params as QueryString.
-	if method == http.MethodGet || method == http.MethodDelete {
-		req.URL.RawQuery = string(reqBody)
+	// Preserve any query string supplied in the URL, including repeated keys.
+	if query != "" {
+		if req.URL.RawQuery != "" {
+			req.URL.RawQuery += "&"
+		}
+		req.URL.RawQuery += query
 	}
 
+	return h.sendRequest(ctx, method, req)
+}
+
+func (h *httpClient) sendRequest(ctx context.Context, method string, req *http.Request) (HTTPResponse, error) {
+	resp := HTTPResponse{}
 	r, err := h.client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return resp, ctx.Err()
+		}
 		h.hLog.Printf("Request failed: %v", err)
 		return resp, NewError(NetworkError, "Request failed.", nil)
 	}
@@ -126,6 +170,9 @@ func (h *httpClient) DoRaw(method, rURL string, reqBody []byte, headers http.Hea
 
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
+		if ctx.Err() != nil {
+			return resp, ctx.Err()
+		}
 		h.hLog.Printf("Unable to read response: %v", err)
 		return resp, NewError(DataError, "Error reading response.", nil)
 	}
@@ -157,6 +204,17 @@ func (h *httpClient) DoEnvelope(method, url string, params url.Values, headers h
 }
 
 func readEnvelope(resp HTTPResponse, obj interface{}) error {
+	return ReadEnvelope(resp, obj)
+}
+
+// ReadEnvelope decodes the data field of a buffered Kite response into obj.
+// Pass a pointer to the destination, or nil to discard data. HTTP error status
+// codes are decoded into Error with the server's code, error_type, message, and
+// data. A missing HTTP response or invalid JSON produces a DataError.
+func ReadEnvelope(resp HTTPResponse, obj interface{}) error {
+	if resp.Response == nil {
+		return NewError(DataError, "Missing HTTP response.", nil)
+	}
 	// Successful request, but error envelope.
 	if resp.Response.StatusCode >= http.StatusBadRequest {
 		var e errorEnvelope
