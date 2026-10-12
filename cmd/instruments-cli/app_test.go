@@ -31,9 +31,9 @@ func TestInstrumentAppInitializesAndStopsCleanly(t *testing.T) {
 			},
 		},
 	}
-	ui := newInstrumentApp(context.Background(), ":memory:", func(context.Context) (catalog, error) {
-		return store, nil
-	})
+	ui := newInstrumentApp(context.Background(), ":memory:", func(context.Context) (catalog, listStore, error) {
+		return store, nil, nil
+	}, nil)
 	screen := tcell.NewSimulationScreen("UTF-8")
 	screen.SetSize(120, 40)
 	ui.application.SetScreen(screen)
@@ -44,10 +44,10 @@ func TestInstrumentAppInitializesAndStopsCleanly(t *testing.T) {
 	waitForApp(t, ui, func() bool {
 		return ui.catalog == store && !ui.busy && len(ui.resultItems) == 2
 	})
-	if got := ui.results.GetCell(2, 3).Text; got != "123.45" {
+	if got := ui.results.GetCell(2, 5).Text; got != "123.45" {
 		t.Fatalf("unselected strike cell = %q, want 123.45", got)
 	}
-	if got := ui.results.GetCell(2, 5).Text; got != "2" {
+	if got := ui.results.GetCell(2, 7).Text; got != "2" {
 		t.Fatalf("unselected futures count = %q, want 2", got)
 	}
 	if header := ui.header.GetText(true); !strings.Contains(header, "2 underlyings") {
@@ -61,8 +61,16 @@ func TestInstrumentAppInitializesAndStopsCleanly(t *testing.T) {
 		row, _ := ui.results.GetSelection()
 		return ui.application.GetFocus() == ui.results && row == 1
 	})
+	ui.application.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlD, 0, tcell.ModCtrl))
+	waitForApp(t, ui, func() bool { row, _ := ui.results.GetSelection(); return row == ui.results.GetRowCount()-1 })
+	ui.application.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlU, 0, tcell.ModCtrl))
+	waitForApp(t, ui, func() bool { row, _ := ui.results.GetSelection(); return row == 1 })
 
 	ui.application.QueueEvent(tcell.NewEventKey(tcell.KeyRune, 'q', tcell.ModNone))
+	// Q only goes back; the app keeps running.
+	ui.application.QueueEvent(tcell.NewEventKey(tcell.KeyRune, '/', tcell.ModNone))
+	waitForApp(t, ui, func() bool { return ui.application.GetFocus() == ui.search })
+	ui.application.QueueEvent(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModCtrl))
 
 	select {
 	case err := <-done:

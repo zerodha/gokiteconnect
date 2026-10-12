@@ -16,6 +16,7 @@ import (
 
 	"github.com/devshoe/gokiteconnect/config"
 	"github.com/devshoe/gokiteconnect/kite"
+	"github.com/devshoe/gokiteconnect/pkg/nse"
 	instrumentstore "github.com/devshoe/gokiteconnect/repository"
 )
 
@@ -34,6 +35,9 @@ func run() error {
 		return err
 	}
 	databaseFlag := flag.String("db", settings.InstrumentsPath, "DuckDB database used for the instrument catalog")
+	dataUserFlag := flag.String("data-user", settings.DataUserID, "API user whose session fetches prices; empty picks the first API user with a data subscription")
+	quotesEvery := flag.Duration("quotes-every", 5*time.Second, "how often visible prices refresh; 0 refreshes only on R")
+	noQuotes := flag.Bool("no-quotes", false, "start without prices")
 	flag.Parse()
 
 	databasePath := strings.TrimSpace(*databaseFlag)
@@ -49,10 +53,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	factory := func(ctx context.Context) (catalog, error) {
+	factory := func(ctx context.Context) (catalog, listStore, error) {
 		repository, err := instrumentstore.NewInstrumentsDuckDBRepository(ctx, databasePath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		client := kite.New("")
 		client.SetAppName("instruments-cli")
@@ -61,11 +65,15 @@ func run() error {
 		instruments := client.Instruments()
 		if _, err := instruments.RefreshIfStale(ctx); err != nil {
 			_ = instruments.Close()
-			return nil, err
+			return nil, nil, err
 		}
-		return instruments, nil
+		return instruments, repository, nil
 	}
 
-	ui := newInstrumentApp(ctx, databasePath, factory)
+	ui := newInstrumentApp(ctx, databasePath, factory, nse.NewIndicesClient())
+	if !*noQuotes {
+		ui.loadQuotes = credentialsQuoteLoader(settings.CredentialsPath, strings.TrimSpace(*dataUserFlag))
+		ui.quoteEvery = *quotesEvery
+	}
 	return ui.run()
 }

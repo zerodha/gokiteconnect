@@ -3,12 +3,14 @@ package kite
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/candles"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/candles"
 	"github.com/gocarina/gocsv"
 	"github.com/google/go-querystring/query"
 )
@@ -149,70 +151,127 @@ type MFInstrument struct {
 // MFInstruments represents list of mutualfund instruments.
 type MFInstruments []MFInstrument
 
-// GetQuote gets map of quotes for given instruments in the format of `exchange:tradingsymbol`.
-func (c *Client) GetQuote(instruments ...string) (Quote, error) {
-	var (
-		err     error
-		quotes  Quote
-		params  url.Values
-		qParams quoteParams
-	)
+// Kite Connect limits on the market quote endpoints, from
+// https://kite.trade/docs/connect/v3/market-quotes/ and
+// https://kite.trade/docs/connect/v3/exceptions/:
+//   - /quote (full quote) returns at most 500 instruments per request.
+//   - /quote/ohlc and /quote/ltp return at most 1000 instruments per request.
+//   - All quote endpoints share a rate limit of 1 request per second.
+const (
+	quoteBatchSize       = 500
+	quoteLTPBatchSize    = 1000
+	quoteOHLCBatchSize   = 1000
+	quoteRequestInterval = time.Second
+)
 
+// GetQuote gets map of quotes for given instruments in the format of `exchange:tradingsymbol`.
+//
+// Limits: Kite returns full quotes for at most 500 instruments per request and
+// allows 1 quote request per second. Larger lists are split into batches of
+// 500 that are requested one after another, each at least a second after the
+// client's previous quote request, and merged; 1200 instruments therefore take
+// three requests and about two seconds. Duplicate instruments are requested
+// once. Not supported with an enctoken session.
+func (c *Client) GetQuote(instruments ...string) (Quote, error) {
+	return c.getQuote(context.Background(), instruments)
+}
+
+func (c *Client) getQuote(ctx context.Context, instruments []string) (Quote, error) {
 	if c.enctoken != "" {
 		return nil, NewError(InputError, "Endpoint not supported for enctoken", nil)
 	}
-	qParams = quoteParams{
-		Instruments: instruments,
-	}
-
-	if params, err = query.Values(qParams); err != nil {
-		return quotes, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
-	}
-
-	err = c.doEnvelope(http.MethodGet, URIGetQuote, params, nil, &quotes)
-	return quotes, err
+	return getQuoteBatches[QuoteData](ctx, c, URIGetQuote, quoteBatchSize, instruments)
 }
 
 // GetLTP gets map of LTP quotes for given instruments in the format of `exchange:tradingsymbol`.
+//
+// Limits: Kite returns LTPs for at most 1000 instruments per request and
+// allows 1 quote request per second. Larger lists are split into batches of
+// 1000 that are requested one after another, each at least a second after the
+// client's previous quote request, and merged. Duplicate instruments are
+// requested once.
 func (c *Client) GetLTP(instruments ...string) (QuoteLTP, error) {
-	var (
-		err     error
-		quotes  QuoteLTP
-		params  url.Values
-		qParams quoteParams
-	)
-
-	qParams = quoteParams{
-		Instruments: instruments,
-	}
-
-	if params, err = query.Values(qParams); err != nil {
-		return quotes, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
-	}
-
-	err = c.doEnvelope(http.MethodGet, URIGetLTP, params, nil, &quotes)
-	return quotes, err
+	return getQuoteBatches[QuoteLTPData](context.Background(), c, URIGetLTP, quoteLTPBatchSize, instruments)
 }
 
 // GetOHLC gets map of OHLC quotes for given instruments in the format of `exchange:tradingsymbol`.
+//
+// Limits: Kite returns OHLC quotes for at most 1000 instruments per request
+// and allows 1 quote request per second. Larger lists are split into batches
+// of 1000 that are requested one after another, each at least a second after
+// the client's previous quote request, and merged. Duplicate instruments are
+// requested once.
 func (c *Client) GetOHLC(instruments ...string) (QuoteOHLC, error) {
-	var (
-		err     error
-		quotes  QuoteOHLC
-		params  url.Values
-		qParams quoteParams
-	)
+	return getQuoteBatches[QuoteOHLCData](context.Background(), c, URIGetOHLC, quoteOHLCBatchSize, instruments)
+}
 
-	qParams = quoteParams{
-		Instruments: instruments,
+// getQuoteBatches requests instruments in batches of at most batchSize and
+// merges the responses. Duplicate instruments are requested once. Like a
+// single request, an empty instrument list still makes one request.
+func getQuoteBatches[T any](ctx context.Context, c *Client, uri string, batchSize int, instruments []string) (map[string]T, error) {
+	instruments = uniqueStrings(instruments)
+	quotes := make(map[string]T, len(instruments))
+	for start := 0; start == 0 || start < len(instruments); start += batchSize {
+		end := min(start+batchSize, len(instruments))
+		params, err := query.Values(quoteParams{Instruments: instruments[start:end]})
+		if err != nil {
+			return nil, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
+		}
+		if err := c.quotePacer.wait(ctx); err != nil {
+			return nil, err
+		}
+		var batch map[string]T
+		if err := c.doEnvelope(http.MethodGet, uri, params, nil, &batch); err != nil {
+			return nil, err
+		}
+		maps.Copy(quotes, batch)
 	}
+	return quotes, nil
+}
 
-	if params, err = query.Values(qParams); err != nil {
-		return quotes, NewError(InputError, fmt.Sprintf("Error decoding order params: %v", err), nil)
+// uniqueStrings drops repeated values, keeping the first occurrence's order.
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; !ok {
+			seen[value] = struct{}{}
+			unique = append(unique, value)
+		}
 	}
+	return unique
+}
 
-	err = c.doEnvelope(http.MethodGet, URIGetOHLC, params, nil, &quotes)
-	return quotes, err
+// requestPacer spaces requests at least interval apart. A nil pacer does not
+// wait.
+type requestPacer struct {
+	mu       sync.Mutex
+	interval time.Duration
+	next     time.Time
+}
+
+func newRequestPacer(interval time.Duration) *requestPacer {
+	return &requestPacer{interval: interval}
+}
+
+// wait blocks until the next request may be sent, or ctx is done.
+func (p *requestPacer) wait(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if delay := time.Until(p.next); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	p.next = time.Now().Add(p.interval)
+	return nil
 }
 
 func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalData, error) {

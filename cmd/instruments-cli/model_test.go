@@ -100,12 +100,12 @@ func TestLoadInitialCatalogAndRetry(t *testing.T) {
 	want := []models.Instrument{{ID: "NSE:NIFTY 50"}}
 	store := &fakeCatalog{lastRefreshed: wantTime, underlyings: want}
 	attempts := 0
-	factory := func(context.Context) (catalog, error) {
+	factory := func(context.Context) (catalog, listStore, error) {
 		attempts++
 		if attempts == 1 {
-			return nil, errors.New("temporary open failure")
+			return nil, nil, errors.New("temporary open failure")
 		}
-		return store, nil
+		return store, nil, nil
 	}
 
 	if _, err := loadInitialCatalog(context.Background(), factory); err == nil {
@@ -120,7 +120,7 @@ func TestLoadInitialCatalogAndRetry(t *testing.T) {
 	}
 
 	failing := &fakeCatalog{listFOErr: errors.New("query failed")}
-	if _, err := loadInitialCatalog(context.Background(), func(context.Context) (catalog, error) { return failing, nil }); err == nil {
+	if _, err := loadInitialCatalog(context.Background(), func(context.Context) (catalog, listStore, error) { return failing, nil, nil }); err == nil {
 		t.Fatal("failed initial query unexpectedly succeeded")
 	}
 	if failing.closeCalls != 1 {
@@ -131,8 +131,8 @@ func TestLoadInitialCatalogAndRetry(t *testing.T) {
 func TestLoadInitialCatalogHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := loadInitialCatalog(ctx, func(ctx context.Context) (catalog, error) {
-		return nil, ctx.Err()
+	_, err := loadInitialCatalog(ctx, func(ctx context.Context) (catalog, listStore, error) {
+		return nil, nil, ctx.Err()
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("loadInitialCatalog() error = %v, want context.Canceled", err)
@@ -230,6 +230,15 @@ func (f *fakeCatalog) Refresh(context.Context) error {
 
 func (f *fakeCatalog) LastRefreshedAt(context.Context) (time.Time, error) {
 	return f.lastRefreshed, nil
+}
+
+func (f *fakeCatalog) Get(_ context.Context, id models.InstrumentID) (models.Instrument, error) {
+	for _, instrument := range append(append(append([]models.Instrument(nil), f.underlyings...), f.futures...), f.options...) {
+		if instrument.ID == id {
+			return instrument, nil
+		}
+	}
+	return models.Instrument{}, models.ErrNotFound
 }
 
 func (f *fakeCatalog) ListFO(context.Context, ...string) ([]models.Instrument, error) {

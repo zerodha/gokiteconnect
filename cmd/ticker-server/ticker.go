@@ -59,8 +59,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/cmd/ticker/consumer"
-	"github.com/devshoe/gokiteconnect/cmd/ticker/producer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/consumer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/producer"
 	baseconfig "github.com/devshoe/gokiteconnect/config"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
 	"github.com/devshoe/gokiteconnect/kite"

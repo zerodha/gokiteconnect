@@ -195,6 +195,8 @@ type TestSuite struct {
 // SetupAPITestSuit sets up the mock HTTP environment for the test suite.
 func (ts *TestSuite) SetupAPITestSuit(t *testing.T) {
 	ts.KiteConnect = New("test_api_key")
+	// The mock routes need no rate limiting.
+	ts.KiteConnect.quotePacer = nil
 	httpmock.ActivateNonDefault(ts.KiteConnect.httpClient.GetClient().client)
 
 	// Compile the regex once for replacing URL variables.

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/cmd/ticker/consumer"
-	"github.com/devshoe/gokiteconnect/cmd/ticker/producer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/consumer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/producer"
 )
 
 type fakeProducerStatus struct{ status producer.Status }

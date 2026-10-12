@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/candles"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/candles"
 )
 
 func TestHistoricalBatchDuration(t *testing.T) {

@@ -13,14 +13,15 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"tradebot-go/domain"
 
 	"github.com/PuerkitoBio/goquery"
+
+	"github.com/devshoe/gokiteconnect/models"
 )
 
 const (
 	niftyIndicesBaseURL   = "https://www.niftyindices.com"
-	niftyIndexMappingURL  = "https://iislliveblob.niftyindices.com/assets/json/IndexMapping.json"
+	niftyIndexMappingURL  = "https://liveindexsa.niftyindices.com/assets/json/IndexMapping.json"
 	defaultIndicesTimeout = 25 * time.Second
 )
 
@@ -117,14 +118,16 @@ func NewIndicesClient(opts ...IndicesOption) *IndicesClient {
 type NSEIndexMetadata struct {
 	TradingSymbol     string `json:"trading_symbol"`
 	IndexName         string `json:"index_name"`
-	CollectionName    string `json:"collection_name"`
+	ListName          string `json:"list_name"`
 	CategoryPageURL   string `json:"category_page_url"`
 	IndexPageURL      string `json:"index_page_url"`
 	ConstituentCSVURL string `json:"constituent_csv_url"`
 }
 
-// GetIndicesMetadata returns discovered Nifty index pages and constituent CSV URLs.
-func (c *IndicesClient) GetIndicesMetadata(ctx context.Context) ([]NSEIndexMetadata, error) {
+// ListIndices returns discovered Nifty index pages sorted by trading symbol.
+// It does not visit the index pages, so ConstituentCSVURL is left empty;
+// GetIndex resolves it on demand.
+func (c *IndicesClient) ListIndices(ctx context.Context) ([]NSEIndexMetadata, error) {
 	longNameToSymbol, err := c.fetchLongNameToTradingSymbolMapping(ctx)
 	if err != nil {
 		return nil, err
@@ -137,12 +140,25 @@ func (c *IndicesClient) GetIndicesMetadata(ctx context.Context) ([]NSEIndexMetad
 
 	tradingSymbols := sortedIndexTradingSymbols(metadataBySymbol)
 	metadata := make([]NSEIndexMetadata, 0, len(tradingSymbols))
-	errs := make([]error, 0)
 	for _, tradingSymbol := range tradingSymbols {
-		item := metadataBySymbol[tradingSymbol]
+		metadata = append(metadata, metadataBySymbol[tradingSymbol])
+	}
+	return metadata, nil
+}
+
+// GetIndicesMetadata returns discovered Nifty index pages and constituent CSV URLs.
+func (c *IndicesClient) GetIndicesMetadata(ctx context.Context) ([]NSEIndexMetadata, error) {
+	indices, err := c.ListIndices(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	metadata := make([]NSEIndexMetadata, 0, len(indices))
+	errs := make([]error, 0)
+	for _, item := range indices {
 		csvURL, err := c.FetchConstituentCSVURL(ctx, item.IndexPageURL)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", tradingSymbol, err))
+			errs = append(errs, fmt.Errorf("%s: %w", item.TradingSymbol, err))
 			continue
 		}
 		item.ConstituentCSVURL = csvURL
@@ -155,52 +171,55 @@ func (c *IndicesClient) GetIndicesMetadata(ctx context.Context) ([]NSEIndexMetad
 	return metadata, nil
 }
 
-// GetIndices returns auto-generated index collections from Nifty indices.
-func (c *IndicesClient) GetIndices(ctx context.Context) ([]domain.InstrumentCollection, error) {
+// GetIndices returns auto-generated index lists from Nifty indices.
+func (c *IndicesClient) GetIndices(ctx context.Context) ([]models.List, error) {
 	metadata, err := c.GetIndicesMetadata(ctx)
 	if err != nil && len(metadata) == 0 {
 		return nil, err
 	}
 
-	collections := make([]domain.InstrumentCollection, 0, len(metadata))
+	lists := make([]models.List, 0, len(metadata))
 	errs := make([]error, 0)
 	for _, item := range metadata {
-		collection, collectionErr := c.GetIndex(ctx, item)
-		if collectionErr != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", item.TradingSymbol, collectionErr))
+		list, listErr := c.GetIndex(ctx, item)
+		if listErr != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", item.TradingSymbol, listErr))
 			continue
 		}
-		collections = append(collections, collection)
+		lists = append(lists, list)
 	}
 
 	if len(errs) > 0 {
-		return collections, fmt.Errorf("failed to fetch constituents for %d indices: %w", len(errs), errors.Join(errs...))
+		return lists, fmt.Errorf("failed to fetch constituents for %d indices: %w", len(errs), errors.Join(errs...))
 	}
-	return collections, err
+	return lists, err
 }
 
-// GetIndex returns one auto-generated collection for the given metadata.
-func (c *IndicesClient) GetIndex(ctx context.Context, metadata NSEIndexMetadata) (domain.InstrumentCollection, error) {
+// GetIndex returns one auto-generated list for the given metadata. The list's
+// URL is the index page, so the list can be refreshed with
+// GetIndex(ctx, NSEIndexMetadata{ListName: list.Name, IndexPageURL: list.URL}).
+func (c *IndicesClient) GetIndex(ctx context.Context, metadata NSEIndexMetadata) (models.List, error) {
 	instrumentIDs, err := c.GetConstituentIDs(ctx, metadata)
 	if err != nil {
-		return domain.InstrumentCollection{}, err
+		return models.List{}, err
 	}
 
-	items := make([]domain.InstrumentCollectionItem, 0, len(instrumentIDs))
+	items := make([]models.ListItem, 0, len(instrumentIDs))
 	for _, instrumentID := range instrumentIDs {
-		items = append(items, domain.InstrumentCollectionItem{InstrumentID: instrumentID})
+		items = append(items, models.ListItem{InstrumentID: models.InstrumentID(instrumentID)})
 	}
 
-	collectionName := metadata.CollectionName
-	if collectionName == "" {
-		collectionName = "NSE:" + strings.ToUpper(metadata.TradingSymbol)
+	listName := metadata.ListName
+	if listName == "" {
+		listName = "NSE:" + strings.ToUpper(metadata.TradingSymbol)
 	}
 
-	return domain.InstrumentCollection{
-		Name:          collectionName,
+	return models.List{
+		Name:          listName,
 		IsIndex:       true,
 		AutoGenerated: true,
-		Instruments:   items,
+		URL:           metadata.IndexPageURL,
+		Items:         items,
 	}, nil
 }
 
@@ -227,9 +246,11 @@ func (c *IndicesClient) FetchConstituentCSVURL(ctx context.Context, indexPageURL
 	}
 
 	csvURL := ""
-	doc.Find(`a[href*="../IndexConstituent"]`).EachWithBreak(func(_ int, selection *goquery.Selection) bool {
+	// The link has been both relative (../IndexConstituent/...) and absolute
+	// (https://www.niftyindices.com/IndexConstituent/...).
+	doc.Find(`a[href*="IndexConstituent/"]`).EachWithBreak(func(_ int, selection *goquery.Selection) bool {
 		href := strings.TrimSpace(selection.AttrOr("href", ""))
-		if href == "" {
+		if !strings.HasSuffix(strings.ToLower(href), ".csv") {
 			return true
 		}
 		csvURL = resolveURL(c.baseURL.String(), href)
@@ -355,7 +376,7 @@ func parseIndexCategoryPage(doc *goquery.Document, categoryURL string, baseURL s
 		metadataBySymbol[tradingSymbol] = NSEIndexMetadata{
 			TradingSymbol:   tradingSymbol,
 			IndexName:       indexName,
-			CollectionName:  "NSE:" + strings.ToUpper(tradingSymbol),
+			ListName:        "NSE:" + strings.ToUpper(tradingSymbol),
 			CategoryPageURL: categoryURL,
 			IndexPageURL:    indexPageURL,
 		}

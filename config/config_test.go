@@ -11,6 +11,7 @@ var configEnvironmentKeys = []string{
 	"TRADEBOT_CREDENTIALS_SQLITE_PATH",
 	"TRADEBOT_INSTRUMENTS_DUCKDB_PATH",
 	"TRADEBOT_TICKER_USER_ID",
+	"TRADEBOT_DATA_USER_ID",
 }
 
 func TestLoadUsesTradebotHomeDefaults(t *testing.T) {
@@ -20,6 +21,7 @@ func TestLoadUsesTradebotHomeDefaults(t *testing.T) {
 	t.Setenv("TRADEBOT_CREDENTIALS_SQLITE_PATH", "")
 	t.Setenv("TRADEBOT_INSTRUMENTS_DUCKDB_PATH", "")
 	t.Setenv("TRADEBOT_TICKER_USER_ID", "")
+	t.Setenv("TRADEBOT_DATA_USER_ID", "")
 
 	got, err := Load()
 	if err != nil {
@@ -35,8 +37,8 @@ func TestLoadUsesTradebotHomeDefaults(t *testing.T) {
 	if got.InstrumentsPath != filepath.Join(wantRoot, "instruments.duckdb") {
 		t.Fatalf("unexpected instruments database path: got %q", got.InstrumentsPath)
 	}
-	if got.TickerUserID != "" {
-		t.Fatalf("unexpected ticker user ID: got %q", got.TickerUserID)
+	if got.TickerUserID != "" || got.DataUserID != "" {
+		t.Fatalf("unexpected user IDs: ticker %q, data %q", got.TickerUserID, got.DataUserID)
 	}
 }
 
@@ -47,6 +49,7 @@ func TestLoadEnvironmentOverridesExpandHome(t *testing.T) {
 	t.Setenv("TRADEBOT_CREDENTIALS_SQLITE_PATH", "~/state/users.sqlite3")
 	t.Setenv("TRADEBOT_INSTRUMENTS_DUCKDB_PATH", "~/state/instruments.duckdb")
 	t.Setenv("TRADEBOT_TICKER_USER_ID", "  CC0006  ")
+	t.Setenv("TRADEBOT_DATA_USER_ID", " DA0001 ")
 
 	got, err := Load()
 	if err != nil {
@@ -63,6 +66,9 @@ func TestLoadEnvironmentOverridesExpandHome(t *testing.T) {
 	}
 	if got.TickerUserID != "CC0006" {
 		t.Fatalf("unexpected ticker user ID: %q", got.TickerUserID)
+	}
+	if got.DataUserID != "DA0001" {
+		t.Fatalf("unexpected data user ID: %q", got.DataUserID)
 	}
 	if _, err := os.Stat(got.CredentialsPath); !os.IsNotExist(err) {
 		t.Fatalf("config unexpectedly created the database: %v", err)

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/cmd/ticker/consumer"
-	"github.com/devshoe/gokiteconnect/cmd/ticker/producer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/consumer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/producer"
 )
 
 func TestTickerAppShowsSubscriptionSnapshot(t *testing.T) {

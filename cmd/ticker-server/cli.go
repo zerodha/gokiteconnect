@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/devshoe/gokiteconnect/cmd/ticker/consumer"
-	"github.com/devshoe/gokiteconnect/cmd/ticker/producer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/consumer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/producer"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -226,7 +226,7 @@ func (ui *tickerApp) build() {
 		ui.applySnapshot(ui.snapshot())
 	}), 0, 1, false)
 	actions.AddItem(tickerActionButton("☷ Logs [L]", tcell.ColorLightYellow, ui.toggleLogs), 0, 1, false)
-	actions.AddItem(tickerActionButton("⏻ Quit [Q]", tcell.ColorLightCoral, ui.stop), 0, 1, false)
+	actions.AddItem(tickerActionButton("⏻ Quit [Ctrl+C]", tcell.ColorLightCoral, ui.stop), 0, 1, false)
 
 	ui.status = tview.NewTextView().SetDynamicColors(true).SetTextColor(tcell.ColorLightCyan)
 	ui.status.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
@@ -243,11 +243,11 @@ func (ui *tickerApp) build() {
 	ui.logView.SetBorder(true).SetBorderColor(tcell.ColorLightYellow).SetTitle(" Ticker logs ").SetTitleColor(tcell.ColorLightYellow)
 	logActions := tview.NewFlex().SetDirection(tview.FlexColumn)
 	logActions.SetBorder(true).SetBorderColor(tcell.ColorDarkCyan).SetTitle(" Actions ").SetTitleColor(tcell.ColorLightYellow)
-	logActions.AddItem(tickerActionButton("← Subscriptions [L / Esc]", tcell.ColorLightCyan, ui.closeLogs), 0, 1, false)
-	logActions.AddItem(tickerActionButton("⏻ Quit [Q]", tcell.ColorLightCoral, ui.stop), 0, 1, false)
+	logActions.AddItem(tickerActionButton("← Subscriptions [Q / Esc]", tcell.ColorLightCyan, ui.closeLogs), 0, 1, false)
+	logActions.AddItem(tickerActionButton("⏻ Quit [Ctrl+C]", tcell.ColorLightCoral, ui.stop), 0, 1, false)
 	logHelp := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText("  [green]↑↓ PgUp PgDn Home End[-] scroll  [lightcyan]L / Esc[-] subscriptions  [coral]Q[-] quit  ·  newest entries are at the bottom")
+		SetText("  [green]↑↓ PgUp PgDn Ctrl+U/D Home End[-] scroll  [lightcyan]Q / Esc[-] subscriptions  [coral]Ctrl+C[-] quit  ·  newest entries are at the bottom")
 	logHelp.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
 	logRoot := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(ui.logView, 0, 1, true).
@@ -262,6 +262,9 @@ func (ui *tickerApp) capture(event *tcell.EventKey) *tcell.EventKey {
 		ui.stop()
 		return nil
 	}
+	if page := pageKey(ui.application, event); page != nil {
+		return page
+	}
 	if event.Key() == tcell.KeyEscape && ui.logsVisible {
 		ui.closeLogs()
 		return nil
@@ -271,7 +274,9 @@ func (ui *tickerApp) capture(event *tcell.EventKey) *tcell.EventKey {
 	}
 	switch strings.ToLower(string(event.Rune())) {
 	case "q":
-		ui.stop()
+		if ui.logsVisible {
+			ui.closeLogs()
+		}
 		return nil
 	case "r":
 		ui.applySnapshot(ui.snapshot())
@@ -281,6 +286,21 @@ func (ui *tickerApp) capture(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	return event
+}
+
+// pageKey turns Ctrl+D and Ctrl+U into Page Down and Page Up, except while
+// typing, where tview uses them to edit the field.
+func pageKey(application *tview.Application, event *tcell.EventKey) *tcell.EventKey {
+	if _, typing := application.GetFocus().(*tview.InputField); typing {
+		return nil
+	}
+	switch event.Key() {
+	case tcell.KeyCtrlD:
+		return tcell.NewEventKey(tcell.KeyPgDn, 0, tcell.ModNone)
+	case tcell.KeyCtrlU:
+		return tcell.NewEventKey(tcell.KeyPgUp, 0, tcell.ModNone)
+	}
+	return nil
 }
 
 func (ui *tickerApp) toggleLogs() {
@@ -361,7 +381,7 @@ func (ui *tickerApp) applySnapshot(snapshot tickerCLISnapshot) {
 		ui.updateDetail(restoreRow)
 	}
 	ui.status.SetText(fmt.Sprintf(
-		"  [green]↑↓[-] navigate  [lightskyblue]R[-] refresh  [yellow]L[-] logs  [coral]Q[-] quit  ·  auto-refresh %s  ·  updated %s",
+		"  [green]↑↓ Ctrl+U/D[-] navigate  [lightskyblue]R[-] refresh  [yellow]L[-] logs  [coral]Ctrl+C[-] quit  ·  auto-refresh %s  ·  updated %s",
 		tickerCLIRefreshInterval,
 		snapshot.refreshedAt.Local().Format("15:04:05"),
 	))

@@ -178,6 +178,39 @@ func (manager *UserManager) RefreshUserSession(ctx context.Context, userID strin
 	return user, nil
 }
 
+// RefreshUserSessionIfRequired validates the stored session with a profile
+// request and logs in only when there is no session or Kite reports it
+// expired, persisting any new session. Unlike GetUser it rereads the
+// repository and checks the session on every call, so it picks up sessions
+// refreshed elsewhere and notices ones that expired after being cached. It
+// reports whether a login occurred.
+func (manager *UserManager) RefreshUserSessionIfRequired(ctx context.Context, userID string) (*User, bool, error) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	credentials, err := manager.credentialsRepository.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, false, err
+	}
+	user, err := manager.newUserClient(*credentials)
+	if err != nil {
+		return nil, false, err
+	}
+	profile, didLogin, err := user.LoginIfRequired()
+	if err != nil {
+		return nil, false, err
+	}
+	applyProfile(user, profile)
+	if didLogin {
+		user.LastLogin = time.Now()
+		if err := manager.persistAuthenticatedUser(ctx, user); err != nil {
+			return nil, false, err
+		}
+	}
+	manager.currentlyLoadedUsers[userID] = user
+	return user, didLogin, nil
+}
+
 // DeleteUser deletes a user and evicts it from the cache.
 func (manager *UserManager) DeleteUser(ctx context.Context, userID string) error {
 	manager.mu.Lock()

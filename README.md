@@ -115,9 +115,32 @@ Use a new database path, or reopen a database previously created by the DuckDB
 repository. Legacy tradebot databases are rejected without modification. DuckDB
 uses CGO, so builds must have a working C toolchain and `CGO_ENABLED=1`.
 
+### Terminal console (kite-cli)
+
+`kite-cli` combines `users-cli` and `instruments-cli` in one application:
+
+```sh
+go run ./cmd/kite-cli
+```
+
+It opens on the users stored in the credentials database
+(`TRADEBOT_CREDENTIALS_SQLITE_PATH`, or `-credentials-db`). `Enter` on a user
+shows their net positions, holdings and mutual fund holdings. The stored
+session is checked first, and the user is logged in again only when there is
+no session or Kite reports it expired; the new session is saved. Positions are
+grouped by underlying (looked up in the instrument catalog, which is opened on
+first use) with a subtotal P&L per group; `Enter` on a group collapses it, and
+an underlying with one position is not grouped. A details pane describes the
+selected row. Kite's positions and holdings responses carry delayed prices, so
+the portfolio is repriced from OHLC quotes with the user's session, and again
+every `-quotes-every` while it is shown. `I` opens the instruments explorer
+described below from either screen, `Q` goes back one screen, and `Ctrl+C`
+quits. The catalog is `-instruments-db`; the price flags match
+`instruments-cli`.
+
 ### Instruments terminal explorer
 
-Run the full-screen catalog browser with:
+Run the full-screen catalog browser on its own with:
 
 ```sh
 go run ./cmd/instruments-cli
@@ -131,16 +154,27 @@ application opens.
 
 The main view shows listed F&O underlyings when the search field is empty and
 ranked instrument matches while typing. Select an underlying or derivative to
-open its futures and CE/strike/PE option chain. The chain supports expiry
-selection, strike bounds, and call/put filtering.
+open its futures and option chain. The chain supports expiry selection, strike
+bounds, and call/put filtering. Each leg shows its breakeven at expiry (strike
+plus premium for a call, strike less premium for a put), as the move from spot
+by default, and its open interest over a bar scaled to the chain's largest OI,
+growing out from the strike column. The status bar shows
+the selected contract's premium per lot and the margin Kite blocks for one lot
+(sold, for an option; bought, for a future), from the data user's margin
+calculator.
+
+Prices come from full quotes fetched with the data user's session:
+`TRADEBOT_DATA_USER_ID` or `-data-user`, otherwise the first API user with a
+data subscription. Visible prices refresh every `-quotes-every` (5s by
+default); `-no-quotes` turns them off.
 
 - `/` focuses search and `U` returns to the F&O-underlying browser.
-- `Enter` explores the selected instrument; `Esc` returns from a chain.
+- `Enter` explores the selected instrument; `Q` or `Esc` goes back, and `Ctrl+C` quits.
 - `E` selects an expiry, `[` and `]` cycle expiries, and `F` edits filters.
-- `R` forces a complete catalog refresh and `Q` quits.
+- `%` switches chain breakevens between the move from spot (the default) and prices.
+- `R` refreshes prices, `C` forces a complete catalog refresh, and `L` opens lists.
 
-The explorer is metadata-only: it does not request live quotes, calculate
-moneyness, manage watchlists, or place trades. Mouse navigation is supported.
+The explorer does not place trades. Mouse navigation is supported.
 
 ## Kite ticker usage
 

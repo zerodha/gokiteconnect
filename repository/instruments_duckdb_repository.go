@@ -115,14 +115,15 @@ func NewInstrumentsDuckDBRepository(ctx context.Context, databasePath string) (*
 	}
 
 	store := &InstrumentsDuckDBRepository{db: db}
+	initialize := store.initializeSchema
 	if existed {
-		if err := store.validateSchema(ctx); err != nil {
-			_ = db.Close()
-			return nil, err
-		}
-		return store, nil
+		initialize = store.validateSchema
 	}
-	if err := store.initializeSchema(ctx); err != nil {
+	if err := initialize(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.initializeListSchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

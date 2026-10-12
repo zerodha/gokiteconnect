@@ -396,3 +396,46 @@ func TestUserManagerListChatAndDeleteSynchronizeRepositoryAndCache(t *testing.T)
 		t.Fatalf("expected deleted row to be absent, got %v", err)
 	}
 }
+
+func TestUserManagerRefreshesSessionOnlyWhenRequired(t *testing.T) {
+	repository := newMemoryCredentialsRepository()
+	credentials := managerTestCredentials()
+	credentials.EncToken = "valid-enc"
+	if err := repository.CreateUser(context.Background(), credentials); err != nil {
+		t.Fatalf("CreateUser returned an error: %v", err)
+	}
+	backend := &fakeAuthenticationBackend{}
+	manager := newTestManager(t, repository, backend)
+	ctx := context.Background()
+
+	// A valid session is checked on every call but never replaced.
+	for range 2 {
+		user, didLogin, err := manager.RefreshUserSessionIfRequired(ctx, credentials.UserID)
+		if err != nil || didLogin || user.EncToken != "valid-enc" {
+			t.Fatalf("valid session: user %v, didLogin %v, err %v", user, didLogin, err)
+		}
+	}
+	if backend.loginCount() != 0 || backend.profileRequests != 2 {
+		t.Fatalf("logins = %d, profile checks = %d; want 0 and 2", backend.loginCount(), backend.profileRequests)
+	}
+
+	// A session that expired after being cached is noticed and replaced.
+	expired := "expired-enc"
+	if err := repository.UpdateUser(ctx, CredentialsUpdate{UserID: credentials.UserID, EncToken: &expired}); err != nil {
+		t.Fatalf("UpdateUser returned an error: %v", err)
+	}
+	user, didLogin, err := manager.RefreshUserSessionIfRequired(ctx, credentials.UserID)
+	if err != nil || !didLogin || user.EncToken != "fresh-enc" {
+		t.Fatalf("expired session: user %v, didLogin %v, err %v", user, didLogin, err)
+	}
+	stored, err := repository.GetUserByID(ctx, credentials.UserID)
+	if err != nil {
+		t.Fatalf("GetUserByID returned an error: %v", err)
+	}
+	if stored.EncToken != "fresh-enc" || stored.LastLogin.IsZero() || stored.UserName != "Updated User" {
+		t.Fatalf("refreshed session was not persisted: %#v", stored)
+	}
+	if manager.currentlyLoadedUsers[credentials.UserID] != user {
+		t.Fatal("refreshed user was not cached")
+	}
+}

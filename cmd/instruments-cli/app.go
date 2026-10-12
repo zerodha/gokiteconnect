@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/nse"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -23,11 +25,27 @@ const (
 	expiryPage    = "expiry"
 )
 
+// Price columns. The dashboard and list items show LTP then CHG% from these
+// columns; the chain is CALL OI, CALL BE, CALL LTP, STRIKE, PUT LTP, PUT BE,
+// PUT OI, where BE is the breakeven at expiry.
+const (
+	resultsLTPColumn   = 1
+	itemsLTPColumn     = 1
+	chainCallOIColumn  = 0
+	chainCallBEColumn  = 1
+	chainCallLTPColumn = 2
+	chainStrikeColumn  = 3
+	chainPutLTPColumn  = 4
+	chainPutBEColumn   = 5
+	chainPutOIColumn   = 6
+)
+
 type viewMode int
 
 const (
 	viewDashboard viewMode = iota
 	viewChain
+	viewLists
 )
 
 type refreshedView struct {
@@ -51,15 +69,21 @@ type instrumentApp struct {
 	futures     *tview.Table
 	chain       *tview.Table
 	status      *tview.TextView
+	busyView    *tview.TextView
+	listsTable  *tview.Table
+	itemsTable  *tview.Table
 
 	expiryButton *tview.Button
 	filterButton *tview.Button
 	backButton   *tview.Button
+	addButton    *tview.Button
 
 	ctx      context.Context
 	cancel   context.CancelFunc
 	factory  catalogFactory
 	catalog  catalog
+	lists    listStore
+	indices  indexSource
 	database string
 	searcher *searchCoordinator
 	wg       sync.WaitGroup
@@ -77,9 +101,40 @@ type instrumentApp struct {
 	chainData       *chainData
 	lastRefreshed   time.Time
 	underlyingCount int
+
+	listData         []models.List
+	listItemsFocused bool
+	masterIndices    []nse.NSEIndexMetadata
+
+	// Prices come from the data user's REST quotes; loadQuotes is nil when
+	// prices are off.
+	loadQuotes    quoteLoader
+	quoteEvery    time.Duration
+	quoteSource   quoteSource
+	quoteLabel    string
+	quoteErr      error
+	quotes        map[string]kite.QuoteData
+	quotesAt      time.Time
+	quoteInFlight bool
+	quoteAgain    bool
+	chainNeedsATM bool
+
+	// breakevenPercent shows chain breakevens as the move from spot. Margins
+	// are per lot, cached by contract.
+	breakevenPercent bool
+	margins          map[models.InstrumentID]lotMargin
+	marginsInFlight  map[models.InstrumentID]bool
+	marginWanted     marginWanted
+
+	// Inside kite-cli the explorer is one screen of several: onBack leaves it
+	// from the dashboard, hidden pauses price polling while another screen
+	// shows, and started records that the catalog has been opened.
+	onBack  func()
+	hidden  bool
+	started bool
 }
 
-func newInstrumentApp(parent context.Context, database string, factory catalogFactory) *instrumentApp {
+func newInstrumentApp(parent context.Context, database string, factory catalogFactory, indices indexSource) *instrumentApp {
 	configureTheme()
 	ctx, cancel := context.WithCancel(parent)
 	ui := &instrumentApp{
@@ -89,22 +144,40 @@ func newInstrumentApp(parent context.Context, database string, factory catalogFa
 		ctx:         ctx,
 		cancel:      cancel,
 		factory:     factory,
+		indices:     indices,
 		database:    database,
 		searcher:    newSearchCoordinator(searchDelay),
+
+		breakevenPercent: true,
 	}
 	ui.build()
 	return ui
 }
 
 func (ui *instrumentApp) run() error {
-	ui.showBusy("Opening the catalog and refreshing it if stale…")
-	ui.beginInitialization()
+	ui.start()
 	go func() {
 		<-ui.ctx.Done()
 		ui.stop()
 	}()
+	return ui.shutdown(ui.application.Run())
+}
 
-	runErr := ui.application.Run()
+// start opens the catalog and starts the price feed. It runs once, when the
+// explorer is first shown.
+func (ui *instrumentApp) start() {
+	if ui.started {
+		return
+	}
+	ui.started = true
+	ui.showBusy("Opening the catalog and refreshing it if stale…")
+	ui.beginInitialization()
+	ui.startQuotes()
+}
+
+// shutdown waits for background work and closes the catalog after the
+// application has stopped.
+func (ui *instrumentApp) shutdown(runErr error) error {
 	ui.cancel()
 	ui.searcher.shutdown()
 	ui.wg.Wait()
@@ -183,12 +256,14 @@ func (ui *instrumentApp) build() {
 	ui.futures.SetSelectionChangedFunc(func(row, column int) {
 		if instrument, ok := tableInstrument(ui.futures, row, column); ok {
 			ui.updateDetail(instrument)
+			ui.updateChainSummary()
 		}
 	})
 	ui.chain = newInstrumentTable(" Option chain ").SetSelectable(true, true)
 	ui.chain.SetSelectionChangedFunc(func(row, column int) {
 		if instrument, ok := tableInstrument(ui.chain, row, column); ok {
 			ui.updateDetail(instrument)
+			ui.updateChainSummary()
 		}
 	})
 	chainTables := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -198,6 +273,7 @@ func (ui *instrumentApp) build() {
 		AddItem(chainTables, 0, 3, true).
 		AddItem(ui.detail, 43, 1, false)
 	ui.bodyPages.AddPage(chainPage, chainView, true, false)
+	ui.bodyPages.AddPage(listsPage, ui.buildListsView(), true, false)
 
 	actions := ui.newActions()
 	ui.status = tview.NewTextView().
@@ -211,7 +287,7 @@ func (ui *instrumentApp) build() {
 		AddItem(ui.search, 3, 0, false).
 		AddItem(ui.bodyPages, 0, 1, true).
 		AddItem(actions, 3, 0, false).
-		AddItem(ui.status, 2, 0, false)
+		AddItem(ui.status, 3, 0, false)
 	ui.pages.AddPage(dashboardPage, root, true, true)
 	ui.application.SetRoot(ui.pages, true).SetInputCapture(ui.capture)
 	ui.updateModeControls()
@@ -223,14 +299,18 @@ func (ui *instrumentApp) newActions() *tview.Flex {
 	actions.SetBorder(true).SetBorderColor(tcell.ColorDarkCyan).SetTitle(" Actions ").SetTitleColor(tcell.ColorLightYellow)
 	actions.AddItem(actionButton("⌕ Search [/]", tcell.ColorLightCyan, ui.focusSearch), 0, 1, false)
 	actions.AddItem(actionButton("◆ Underlyings [U]", tcell.ColorLightGreen, ui.showUnderlyings), 0, 1, false)
+	actions.AddItem(actionButton("☰ Lists [L]", tcell.ColorLightGoldenrodYellow, ui.openLists), 0, 1, false)
+	ui.addButton = actionButton("+ Add to list [A]", tcell.ColorLightGoldenrodYellow, ui.addSelectedToList)
+	actions.AddItem(ui.addButton, 0, 1, false)
 	ui.expiryButton = actionButton("◷ Expiry [E]", tcell.ColorLightYellow, ui.openExpiryPicker)
 	actions.AddItem(ui.expiryButton, 0, 1, false)
 	ui.filterButton = actionButton("≡ Filters [F]", tcell.ColorLightSkyBlue, ui.openFilters)
 	actions.AddItem(ui.filterButton, 0, 1, false)
-	actions.AddItem(actionButton("↻ Refresh [R]", tcell.ColorLightPink, ui.refresh), 0, 1, false)
-	ui.backButton = actionButton("← Back [Esc]", tcell.ColorLightGray, ui.backToDashboard)
+	actions.AddItem(actionButton("↻ Prices [R]", tcell.ColorLightGreen, ui.reloadQuotes), 0, 1, false)
+	actions.AddItem(actionButton("⟳ Catalog [C]", tcell.ColorLightPink, ui.refresh), 0, 1, false)
+	ui.backButton = actionButton("← Back [Q]", tcell.ColorLightGray, ui.backToDashboard)
 	actions.AddItem(ui.backButton, 0, 1, false)
-	actions.AddItem(actionButton("⏻ Quit [Q]", tcell.ColorLightCoral, ui.stop), 0, 1, false)
+	actions.AddItem(actionButton("⏻ Quit [Ctrl+C]", tcell.ColorLightCoral, ui.stop), 0, 1, false)
 	return actions
 }
 
@@ -253,6 +333,7 @@ func (ui *instrumentApp) beginInitialization() {
 				return
 			}
 			ui.catalog = initial.catalog
+			ui.lists = initial.lists
 			ui.lastRefreshed = initial.lastRefreshed
 			ui.underlyingCount = len(initial.underlyings)
 			ui.closeOverlay()
@@ -316,7 +397,7 @@ func (ui *instrumentApp) setResults(values []models.Instrument, underlyings bool
 		title = " F&O underlyings "
 	}
 	ui.results.SetTitle(title)
-	setHeaders(ui.results, []string{"SYMBOL", "TYPE", "EXPIRY", "STRIKE", "OPT", "FUT", "LOT", "TOKEN", "NAME"})
+	setHeaders(ui.results, []string{"SYMBOL", "LTP", "CHG%", "TYPE", "EXPIRY", "STRIKE", "OPT", "FUT", "LOT", "TOKEN", "NAME"})
 	for row, instrument := range values {
 		cells := []struct {
 			text  string
@@ -324,6 +405,8 @@ func (ui *instrumentApp) setResults(values []models.Instrument, underlyings bool
 			width int
 		}{
 			{instrument.TradingSymbol, tcell.ColorLightCyan, 24},
+			{"", tcell.ColorWhite, 12},
+			{"", tcell.ColorDarkGray, 8},
 			{instrument.InstrumentType, instrumentTypeColor(instrument.InstrumentType), 8},
 			{formatExpiry(instrument.Expiry), tcell.ColorLightGray, 11},
 			{formatStrike(instrument.Strike), tcell.ColorYellow, 12},
@@ -339,6 +422,7 @@ func (ui *instrumentApp) setResults(values []models.Instrument, underlyings bool
 				SetMaxWidth(cell.width).
 				SetReference(instrument))
 		}
+		ui.setPriceCells(ui.results, row+1, resultsLTPColumn, instrument)
 	}
 	if len(values) > 0 {
 		ui.results.Select(1, 0)
@@ -349,6 +433,7 @@ func (ui *instrumentApp) setResults(values []models.Instrument, underlyings bool
 	ui.updateModeControls()
 	ui.updateHeader()
 	ui.application.SetFocus(ui.results)
+	ui.refreshQuotes()
 	_ = query
 }
 
@@ -358,10 +443,9 @@ func (ui *instrumentApp) openChain(instrument models.Instrument) {
 		ui.setStatus("  This instrument has no futures or options to explore.")
 		return
 	}
-	ui.snapshot = dashboardSnapshot{
-		query:      ui.search.GetText(),
-		results:    append([]models.Instrument(nil), ui.resultItems...),
-		selectedID: instrument.ID,
+	if ui.mode == viewDashboard {
+		ui.snapshot = ui.dashboardSnapshot()
+		ui.snapshot.selectedID = instrument.ID
 	}
 	ui.searcher.cancelPending()
 	ui.showBusy(fmt.Sprintf("Loading contracts for %s…", underlying))
@@ -381,6 +465,7 @@ func (ui *instrumentApp) openChain(instrument models.Instrument) {
 				return
 			}
 			ui.chainData = &data
+			ui.chainNeedsATM = true
 			ui.mode = viewChain
 			ui.closeOverlay()
 			ui.renderChain()
@@ -427,50 +512,54 @@ func (ui *instrumentApp) renderChain() {
 
 	ui.futures.Clear()
 	ui.futures.SetTitle(fmt.Sprintf(" Futures · %s ", expiry.date.Format("02 Jan 2006")))
-	setHeaders(ui.futures, []string{"SYMBOL", "EXPIRY", "LOT", "TOKEN"})
+	setHeaders(ui.futures, []string{"SYMBOL", "EXPIRY", "LOT", "TOKEN", "DISPLAY NAME"})
 	visibleFutures := filterFutures(data.futures, data.filter)
 	for row, future := range visibleFutures {
-		values := []string{future.TradingSymbol, formatExpiry(future.Expiry), strconv.Itoa(future.LotSize), strconv.FormatInt(future.InstrumentToken, 10)}
+		values := []string{future.TradingSymbol, formatExpiry(future.Expiry), strconv.Itoa(future.LotSize), strconv.FormatInt(future.InstrumentToken, 10), future.DisplayName}
 		for column, value := range values {
 			ui.futures.SetCell(row+1, column, tview.NewTableCell(tview.Escape(value)).SetTextColor(tcell.ColorLightCyan).SetReference(future))
 		}
 	}
 
 	ui.chain.Clear()
-	ui.chain.SetTitle(fmt.Sprintf(" %s · %s · %s ", data.underlying, expiry.date.Format("02 Jan 2006"), data.filter.side))
-	setHeaders(ui.chain, []string{"CALL SYMBOL", "CALL TOKEN", "STRIKE", "PUT TOKEN", "PUT SYMBOL"})
+	ui.chain.SetTitle(fmt.Sprintf(" %s · %s ", data.underlying, ui.chainTitleSuffix()))
+	setHeaders(ui.chain, ui.chainHeaders())
 	rows := buildChainRows(data.options, data.filter)
 	for rowIndex, row := range rows {
 		rowNumber := rowIndex + 1
 		strikeReference := any(nil)
 		if row.call != nil {
 			strikeReference = *row.call
-			ui.chain.SetCell(rowNumber, 0, contractCell(row.call.TradingSymbol, *row.call, tcell.ColorLightGreen))
-			ui.chain.SetCell(rowNumber, 1, contractCell(strconv.FormatInt(row.call.InstrumentToken, 10), *row.call, tcell.ColorLightGreen))
+			ui.chain.SetCell(rowNumber, chainCallOIColumn, contractCell("—", *row.call, tcell.ColorLightGray).SetAlign(tview.AlignRight))
+			ui.chain.SetCell(rowNumber, chainCallBEColumn, contractCell("—", *row.call, tcell.ColorLightSkyBlue).SetAlign(tview.AlignRight))
+			ui.chain.SetCell(rowNumber, chainCallLTPColumn, contractCell("—", *row.call, tcell.ColorLightGreen).SetAlign(tview.AlignRight))
 		} else {
-			ui.chain.SetCell(rowNumber, 0, emptyCell())
-			ui.chain.SetCell(rowNumber, 1, emptyCell())
+			ui.chain.SetCell(rowNumber, chainCallOIColumn, emptyCell())
+			ui.chain.SetCell(rowNumber, chainCallBEColumn, emptyCell())
+			ui.chain.SetCell(rowNumber, chainCallLTPColumn, emptyCell())
 		}
 		if row.put != nil {
 			if strikeReference == nil {
 				strikeReference = *row.put
 			}
-			ui.chain.SetCell(rowNumber, 3, contractCell(strconv.FormatInt(row.put.InstrumentToken, 10), *row.put, tcell.ColorLightCoral))
-			ui.chain.SetCell(rowNumber, 4, contractCell(row.put.TradingSymbol, *row.put, tcell.ColorLightCoral))
+			ui.chain.SetCell(rowNumber, chainPutLTPColumn, contractCell("—", *row.put, tcell.ColorLightCoral))
+			ui.chain.SetCell(rowNumber, chainPutBEColumn, contractCell("—", *row.put, tcell.ColorLightSkyBlue))
+			ui.chain.SetCell(rowNumber, chainPutOIColumn, contractCell("—", *row.put, tcell.ColorLightGray))
 		} else {
-			ui.chain.SetCell(rowNumber, 3, emptyCell())
-			ui.chain.SetCell(rowNumber, 4, emptyCell())
+			ui.chain.SetCell(rowNumber, chainPutLTPColumn, emptyCell())
+			ui.chain.SetCell(rowNumber, chainPutBEColumn, emptyCell())
+			ui.chain.SetCell(rowNumber, chainPutOIColumn, emptyCell())
 		}
-		ui.chain.SetCell(rowNumber, 2, tview.NewTableCell(formatStrike(row.strike)).
+		ui.chain.SetCell(rowNumber, chainStrikeColumn, tview.NewTableCell(formatStrike(row.strike)).
 			SetTextColor(tcell.ColorYellow).
 			SetAlign(tview.AlignCenter).
 			SetReference(strikeReference))
 	}
 
 	if len(rows) > 0 {
-		column := 0
+		column := chainCallLTPColumn
 		if rows[0].call == nil {
-			column = 3
+			column = chainPutLTPColumn
 		}
 		ui.chain.Select(1, column)
 		if instrument, ok := tableInstrument(ui.chain, 1, column); ok {
@@ -484,8 +573,20 @@ func (ui *instrumentApp) renderChain() {
 	}
 	ui.updateModeControls()
 	ui.updateHeaderWithCount(len(rows) + len(visibleFutures))
-	ui.setStatus(fmt.Sprintf("  %d option strikes · %d futures · [yellow]%s[-] previous/next expiry", len(rows), len(visibleFutures), tview.Escape("[ / ]")))
 	ui.application.SetFocus(ui.chain)
+	ui.applyChainQuotes()
+	ui.refreshQuotes()
+}
+
+// chainTitleSuffix names the chain's expiry and contract side.
+func (ui *instrumentApp) chainTitleSuffix() string {
+	data := ui.chainData
+	for _, expiry := range data.expiries {
+		if expiry.number == data.filter.expiryNumber {
+			return fmt.Sprintf("%s · %s", expiry.date.Format("02 Jan 2006"), data.filter.side)
+		}
+	}
+	return data.filter.side.String()
 }
 
 func (ui *instrumentApp) openExpiryPicker() {
@@ -575,6 +676,10 @@ func (ui *instrumentApp) openFilters() {
 
 func (ui *instrumentApp) refresh() {
 	if ui.catalog == nil || ui.busy {
+		return
+	}
+	if ui.mode == viewLists {
+		ui.refreshSelectedList()
 		return
 	}
 	ui.searcher.cancelPending()
@@ -684,7 +789,13 @@ func preserveChainFilter(data chainData, previous chainFilter) chainFilter {
 }
 
 func (ui *instrumentApp) backToDashboard() {
-	if ui.mode != viewChain || ui.busy {
+	if ui.busy {
+		return
+	}
+	if ui.mode == viewDashboard {
+		if ui.onBack != nil {
+			ui.onBack()
+		}
 		return
 	}
 	ui.chainData = nil
@@ -704,6 +815,33 @@ func (ui *instrumentApp) selectResult(id models.InstrumentID) {
 			return
 		}
 	}
+}
+
+func (ui *instrumentApp) dashboardSnapshot() dashboardSnapshot {
+	snapshot := dashboardSnapshot{
+		query:   ui.search.GetText(),
+		results: append([]models.Instrument(nil), ui.resultItems...),
+	}
+	if selected, ok := ui.selectedResult(); ok {
+		snapshot.selectedID = selected.ID
+	}
+	return snapshot
+}
+
+// selectedInstrument returns the instrument selected in the dashboard or chain.
+func (ui *instrumentApp) selectedInstrument() (models.Instrument, bool) {
+	switch ui.mode {
+	case viewDashboard:
+		return ui.selectedResult()
+	case viewChain:
+		table := ui.chain
+		if ui.application.GetFocus() == ui.futures {
+			table = ui.futures
+		}
+		row, column := table.GetSelection()
+		return tableInstrument(table, row, column)
+	}
+	return models.Instrument{}, false
 }
 
 func (ui *instrumentApp) selectedResult() (models.Instrument, bool) {
@@ -728,7 +866,7 @@ func (ui *instrumentApp) focusSearch() {
 	if ui.busy {
 		return
 	}
-	if ui.mode == viewChain {
+	if ui.mode != viewDashboard {
 		ui.backToDashboard()
 	}
 	ui.application.SetFocus(ui.search)
@@ -750,13 +888,14 @@ func (ui *instrumentApp) updateDetail(instrument models.Instrument) {
 	}
 	ui.detail.SetText(fmt.Sprintf(
 		"[aqua::b]%s[-]\n[white]%s[-]\n\n"+
-			"[lightskyblue]Identity[-]\n[white]Exchange[-]       %s\n[white]Symbol[-]         %s\n[white]Name[-]           %s\n[white]Token[-]          %d\n[white]Exchange token[-] %s\n\n"+
+			"[lightskyblue]Identity[-]\n[white]Exchange[-]       %s\n[white]Symbol[-]         %s\n[white]Display name[-]   %s\n[white]Name[-]           %s\n[white]Token[-]          %d\n[white]Exchange token[-] %s\n\n"+
 			"[lightskyblue]Contract[-]\n[white]Type[-]           %s\n[white]Segment[-]        %s\n[white]Expiry[-]         %s\n[white]Expiry number[-]  %s\n[white]Strike[-]         %s\n[white]Tick size[-]      %s\n[white]Lot size[-]       %d\n[white]F&O contract[-]   %s\n\n"+
 			"[lightskyblue]Underlying[-]\n[white]ID[-]             %s\n[white]Listed[-]         %s\n[white]Options[-]        %d\n[white]Futures[-]        %d",
 		tview.Escape(string(instrument.ID)),
 		tview.Escape(instrument.DisplayName),
 		tview.Escape(instrument.Exchange),
 		tview.Escape(instrument.TradingSymbol),
+		tview.Escape(instrument.DisplayName),
 		tview.Escape(pointerText(instrument.Name)),
 		instrument.InstrumentToken,
 		tview.Escape(instrument.ExchangeToken),
@@ -772,7 +911,7 @@ func (ui *instrumentApp) updateDetail(instrument models.Instrument) {
 		listed,
 		instrument.OptionsCount,
 		instrument.FuturesCount,
-	))
+	) + ui.quoteSection(instrument))
 }
 
 func (ui *instrumentApp) capture(event *tcell.EventKey) *tcell.EventKey {
@@ -781,14 +920,18 @@ func (ui *instrumentApp) capture(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	if ui.busy {
-		if event.Key() == tcell.KeyRune && strings.EqualFold(string(event.Rune()), "q") {
-			ui.stop()
-		}
 		return nil
 	}
+	if page := pageKey(ui.application, event); page != nil {
+		return page
+	}
+	quit := event.Key() == tcell.KeyRune && strings.EqualFold(string(event.Rune()), "q")
 	if ui.overlay != "" {
-		if ui.overlay == modalPage && event.Key() == tcell.KeyRune && strings.EqualFold(string(event.Rune()), "q") {
-			ui.stop()
+		if _, typing := ui.application.GetFocus().(*tview.InputField); quit && !typing {
+			// The startup error modal has nothing behind it to go back to.
+			if ui.catalog != nil || ui.overlay != modalPage {
+				ui.closeOverlay()
+			}
 			return nil
 		}
 		return event
@@ -796,22 +939,28 @@ func (ui *instrumentApp) capture(event *tcell.EventKey) *tcell.EventKey {
 	if ui.application.GetFocus() == ui.search {
 		return event
 	}
-	if event.Key() == tcell.KeyEscape {
+	if event.Key() == tcell.KeyEscape || quit {
 		ui.backToDashboard()
+		return nil
+	}
+	if ui.mode == viewLists && ui.captureListKey(event) {
 		return nil
 	}
 	if event.Key() != tcell.KeyRune {
 		return event
 	}
 	switch strings.ToLower(string(event.Rune())) {
-	case "q":
-		ui.stop()
-		return nil
 	case "/":
 		ui.focusSearch()
 		return nil
 	case "u":
 		ui.showUnderlyings()
+		return nil
+	case "l":
+		ui.openLists()
+		return nil
+	case "a":
+		ui.addSelectedToList()
 		return nil
 	case "e":
 		ui.openExpiryPicker()
@@ -820,6 +969,9 @@ func (ui *instrumentApp) capture(event *tcell.EventKey) *tcell.EventKey {
 		ui.openFilters()
 		return nil
 	case "r":
+		ui.reloadQuotes()
+		return nil
+	case "c":
 		ui.refresh()
 		return nil
 	case "[":
@@ -828,8 +980,26 @@ func (ui *instrumentApp) capture(event *tcell.EventKey) *tcell.EventKey {
 	case "]":
 		ui.cycleExpiry(1)
 		return nil
+	case "%":
+		ui.toggleBreakevenFormat()
+		return nil
 	}
 	return event
+}
+
+// pageKey turns Ctrl+D and Ctrl+U into Page Down and Page Up, except while
+// typing, where tview uses them to edit the field.
+func pageKey(application *tview.Application, event *tcell.EventKey) *tcell.EventKey {
+	if _, typing := application.GetFocus().(*tview.InputField); typing {
+		return nil
+	}
+	switch event.Key() {
+	case tcell.KeyCtrlD:
+		return tcell.NewEventKey(tcell.KeyPgDn, 0, tcell.ModNone)
+	case tcell.KeyCtrlU:
+		return tcell.NewEventKey(tcell.KeyPgUp, 0, tcell.ModNone)
+	}
+	return nil
 }
 
 func (ui *instrumentApp) showBusy(message string) {
@@ -837,7 +1007,17 @@ func (ui *instrumentApp) showBusy(message string) {
 	view := tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
 	view.SetText("\n\n[aqua::b]◆[-]\n\n" + tview.Escape(message) + "\n\n[lightcyan]Please wait…[-]")
 	view.SetBorder(true).SetBorderColor(tcell.ColorLightCyan).SetTitle(" Working ").SetTitleColor(tcell.ColorLightCyan)
+	ui.busyView = view
 	ui.showOverlay(busyPage, centered(58, 11, view), view)
+}
+
+// updateBusy changes the busy message from a background goroutine.
+func (ui *instrumentApp) updateBusy(message string) {
+	ui.application.QueueUpdateDraw(func() {
+		if ui.overlay == busyPage && ui.busyView != nil {
+			ui.busyView.SetText("\n\n[aqua::b]◆[-]\n\n" + tview.Escape(message) + "\n\n[lightcyan]Please wait…[-]")
+		}
+	})
 }
 
 func (ui *instrumentApp) showStartupError(err error) {
@@ -889,8 +1069,14 @@ func (ui *instrumentApp) closeOverlay() {
 }
 
 func (ui *instrumentApp) activeTable() tview.Primitive {
-	if ui.mode == viewChain {
+	switch ui.mode {
+	case viewChain:
 		return ui.chain
+	case viewLists:
+		if ui.listItemsFocused {
+			return ui.itemsTable
+		}
+		return ui.listsTable
 	}
 	return ui.results
 }
@@ -903,6 +1089,8 @@ func (ui *instrumentApp) updateHeaderWithCount(count int) {
 	mode := "F&O UNDERLYINGS"
 	if ui.mode == viewChain && ui.chainData != nil {
 		mode = "OPTION CHAIN · " + string(ui.chainData.underlying)
+	} else if ui.mode == viewLists {
+		mode = "LISTS"
 	} else if !ui.underlyings {
 		mode = "SEARCH RESULTS"
 	}
@@ -911,11 +1099,12 @@ func (ui *instrumentApp) updateHeaderWithCount(count int) {
 		refreshed = ui.lastRefreshed.Local().Format("02 Jan 2006 15:04 MST")
 	}
 	ui.header.SetText(fmt.Sprintf(
-		"[aqua::b]◆[-] [white::b]INSTRUMENTS[-] [lightblue::b]%s[-]  [lightcyan]%d rows · %d underlyings · %s[-]",
+		"[aqua::b]◆[-] [white::b]INSTRUMENTS[-] [lightblue::b]%s[-]  [lightcyan]%d rows · %d underlyings · %s[-] · %s",
 		tview.Escape(mode),
 		count,
 		ui.underlyingCount,
 		tview.Escape(refreshed),
+		ui.quoteHeader(),
 	))
 }
 
@@ -923,7 +1112,8 @@ func (ui *instrumentApp) updateModeControls() {
 	chain := ui.mode == viewChain
 	ui.expiryButton.SetDisabled(!chain)
 	ui.filterButton.SetDisabled(!chain)
-	ui.backButton.SetDisabled(!chain)
+	ui.backButton.SetDisabled(ui.mode == viewDashboard && ui.onBack == nil)
+	ui.addButton.SetDisabled(ui.mode == viewLists)
 }
 
 func (ui *instrumentApp) setStatus(text string) {

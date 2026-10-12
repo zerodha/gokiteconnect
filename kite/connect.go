@@ -24,6 +24,7 @@ type Client struct {
 	appName     string
 	httpClient  HTTPClient
 	instruments *InstrumentCatalog
+	quotePacer  *requestPacer
 }
 
 const (
@@ -160,8 +161,9 @@ const (
 // New creates a new Kite Connect client.
 func New(apiKey string) *Client {
 	client := &Client{
-		apiKey:  apiKey,
-		baseURI: baseURI,
+		apiKey:     apiKey,
+		baseURI:    baseURI,
+		quotePacer: newRequestPacer(quoteRequestInterval),
 	}
 
 	// Create a default http handler with default timeout.

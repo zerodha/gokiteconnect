@@ -117,7 +117,7 @@ func newUserApp(ctx context.Context, manager *credentials.UserManager, database 
 	ui.status = tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextColor(tcell.ColorLightCyan).
-		SetText("  [yellow]↑↓[-] navigate  [green]Enter[-] edit  [a] add  [d] delete  [f] refresh session  [r] reload  [s] sudo  [q] quit")
+		SetText("  [yellow]↑↓ Ctrl+U/D[-] navigate  [green]Enter[-] edit  [a] add  [d] delete  [f] refresh session  [r] reload  [s] sudo  [ctrl+c] quit")
 	ui.status.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
 
 	header := tview.NewTextView().
@@ -175,7 +175,7 @@ func (ui *userApp) newActions() *tview.Flex {
 	}), 0, 1, false)
 	ui.sudoButton = actionButton("⚠ Sudo OFF [S]", tcell.ColorLightYellow, ui.toggleSudo)
 	actions.AddItem(ui.sudoButton, 0, 1, false)
-	actions.AddItem(actionButton("⏻ Quit [Q]", tcell.ColorLightPink, ui.application.Stop), 0, 1, false)
+	actions.AddItem(actionButton("⏻ Quit [Ctrl+C]", tcell.ColorLightPink, ui.application.Stop), 0, 1, false)
 	return actions
 }
 
@@ -240,16 +240,21 @@ func (ui *userApp) capture(event *tcell.EventKey) *tcell.EventKey {
 	if ui.busy {
 		return nil
 	}
+	if page := pageKey(ui.application, event); page != nil {
+		return page
+	}
 	if ui.overlay != "" {
+		_, typing := ui.application.GetFocus().(*tview.InputField)
+		if event.Key() == tcell.KeyRune && strings.EqualFold(string(event.Rune()), "q") && !typing {
+			ui.closeOverlay()
+			return nil
+		}
 		return event
 	}
 	if event.Key() != tcell.KeyRune {
 		return event
 	}
 	switch strings.ToLower(string(event.Rune())) {
-	case "q":
-		ui.application.Stop()
-		return nil
 	case "a", "n":
 		ui.openCreate()
 		return nil
@@ -272,6 +277,21 @@ func (ui *userApp) capture(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	return event
+}
+
+// pageKey turns Ctrl+D and Ctrl+U into Page Down and Page Up, except while
+// typing, where tview uses them to edit the field.
+func pageKey(application *tview.Application, event *tcell.EventKey) *tcell.EventKey {
+	if _, typing := application.GetFocus().(*tview.InputField); typing {
+		return nil
+	}
+	switch event.Key() {
+	case tcell.KeyCtrlD:
+		return tcell.NewEventKey(tcell.KeyPgDn, 0, tcell.ModNone)
+	case tcell.KeyCtrlU:
+		return tcell.NewEventKey(tcell.KeyPgUp, 0, tcell.ModNone)
+	}
+	return nil
 }
 
 func (ui *userApp) reload() error {

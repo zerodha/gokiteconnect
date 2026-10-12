@@ -251,8 +251,8 @@ func TestClientRefreshLifecycle(t *testing.T) {
 	if err := tableRows.Close(); err != nil {
 		t.Fatalf("close repository tables: %v", err)
 	}
-	if !reflect.DeepEqual(tableNames, []string{"instruments"}) {
-		t.Fatalf("repository tables = %v, want [instruments]", tableNames)
+	if want := []string{"instruments", "list_items", "list_metadata"}; !reflect.DeepEqual(tableNames, want) {
+		t.Fatalf("repository tables = %v, want %v", tableNames, want)
 	}
 
 	lastRefreshed, err := client.LastRefreshedAt(ctx)

@@ -24,6 +24,10 @@ type Config struct {
 	InstrumentsPath string
 	// TickerUserID is TRADEBOT_TICKER_USER_ID, the Zerodha account the ticker streams for.
 	TickerUserID string
+	// DataUserID is TRADEBOT_DATA_USER_ID, the Zerodha API user whose session
+	// the command-line tools use for market quotes. When empty, tools pick an
+	// API user with a data subscription.
+	DataUserID string
 }
 
 // Load reads Config from the environment. It first loads the working
@@ -52,6 +56,7 @@ func Load() (Config, error) {
 		CredentialsPath: filepath.Clean(expandHome(v.GetString("credentials_sqlite_path"), home)),
 		InstrumentsPath: filepath.Clean(expandHome(v.GetString("instruments_duckdb_path"), home)),
 		TickerUserID:    strings.TrimSpace(v.GetString("ticker_user_id")),
+		DataUserID:      strings.TrimSpace(v.GetString("data_user_id")),
 	}, nil
 }
 
