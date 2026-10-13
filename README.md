@@ -117,15 +117,25 @@ uses CGO, so builds must have a working C toolchain and `CGO_ENABLED=1`.
 
 ### Terminal console (kite-cli)
 
-`kite-cli` combines `users-cli` and `instruments-cli` in one application:
+`kite-cli` combines `users-cli` and `instruments-cli` in one application,
+built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), Bubbles
+and Lip Gloss:
 
 ```sh
 go run ./cmd/kite-cli
 ```
 
-It opens on the users stored in the credentials database
-(`TRADEBOT_CREDENTIALS_SQLITE_PATH`, or `-credentials-db`). `Enter` on a user
-shows their net positions, holdings and mutual fund holdings. The stored
+The tab bar along the top switches between Users, Portfolio and Instruments,
+and the mouse works too: click a tab or a row to select it, click a selected
+row again to open it, and scroll tables with the wheel. The previous
+tview-based console is kept as `cmd/kite-cli-old` with the same flags and
+keys.
+
+It opens the portfolio of the default user (`TRADEBOT_DEFAULT_USER_ID`, or
+`-user`; `CC0006` unless set), or the users stored in the credentials database
+(`TRADEBOT_CREDENTIALS_SQLITE_PATH`, or `-credentials-db`) when that user is
+not stored. `Enter` on a user, or `U` from a portfolio, shows a user's net
+positions, holdings and mutual fund holdings. The stored
 session is checked first, and the user is logged in again only when there is
 no session or Kite reports it expired; the new session is saved. Positions are
 grouped by underlying (looked up in the instrument catalog, which is opened on
@@ -133,7 +143,57 @@ first use) with a subtotal P&L per group; `Enter` on a group collapses it, and
 an underlying with one position is not grouped. A details pane describes the
 selected row. Kite's positions and holdings responses carry delayed prices, so
 the portfolio is repriced from OHLC quotes with the user's session, and again
-every `-quotes-every` while it is shown. `I` opens the instruments explorer
+every `-quotes-every` while it is shown. Next to the P&L cards, the Margin card
+shows the margin used out of the total (equity and commodity together, such as
+`₹1.4L/6.4L`) and how much is free. Only the focused table highlights its
+selected row.
+
+The Orders table, at the bottom, lists the day's orders, newest first. Each row shows the
+time, side, type, product, filled over ordered quantity, price, average fill
+price and a coloured status, and the panel title counts orders that are
+complete, open and rejected or cancelled. `Tab` moves between the tables,
+as do `Down` past a table's last row and `Up` past its first. On
+an order, the details pane shows its status message, quantities, prices and
+timestamps. `Enter` swaps that pane for the raw Kite payload: every key in
+Kite's order, values coloured by type, scrolled with `J` and `K`. `Esc` goes
+back to the summary. On screens narrower than 110 columns there is no details
+pane, so `Enter` opens the payload in a dialog. `O` on an order opens the
+order menu for its instrument. On an order Kite has not yet completed,
+cancelled or rejected, `M` modifies it: the order form opens with its
+quantity, type, price and trigger, and its account, side and product are
+fixed. `X` cancels it, after you confirm with `Y`. Either way the portfolio
+reloads afterwards.
+
+`O` opens the order menu for the selected position or holding, or the
+selected instrument in the explorer (a search result, chain contract, future
+or list item):
+
+- `B` / `S` raw buy or sell of the instrument itself (not of an index).
+- `X` close position: a market order on the opposite side for the whole
+  quantity, in its product. Offered when the open portfolio holds it.
+- `c` / `C` buy or sell a call, `p` / `P` buy or sell a put, of the
+  instrument's underlying.
+
+Option orders first open a strike picker: one expiry at a time (`←` `→` or
+`[` `]` change it), the strikes priced live with the at-the-money strike
+selected, in-the-money strikes tinted and the spot price marked between
+strikes. Each strike shows its premium, change, moneyness, breakeven, cost per
+lot and open interest; `Enter` orders the selected strike.
+
+The order form picks the account (the open portfolio's user by default), side,
+quantity (one lot by default, in multiples of the lot size), order type
+(market, limit, SL or SL-M, with price and trigger as the type needs) and
+product (NRML or MIS for derivatives, CNC or MIS otherwise). `Up` and `Down`
+(or `Tab`) move between fields, `Left` and `Right` change a drop-down's option,
+and fields the order type doesn't use are skipped. `+` and `-` change the
+quantity by one lot from any field. In the price and trigger fields, `Left` and
+`Right` move the price by the instrument's tick size, starting from the last
+price when the field is empty. It places a regular day
+order tagged `kite-cli`, with Kite's automatic market protection on market and
+SL-M orders, and shows Kite's reason when it is rejected. Nothing is sent until
+**Place** is pressed; `Escape` cancels.
+
+`I` opens the instruments explorer
 described below from either screen, `Q` goes back one screen, and `Ctrl+C`
 quits. The catalog is `-instruments-db`; the price flags match
 `instruments-cli`.

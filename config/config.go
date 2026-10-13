@@ -28,6 +28,9 @@ type Config struct {
 	// the command-line tools use for market quotes. When empty, tools pick an
 	// API user with a data subscription.
 	DataUserID string
+	// DefaultUserID is TRADEBOT_DEFAULT_USER_ID, default CC0006: the
+	// account kite-cli opens at start.
+	DefaultUserID string
 }
 
 // Load reads Config from the environment. It first loads the working
@@ -50,6 +53,7 @@ func Load() (Config, error) {
 
 	v.SetDefault("credentials_sqlite_path", filepath.Join(root, "credentials.sqlite3"))
 	v.SetDefault("instruments_duckdb_path", filepath.Join(root, "instruments.duckdb"))
+	v.SetDefault("default_user_id", "CC0006")
 
 	return Config{
 		StorageRoot:     filepath.Clean(root),
@@ -57,6 +61,7 @@ func Load() (Config, error) {
 		InstrumentsPath: filepath.Clean(expandHome(v.GetString("instruments_duckdb_path"), home)),
 		TickerUserID:    strings.TrimSpace(v.GetString("ticker_user_id")),
 		DataUserID:      strings.TrimSpace(v.GetString("data_user_id")),
+		DefaultUserID:   strings.TrimSpace(v.GetString("default_user_id")),
 	}, nil
 }
 

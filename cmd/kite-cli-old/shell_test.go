@@ -51,7 +51,7 @@ func TestKiteAppMovesBetweenUsersPortfolioAndInstruments(t *testing.T) {
 	instruments := newInstrumentApp(context.Background(), ":memory:", func(context.Context) (catalog, listStore, error) {
 		return store, nil, nil
 	}, nil)
-	app := newKiteApp(context.Background(), manager, "credentials.sqlite3", instruments, load)
+	app := newKiteApp(context.Background(), manager, "credentials.sqlite3", instruments, load, (&fakePlacer{}).place)
 	screen := tcell.NewSimulationScreen("UTF-8")
 	screen.SetSize(160, 50)
 	app.application.SetScreen(screen)
@@ -312,7 +312,7 @@ func TestPortfolioViewRepricesWhileVisible(t *testing.T) {
 	instruments := newInstrumentApp(context.Background(), ":memory:", func(context.Context) (catalog, listStore, error) {
 		return &fakeCatalog{}, nil, nil
 	}, nil)
-	app := newKiteApp(context.Background(), mustManager(t), "credentials.sqlite3", instruments, load)
+	app := newKiteApp(context.Background(), mustManager(t), "credentials.sqlite3", instruments, load, (&fakePlacer{}).place)
 	app.portfolio.priceEvery = 20 * time.Millisecond
 	screen := tcell.NewSimulationScreen("UTF-8")
 	screen.SetSize(160, 50)

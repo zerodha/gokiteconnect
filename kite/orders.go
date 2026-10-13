@@ -200,8 +200,7 @@ func (c *Client) CancelOrder(variety string, orderID string, parentOrderID *stri
 	)
 
 	if parentOrderID != nil {
-		// initialize the params map first
-		params := url.Values{}
+		params = url.Values{}
 		params.Add("parent_order_id", *parentOrderID)
 	}
 

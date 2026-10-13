@@ -119,6 +119,9 @@ type instrumentApp struct {
 	quoteAgain    bool
 	chainNeedsATM bool
 
+	// onOrder opens the order menu for an instrument at its last price.
+	// Only kite-cli sets it; without it O does nothing.
+	onOrder func(instrument models.Instrument, ltp float64)
 	// breakevenPercent shows chain breakevens as the move from spot. Margins
 	// are per lot, cached by contract.
 	breakevenPercent bool
@@ -983,8 +986,32 @@ func (ui *instrumentApp) capture(event *tcell.EventKey) *tcell.EventKey {
 	case "%":
 		ui.toggleBreakevenFormat()
 		return nil
+	case "o":
+		if ui.onOrder == nil {
+			return event
+		}
+		ui.orderSelected()
+		return nil
 	}
 	return event
+}
+
+// orderSelected opens the order menu for the selected instrument: a search
+// result, a chain contract or future, or a list item.
+func (ui *instrumentApp) orderSelected() {
+	instrument, ok := ui.selectedInstrument()
+	if !ok && ui.mode == viewLists && ui.listItemsFocused && ui.catalog != nil {
+		row, _ := ui.itemsTable.GetSelection()
+		if id, isID := ui.itemsTable.GetCell(row, 0).GetReference().(models.InstrumentID); isID && row > 0 {
+			found, err := ui.catalog.Get(ui.ctx, id)
+			instrument, ok = found, err == nil
+		}
+	}
+	if !ok {
+		ui.setStatus("  [yellow]Select an instrument to trade[-]")
+		return
+	}
+	ui.onOrder(instrument, ui.quotes[string(instrument.ID)].LastPrice)
 }
 
 // pageKey turns Ctrl+D and Ctrl+U into Page Down and Page Up, except while

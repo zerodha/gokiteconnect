@@ -1,6 +1,6 @@
 // Command kite-cli is the terminal console for local Kite accounts: it opens
 // on the stored users, shows a user's positions, holdings and mutual funds,
-// and explores the instrument catalog with live prices.
+// explores the instrument catalog with live prices, and places orders.
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/devshoe/gokiteconnect/config"
 	"github.com/devshoe/gokiteconnect/credentials"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
@@ -44,6 +45,7 @@ func run() error {
 	credentialsFlag := flag.String("credentials-db", settings.CredentialsPath, "SQLite database used for the credentials store")
 	dataUserFlag := flag.String("data-user", settings.DataUserID, "API user whose session fetches instrument prices; empty picks the first API user with a data subscription")
 	quotesEvery := flag.Duration("quotes-every", 5*time.Second, "how often visible prices (instruments and portfolio) refresh; 0 refreshes only on R")
+	userFlag := flag.String("user", settings.DefaultUserID, "user whose portfolio opens at start; empty starts on the users screen")
 	noQuotes := flag.Bool("no-quotes", false, "start the instruments explorer without prices")
 	flag.Parse()
 
@@ -96,27 +98,41 @@ func run() error {
 		return instruments, repository, nil
 	}
 
-	// The explorer and the positions' underlyings share one catalog, opened
-	// by whichever needs it first.
+	// The explorer, the strike picker and the positions' underlyings share
+	// one catalog, opened by whichever needs it first.
 	shared := &sharedCatalog{open: factory}
-	instruments := newInstrumentApp(ctx, instrumentsPath, shared.get, nse.NewIndicesClient())
-	if !*noQuotes {
-		instruments.loadQuotes = credentialsQuoteLoader(credentialsPath, strings.TrimSpace(*dataUserFlag))
-		instruments.quoteEvery = *quotesEvery
+	deps := appDeps{
+		manager:       manager,
+		credentialsDB: credentialsPath,
+		catalogPath:   instrumentsPath,
+		openCatalog:   shared.get,
+		indices:       nse.NewIndicesClient(),
+		loadPortfolio: kitePortfolioLoader(manager, catalogInstruments(shared.get)),
+		place:         kiteOrderPlacer(manager),
+		modify:        kiteOrderModifier(manager),
+		cancel:        kiteOrderCanceller(manager),
+		defaultUser:   strings.TrimSpace(*userFlag),
+		every:         *quotesEvery,
 	}
-	load := kitePortfolioLoader(manager, catalogInstruments(shared.get))
-	app := newKiteApp(ctx, manager, credentialsPath, instruments, load)
-	app.portfolio.priceEvery = *quotesEvery
-	runErr := app.run()
-	return errors.Join(runErr, shared.close())
+	if !*noQuotes {
+		deps.loadQuotes = credentialsQuoteLoader(credentialsPath, strings.TrimSpace(*dataUserFlag))
+	}
+	model := newApp(ctx, deps)
+	program := tea.NewProgram(model, tea.WithContext(ctx))
+	model.send = program.Send
+	_, runErr := program.Run()
+	if ctx.Err() != nil {
+		// SIGINT or SIGTERM stopped the program.
+		runErr = nil
+	}
+	return errors.Join(runErr, model.shutdown(), shared.close())
 }
 
-// sharedCatalog opens the catalog once for every caller. Both the explorer
-// and main close it; only the first close reaches the database.
+// sharedCatalog opens the catalog once for every caller and closes it once.
 type sharedCatalog struct {
 	open    catalogFactory
 	mu      sync.Mutex
-	catalog *closeOnceCatalog
+	catalog catalog
 	lists   listStore
 }
 
@@ -128,7 +144,7 @@ func (shared *sharedCatalog) get(ctx context.Context) (catalog, listStore, error
 		if err != nil {
 			return nil, nil, err
 		}
-		shared.catalog, shared.lists = &closeOnceCatalog{catalog: opened}, lists
+		shared.catalog, shared.lists = opened, lists
 	}
 	return shared.catalog, shared.lists, nil
 }
@@ -139,16 +155,7 @@ func (shared *sharedCatalog) close() error {
 	if shared.catalog == nil {
 		return nil
 	}
-	return shared.catalog.Close()
-}
-
-type closeOnceCatalog struct {
-	catalog
-	once sync.Once
-	err  error
-}
-
-func (c *closeOnceCatalog) Close() error {
-	c.once.Do(func() { c.err = c.catalog.Close() })
-	return c.err
+	err := shared.catalog.Close()
+	shared.catalog = nil
+	return err
 }

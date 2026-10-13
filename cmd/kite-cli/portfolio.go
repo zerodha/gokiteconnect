@@ -3,629 +3,721 @@ package main
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
 )
 
-// portfolio is one user's positions, holdings and mutual funds. Each section
-// loads independently, so one failing (say, funds on a web session) does not
-// hide the others.
-type portfolio struct {
-	positions    []kite.Position
-	holdings     kite.Holdings
-	funds        kite.MFHoldings
-	positionsErr error
-	holdingsErr  error
-	fundsErr     error
-	loadedAt     time.Time
-	// loggedIn reports that loading the portfolio logged the user in again.
-	loggedIn bool
-	// instruments holds the catalog entries of the positions and of their
-	// underlyings, by ID. Positions missing from it show their trading symbol
-	// and group under themselves.
-	instruments    map[models.InstrumentID]models.Instrument
-	instrumentsErr error
-	// prices reprices positions and holdings from quotes; pricedAt is when
-	// they were last priced and pricesErr why that last failed.
-	prices    priceSource
-	pricedAt  time.Time
-	pricesErr error
-}
-
-type portfolioLoader func(context.Context, credentials.Credentials) portfolio
-
-// instrumentResolver looks up the catalog entries of positions and of their
-// underlyings.
-type instrumentResolver func(context.Context, []kite.Position) (map[models.InstrumentID]models.Instrument, error)
-
-// kitePortfolioLoader reads the portfolio after the manager checks the
-// user's stored session with a profile request, logging in and saving a new
-// session only when there is none or Kite reports it expired. Positions are
-// then named and grouped by the instruments resolve finds.
-func kitePortfolioLoader(manager *credentials.UserManager, resolve instrumentResolver) portfolioLoader {
-	return func(ctx context.Context, creds credentials.Credentials) portfolio {
-		user, loggedIn, err := manager.RefreshUserSessionIfRequired(ctx, creds.UserID)
-		if err != nil {
-			return failedPortfolio(err)
-		}
-		client := user.KiteClient()
-		result := readPortfolio(client)
-		result.loggedIn = loggedIn
-		result.prices = client
-		result = result.reprice()
-		if result.positionsErr == nil && len(result.positions) > 0 && resolve != nil {
-			result.instruments, result.instrumentsErr = resolve(ctx, result.positions)
-		}
-		return result
-	}
-}
-
-// catalogInstruments resolves instruments from the instrument catalog, which
-// open returns (opening it on first use). Instruments the catalog does not
-// know are left out.
-func catalogInstruments(open catalogFactory) instrumentResolver {
-	return func(ctx context.Context, positions []kite.Position) (map[models.InstrumentID]models.Instrument, error) {
-		catalog, _, err := open(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("instrument catalog: %w", err)
-		}
-		instruments := make(map[models.InstrumentID]models.Instrument, len(positions))
-		lookup := func(id models.InstrumentID) (models.Instrument, bool, error) {
-			if instrument, done := instruments[id]; done {
-				return instrument, true, nil
-			}
-			instrument, err := catalog.Get(ctx, id)
-			if err != nil {
-				return models.Instrument{}, false, ctx.Err()
-			}
-			instruments[id] = instrument
-			return instrument, true, nil
-		}
-		for _, position := range positions {
-			instrument, found, err := lookup(positionID(position))
-			if err != nil {
-				return instruments, err
-			}
-			if !found || instrument.UnderlyingID == nil {
-				continue
-			}
-			if _, _, err := lookup(*instrument.UnderlyingID); err != nil {
-				return instruments, err
-			}
-		}
-		return instruments, nil
-	}
-}
-
-func positionID(position kite.Position) models.InstrumentID {
-	return models.InstrumentID(position.Exchange + ":" + position.Tradingsymbol)
-}
-
-// displayName is the catalog's display name for id, or fallback.
-func displayName(instruments map[models.InstrumentID]models.Instrument, id models.InstrumentID, fallback string) string {
-	if instrument, ok := instruments[id]; ok && strings.TrimSpace(instrument.DisplayName) != "" {
-		return instrument.DisplayName
-	}
-	return fallback
-}
-
-// positionGroup is the positions on one underlying.
-type positionGroup struct {
-	underlying models.InstrumentID
-	positions  []kite.Position
-	pnl        float64
-}
-
-// groupPositions groups positions by underlying, ordered by underlying, with
-// positions keeping Kite's order within a group.
-func groupPositions(positions []kite.Position, instruments map[models.InstrumentID]models.Instrument) []positionGroup {
-	var groups []positionGroup
-	index := make(map[models.InstrumentID]int)
-	for _, position := range positions {
-		key := positionID(position)
-		if instrument, ok := instruments[key]; ok && instrument.UnderlyingID != nil {
-			key = *instrument.UnderlyingID
-		}
-		at, ok := index[key]
-		if !ok {
-			at = len(groups)
-			index[key] = at
-			groups = append(groups, positionGroup{underlying: key})
-		}
-		groups[at].positions = append(groups[at].positions, position)
-		groups[at].pnl += position.PnL
-	}
-	sort.SliceStable(groups, func(i, j int) bool { return groups[i].underlying < groups[j].underlying })
-	return groups
-}
-
-func readPortfolio(client *kite.Client) portfolio {
-	var result portfolio
-	client.SetAppName("kite-cli")
-	positions, err := client.GetPositions()
-	result.positions, result.positionsErr = positions.Net, err
-	result.holdings, result.holdingsErr = client.GetHoldings()
-	result.funds, result.fundsErr = client.GetMFHoldings()
-	result.loadedAt = time.Now()
-	return result
-}
-
-func failedPortfolio(err error) portfolio {
-	return portfolio{positionsErr: err, holdingsErr: err, fundsErr: err}
-}
-
-type portfolioView struct {
-	application *tview.Application
-	ctx         context.Context
-	load        portfolioLoader
-
-	root      *tview.Flex
-	header    *tview.TextView
-	positions *tview.Table
-	holdings  *tview.Table
-	funds     *tview.Table
-	detail    *tview.TextView
-	status    *tview.TextView
-
-	user       credentials.Credentials
-	data       portfolio
-	loading    bool
-	generation int
-	focus      int
-	// collapsed holds the underlyings whose positions are hidden under their
-	// group row. It lasts across reloads of the same user.
+// portfolioScreen is one user's positions, grouped by underlying, the day's
+// orders, holdings and mutual funds, repriced from quotes while it is shown.
+type portfolioScreen struct {
+	user credentials.Credentials
+	data portfolio
+	// positions, orders, holdings and funds are the tables; focus is the
+	// one keys move.
+	positions, orders, holdings, funds grid
+	focus                              int
+	// raw shows the selected order's payload in the details pane, scrolled
+	// down rawOffset lines.
+	raw       bool
+	rawOffset int
 	collapsed map[models.InstrumentID]bool
-	// The portfolio reprices every priceEvery while visible; pricing marks a
-	// request in flight.
-	priceEvery time.Duration
-	visible    bool
+	// generation drops loads and repricing a newer load replaced.
+	generation int
+	loading    bool
 	pricing    bool
-
-	back func()
-	quit func()
-	// loggedIn runs after a load logged the user in, so the users screen can
-	// show the new session.
-	loggedIn func()
+	status     string
+	// notice replaces the status after the next load.
+	notice string
 }
 
-const portfolioHelp = "  [yellow]Tab[-] next table · [yellow]↑↓ Ctrl+U/D[-] scroll · [yellow]R[-] reload · [yellow]I[-] instruments · [yellow]Q[-] users · [yellow]Ctrl+C[-] quit"
-
-func newPortfolioView(ctx context.Context, application *tview.Application, load portfolioLoader) *portfolioView {
-	view := &portfolioView{application: application, ctx: ctx, load: load}
-	view.header = tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
-	view.header.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
-	view.positions = newInstrumentTable(" Positions ")
-	view.positions.SetSelectedFunc(func(row, _ int) { view.toggleGroup(row) })
-	view.holdings = newInstrumentTable(" Holdings ")
-	view.funds = newInstrumentTable(" Mutual funds ")
-	for _, table := range view.tables() {
-		table.SetSelectionChangedFunc(func(int, int) { view.updateDetail() })
+func newPortfolioScreen() *portfolioScreen {
+	right := func(title string, width int) column { return column{title: title, width: width, align: alignRight} }
+	return &portfolioScreen{
+		positions: grid{columns: []column{
+			{title: "INSTRUMENT", width: 16, flex: 1}, {title: "EXCH", width: 5}, {title: "PRODUCT", width: 7},
+			right("QTY", 7), right("AVG", 10), right("LTP", 10), right("P&L", 12),
+		}},
+		orders: grid{columns: []column{
+			{title: "TIME", width: 8}, {title: "INSTRUMENT", width: 16, flex: 1}, {title: "SIDE", width: 4},
+			{title: "TYPE", width: 6}, {title: "PRODUCT", width: 7}, right("FILLED", 11), right("PRICE", 10),
+			right("AVG", 10), {title: "STATUS", width: 16},
+		}},
+		holdings: grid{columns: []column{
+			{title: "SYMBOL", width: 12, flex: 1}, right("QTY", 6), right("AVG", 10), right("LTP", 10),
+			right("INVESTED", 12), right("CURRENT", 12), right("P&L", 12), right("P&L%", 8), right("DAY%", 7),
+		}},
+		funds: grid{columns: []column{
+			{title: "FUND", width: 16, flex: 1}, {title: "FOLIO", width: 10}, right("UNITS", 10), right("AVG", 9),
+			right("NAV", 9), right("INVESTED", 12), right("CURRENT", 12), right("P&L", 12), right("P&L%", 8),
+		}},
 	}
-	view.detail = tview.NewTextView().SetDynamicColors(true).SetWrap(true)
-	view.detail.SetBorder(true).SetBorderColor(tcell.ColorLightCyan).SetTitle(" Details ").SetTitleColor(tcell.ColorLightCyan)
-
-	actions := tview.NewFlex().SetDirection(tview.FlexColumn)
-	actions.SetBorder(true).SetBorderColor(tcell.ColorDarkCyan).SetTitle(" Actions ").SetTitleColor(tcell.ColorLightYellow)
-	actions.AddItem(actionButton("↻ Reload [R]", tcell.ColorLightGreen, view.reload), 0, 1, false)
-	actions.AddItem(actionButton("⇥ Next table [Tab]", tcell.ColorLightCyan, func() { view.cycleFocus(1) }), 0, 1, false)
-	actions.AddItem(actionButton("← Users [Q]", tcell.ColorLightGray, func() { view.back() }), 0, 1, false)
-	actions.AddItem(actionButton("⏻ Quit [Ctrl+C]", tcell.ColorLightCoral, func() { view.quit() }), 0, 1, false)
-
-	view.status = tview.NewTextView().SetDynamicColors(true).SetTextColor(tcell.ColorLightCyan).SetText(portfolioHelp)
-	view.status.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
-
-	tables := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(view.positions, 0, 2, true).
-		AddItem(view.holdings, 0, 3, false).
-		AddItem(view.funds, 0, 2, false)
-	body := tview.NewFlex().SetDirection(tview.FlexColumn).
-		AddItem(tables, 0, 3, true).
-		AddItem(view.detail, 43, 1, false)
-	view.root = tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(view.header, 3, 0, false).
-		AddItem(body, 0, 1, true).
-		AddItem(actions, 3, 0, false).
-		AddItem(view.status, 3, 0, false)
-	return view
 }
 
-func (view *portfolioView) tables() []*tview.Table {
-	return []*tview.Table{view.positions, view.holdings, view.funds}
+func (p *portfolioScreen) grids() []*grid {
+	return []*grid{&p.positions, &p.holdings, &p.funds, &p.orders}
 }
 
-// focused is the table that has, or last had, the focus.
-func (view *portfolioView) focused() *tview.Table {
-	return view.tables()[view.focus]
+func (p *portfolioScreen) focused() *grid {
+	return p.grids()[p.focus]
 }
 
-// open shows user's portfolio, loading it afresh.
-func (view *portfolioView) open(user credentials.Credentials) {
-	if user.UserID != view.user.UserID {
-		view.data = portfolio{}
-		view.focus = 0
-		view.collapsed = nil
-		for _, table := range view.tables() {
-			table.Select(1, 0)
+// openPortfolio shows user's portfolio, loading it afresh.
+func (a *app) openPortfolio(user credentials.Credentials) tea.Cmd {
+	p := a.portfolio
+	if user.UserID != p.user.UserID {
+		p.data = portfolio{}
+		p.focus = 0
+		p.collapsed = nil
+		p.raw, p.rawOffset = false, 0
+		for _, g := range p.grids() {
+			g.cursor, g.offset = 0, 0
 		}
+		p.render()
 	}
-	view.user = user
-	view.render()
-	view.reload()
+	p.user = user
+	a.show(screenPortfolio)
+	return a.reloadPortfolio()
 }
 
-func (view *portfolioView) reload() {
-	if view.user.UserID == "" {
-		return
+type (
+	portfolioLoadedMsg struct {
+		generation int
+		user       credentials.Credentials
+		data       portfolio
 	}
-	view.generation++
-	generation, user, load := view.generation, view.user, view.load
-	view.loading = true
-	view.renderHeader()
-	view.status.SetText(fmt.Sprintf("  Loading the portfolio of [yellow]%s[-] · logs in if the session has expired…", tview.Escape(user.UserID)))
-	go func() {
-		data := load(view.ctx, user)
-		if view.ctx.Err() != nil {
-			return
-		}
-		view.application.QueueUpdateDraw(func() {
-			// A newer load, or another user's, supersedes this one.
-			if generation != view.generation {
-				return
-			}
-			view.loading = false
-			view.data = data
-			view.render()
-			status := portfolioHelp
-			if err := firstError(data.positionsErr, data.holdingsErr, data.fundsErr); err != nil {
-				status = "  [red::b]Some sections failed:[-] " + tview.Escape(quoteErrorText(err))
-			} else if data.pricesErr != nil {
-				status = "  [red::b]Live prices failed, showing Kite's portfolio prices:[-] " + tview.Escape(quoteErrorText(data.pricesErr))
-			} else if data.instrumentsErr != nil {
-				status = "  [yellow::b]Positions are not grouped:[-] " + tview.Escape(quoteErrorText(data.instrumentsErr))
-			}
-			if data.loggedIn {
-				view.user.LastLogin = time.Now()
-				status = "  [green::b]✔[-] Session expired; [yellow]" + tview.Escape(user.UserID) + "[-] was logged in again ·" + status
-				if view.loggedIn != nil {
-					view.loggedIn()
-				}
-			}
-			view.status.SetText(status)
-		})
-	}()
-}
+	portfolioPricedMsg struct {
+		generation int
+		data       portfolio
+	}
+)
 
-func (view *portfolioView) capture(event *tcell.EventKey) *tcell.EventKey {
-	if page := pageKey(view.application, event); page != nil {
-		return page
-	}
-	switch event.Key() {
-	case tcell.KeyTab:
-		view.cycleFocus(1)
-		return nil
-	case tcell.KeyBacktab:
-		view.cycleFocus(-1)
-		return nil
-	case tcell.KeyEscape:
-		view.back()
-		return nil
-	case tcell.KeyRune:
-	default:
-		return event
-	}
-	switch strings.ToLower(string(event.Rune())) {
-	case "q":
-		view.back()
-		return nil
-	case "r":
-		view.reload()
+func (a *app) reloadPortfolio() tea.Cmd {
+	p := a.portfolio
+	if p.user.UserID == "" || a.deps.loadPortfolio == nil {
 		return nil
 	}
-	return event
+	p.generation++
+	p.loading = true
+	p.status = statusInfo(fmt.Sprintf("Loading the portfolio of %s · logs in if the session has expired…", p.user.UserID))
+	generation, user, load := p.generation, p.user, a.deps.loadPortfolio
+	return a.task(func(ctx context.Context) tea.Msg {
+		return portfolioLoadedMsg{generation: generation, user: user, data: load(ctx, user)}
+	})
 }
 
-func (view *portfolioView) cycleFocus(delta int) {
-	count := len(view.tables())
-	view.focus = ((view.focus+delta)%count + count) % count
-	view.application.SetFocus(view.focused())
-	view.updateDetail()
-}
-
-// render redraws the portfolio, keeping each table's selected row.
-func (view *portfolioView) render() {
-	selected := make([]int, len(view.tables()))
-	for index, table := range view.tables() {
-		selected[index], _ = table.GetSelection()
+// refreshPortfolioPrices reprices the loaded portfolio in the background,
+// skipping a tick while a request is still running.
+func (a *app) refreshPortfolioPrices() tea.Cmd {
+	p := a.portfolio
+	if p.loading || p.pricing || p.data.prices == nil {
+		return nil
 	}
-	view.renderHeader()
-	view.renderPositions()
-	view.renderHoldings()
-	view.renderFunds()
-	for index, table := range view.tables() {
-		if row := selected[index]; row > 1 && row < table.GetRowCount() {
-			table.Select(row, 0)
+	p.pricing = true
+	generation, data := p.generation, p.data
+	return a.task(func(context.Context) tea.Msg {
+		return portfolioPricedMsg{generation: generation, data: data.reprice()}
+	})
+}
+
+func (a *app) handlePortfolio(msg tea.Msg) (tea.Cmd, bool) {
+	p := a.portfolio
+	switch msg := msg.(type) {
+	case portfolioLoadedMsg:
+		// A newer load, or another user's, supersedes this one.
+		if msg.generation != p.generation {
+			return nil, true
 		}
+		p.loading = false
+		p.data = msg.data
+		p.render()
+		status := ""
+		if p.notice != "" {
+			status, p.notice = p.notice, ""
+		}
+		data := msg.data
+		if err := firstError(data.positionsErr, data.ordersErr, data.holdingsErr, data.fundsErr); err != nil {
+			status = statusErr("Some sections failed:", quoteErrorText(err))
+		} else if data.pricesErr != nil {
+			status = statusErr("Live prices failed, showing Kite's portfolio prices:", quoteErrorText(data.pricesErr))
+		} else if data.instrumentsErr != nil {
+			status = statusWarn("Positions are not grouped: " + quoteErrorText(data.instrumentsErr))
+		}
+		var cmd tea.Cmd
+		if data.loggedIn {
+			p.user.LastLogin = time.Now()
+			status = statusOK(fmt.Sprintf("Session expired; %s was logged in again", msg.user.UserID)) + " · " + status
+			cmd = a.loadUsers("", "")
+		}
+		if status == "" {
+			status = statusInfo(fmt.Sprintf("Loaded %s", data.loadedAt.Format("15:04:05")))
+		}
+		p.status = status
+		return cmd, true
+	case portfolioPricedMsg:
+		p.pricing = false
+		// A reload replaced the portfolio meanwhile.
+		if msg.generation != p.generation || p.loading {
+			return nil, true
+		}
+		failedBefore := p.data.pricesErr != nil
+		p.data = msg.data
+		p.render()
+		switch {
+		case msg.data.pricesErr != nil:
+			p.status = statusErr("Live prices failed:", quoteErrorText(msg.data.pricesErr))
+		case failedBefore:
+			p.status = statusOK("Live prices restored")
+		}
+		return nil, true
 	}
-	view.updateDetail()
+	return nil, false
 }
 
-func (view *portfolioView) renderHeader() {
-	mode := "WEB"
-	if view.user.IsAPIUser {
-		mode = "API"
-	}
-	state := "[darkgray]not loaded[-]"
-	switch {
-	case view.loading:
-		state = "[yellow]loading…[-]"
-	case !view.data.pricedAt.IsZero():
-		state = "[lightgreen]live " + view.data.pricedAt.Format("15:04:05") + "[-]"
-	case !view.data.loadedAt.IsZero():
-		state = "[lightcyan]" + view.data.loadedAt.Format("15:04:05") + "[-]"
-	}
-	positions := sumPositions(view.data.positions)
-	invested, current := sumHoldings(view.data.holdings)
-	fundsInvested, fundsCurrent := sumFunds(view.data.funds)
-	view.header.SetText(fmt.Sprintf(
-		"[aqua::b]◆[-] [white::b]PORTFOLIO[-] [lightblue::b]%s[-] %s [darkgray]%s[-]  ·  positions %s  ·  holdings %s  ·  funds %s  ·  %s",
-		tview.Escape(view.user.UserID),
-		tview.Escape(fallback(view.user.UserName, "")),
-		mode,
-		signedMarkup(positions),
-		signedMarkup(current-invested),
-		signedMarkup(fundsCurrent-fundsInvested),
-		state,
-	))
-}
-
-func (view *portfolioView) renderPositions() {
-	table := view.positions
-	table.Clear()
-	setHeaders(table, []string{"INSTRUMENT", "EXCH", "PRODUCT", "QTY", "AVG", "LTP", "P&L"})
-	if !sectionReady(table, " Positions ", view.data.positionsErr, len(view.data.positions), "No open positions") {
-		return
-	}
-	groups := groupPositions(view.data.positions, view.data.instruments)
-	row := 1
-	for _, group := range groups {
-		indent := ""
-		// A lone position needs no group row.
-		if len(group.positions) > 1 {
-			// The group row carries the underlying and its subtotal P&L; Enter
-			// on it collapses or expands the group.
-			marker := "▾"
-			if view.collapsed[group.underlying] {
-				marker = "▸"
+func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
+	p := a.portfolio
+	key := msg.String()
+	count := len(p.grids())
+	g := p.focused()
+	before := g.cursor
+	if g.update(key) {
+		p.rawOffset = 0
+		// Up or Down past a table's edge moves into the next table.
+		if g.cursor == before {
+			switch {
+			case (key == "down" || key == "j") && p.focus < count-1:
+				p.focus++
+				next := p.focused()
+				next.cursor = 0
+				next.settle(1)
+			case (key == "up" || key == "k") && p.focus > 0:
+				p.focus--
+				next := p.focused()
+				next.cursor = max(len(next.rows)-1, 0)
+				next.settle(-1)
 			}
-			setRow(table, row, []*tview.TableCell{
-				textCell(fmt.Sprintf("%s %s (%d)", marker, displayName(view.data.instruments, group.underlying, string(group.underlying)), len(group.positions)), tcell.ColorYellow).
-					SetAttributes(tcell.AttrBold).SetReference(group.underlying),
-				textCell("", tcell.ColorDefault),
-				textCell("", tcell.ColorDefault),
-				textCell("", tcell.ColorDefault),
-				textCell("", tcell.ColorDefault),
-				textCell("", tcell.ColorDefault),
-				signedCell(group.pnl).SetAttributes(tcell.AttrBold),
-			})
-			row++
-			if view.collapsed[group.underlying] {
-				continue
+		}
+		return nil
+	}
+	switch key {
+	case "tab":
+		p.focus = (p.focus + 1) % count
+	case "shift+tab":
+		p.focus = (p.focus + count - 1) % count
+	case "enter":
+		switch reference := p.focused().selectedRef().(type) {
+		case models.InstrumentID:
+			p.toggleGroup(reference)
+		case kite.Order:
+			if a.width < detailMinWidth {
+				a.overlay = newPayloadOverlay(reference)
+				return nil
 			}
-			indent = "  "
+			p.raw, p.rawOffset = !p.raw, 0
 		}
-		for _, position := range group.positions {
-			setRow(table, row, []*tview.TableCell{
-				textCell(indent+displayName(view.data.instruments, positionID(position), position.Tradingsymbol), tcell.ColorLightCyan).
-					SetReference(position),
-				textCell(position.Exchange, tcell.ColorLightBlue),
-				textCell(position.Product, tcell.ColorLightGray),
-				numberCell(fmt.Sprintf("%d", position.Quantity), quantityColor(position.Quantity)),
-				numberCell(formatAmount(position.AveragePrice), tcell.ColorWhite),
-				numberCell(formatAmount(position.LastPrice), tcell.ColorWhite),
-				signedCell(position.PnL),
-			})
-			row++
+	case "J", "shift+down":
+		p.rawOffset++
+	case "K", "shift+up":
+		p.rawOffset = max(p.rawOffset-1, 0)
+	case "esc", "q", "Q":
+		if p.raw && p.focused() == &p.orders {
+			p.raw = false
+			return nil
 		}
-	}
-	table.SetTitle(fmt.Sprintf(" Positions · %d in %d underlyings · P&L %s ",
-		len(view.data.positions), len(groups), formatSigned(sumPositions(view.data.positions))))
-}
-
-// toggleGroup collapses or expands the group whose header is at row,
-// keeping that header selected.
-func (view *portfolioView) toggleGroup(row int) {
-	underlying, ok := view.positions.GetCell(row, 0).GetReference().(models.InstrumentID)
-	if !ok {
-		return
-	}
-	if view.collapsed == nil {
-		view.collapsed = make(map[models.InstrumentID]bool)
-	}
-	view.collapsed[underlying] = !view.collapsed[underlying]
-	view.renderPositions()
-	for candidate := 1; candidate < view.positions.GetRowCount(); candidate++ {
-		if view.positions.GetCell(candidate, 0).GetReference() == underlying {
-			view.positions.Select(candidate, 0)
-			break
+		a.show(screenUsers)
+	case "r", "R":
+		return a.reloadPortfolio()
+	case "u", "U":
+		a.openUserPicker()
+	case "m", "M", "x", "X":
+		order, ok := p.focused().selectedRef().(kite.Order)
+		if !ok {
+			return nil
 		}
-	}
-	view.updateDetail()
-}
-
-func (view *portfolioView) renderHoldings() {
-	table := view.holdings
-	table.Clear()
-	setHeaders(table, []string{"SYMBOL", "QTY", "AVG", "LTP", "INVESTED", "CURRENT", "P&L", "P&L%", "DAY%"})
-	if !sectionReady(table, " Holdings ", view.data.holdingsErr, len(view.data.holdings), "No holdings") {
-		return
-	}
-	for index, holding := range view.data.holdings {
-		quantity := float64(holding.Quantity + holding.T1Quantity)
-		invested, current := holding.AveragePrice*quantity, holding.LastPrice*quantity
-		setRow(table, index+1, []*tview.TableCell{
-			textCell(holding.Tradingsymbol, tcell.ColorLightCyan).SetReference(holding),
-			numberCell(fmt.Sprintf("%.0f", quantity), tcell.ColorWhite),
-			numberCell(formatAmount(holding.AveragePrice), tcell.ColorWhite),
-			numberCell(formatAmount(holding.LastPrice), tcell.ColorWhite),
-			numberCell(formatAmount(invested), tcell.ColorLightGray),
-			numberCell(formatAmount(current), tcell.ColorWhite),
-			signedCell(current - invested),
-			percentCell(current-invested, invested),
-			percentCell(holding.DayChangePercentage, 100),
-		})
-	}
-	invested, current := sumHoldings(view.data.holdings)
-	table.SetTitle(fmt.Sprintf(" Holdings · %d · invested %s · current %s · P&L %s (%s) ",
-		len(view.data.holdings), formatAmount(invested), formatAmount(current), formatSigned(current-invested), formatPercent(current-invested, invested)))
-}
-
-func (view *portfolioView) renderFunds() {
-	table := view.funds
-	table.Clear()
-	setHeaders(table, []string{"FUND", "FOLIO", "UNITS", "AVG", "NAV", "INVESTED", "CURRENT", "P&L", "P&L%"})
-	if !sectionReady(table, " Mutual funds ", view.data.fundsErr, len(view.data.funds), "No mutual fund holdings") {
-		return
-	}
-	for index, fund := range view.data.funds {
-		invested, current := fund.AveragePrice*fund.Quantity, fund.LastPrice*fund.Quantity
-		setRow(table, index+1, []*tview.TableCell{
-			textCell(fallback(fund.Fund, fund.Tradingsymbol), tcell.ColorLightCyan).SetMaxWidth(40).SetReference(fund),
-			textCell(fund.Folio, tcell.ColorLightGray),
-			numberCell(fmt.Sprintf("%.3f", fund.Quantity), tcell.ColorWhite),
-			numberCell(formatAmount(fund.AveragePrice), tcell.ColorWhite),
-			numberCell(formatAmount(fund.LastPrice), tcell.ColorWhite),
-			numberCell(formatAmount(invested), tcell.ColorLightGray),
-			numberCell(formatAmount(current), tcell.ColorWhite),
-			signedCell(current - invested),
-			percentCell(current-invested, invested),
-		})
-	}
-	invested, current := sumFunds(view.data.funds)
-	table.SetTitle(fmt.Sprintf(" Mutual funds · %d · invested %s · current %s · P&L %s (%s) ",
-		len(view.data.funds), formatAmount(invested), formatAmount(current), formatSigned(current-invested), formatPercent(current-invested, invested)))
-}
-
-// sectionReady titles a table and fills it with an error, loading or empty
-// row. It reports whether the table should be filled with rows.
-func sectionReady(table *tview.Table, title string, err error, count int, empty string) bool {
-	table.SetTitle(title)
-	message, color := "", tcell.ColorLightGray
-	switch {
-	case err != nil:
-		message, color = quoteErrorText(err), tcell.ColorRed
-		table.SetTitle(title + "· failed ")
-	case count == 0:
-		message = empty
-	default:
-		table.Select(1, 0)
-		return true
-	}
-	table.SetCell(1, 0, tview.NewTableCell(tview.Escape(message)).SetTextColor(color).SetSelectable(false).SetExpansion(1))
-	return false
-}
-
-func setRow(table *tview.Table, row int, cells []*tview.TableCell) {
-	for column, cell := range cells {
-		table.SetCell(row, column, cell)
-	}
-}
-
-func textCell(text string, color tcell.Color) *tview.TableCell {
-	return tview.NewTableCell(tview.Escape(text)).SetTextColor(color)
-}
-
-func numberCell(text string, color tcell.Color) *tview.TableCell {
-	return tview.NewTableCell(text).SetTextColor(color).SetAlign(tview.AlignRight)
-}
-
-func signedCell(value float64) *tview.TableCell {
-	return numberCell(formatSigned(value), signColor(value))
-}
-
-func percentCell(value, base float64) *tview.TableCell {
-	return numberCell(formatPercent(value, base), signColor(value))
-}
-
-func quantityColor(quantity int) tcell.Color {
-	switch {
-	case quantity > 0:
-		return tcell.ColorLightGreen
-	case quantity < 0:
-		return tcell.ColorLightCoral
-	}
-	return tcell.ColorDarkGray
-}
-
-func signColor(value float64) tcell.Color {
-	switch {
-	case value > 0.005:
-		return tcell.ColorLightGreen
-	case value < -0.005:
-		return tcell.ColorLightCoral
-	}
-	return tcell.ColorLightGray
-}
-
-func signedMarkup(value float64) string {
-	return fmt.Sprintf("[%s]%s[-]", colorName(signColor(value)), formatSigned(value))
-}
-
-func sumPositions(positions []kite.Position) float64 {
-	var pnl float64
-	for _, position := range positions {
-		pnl += position.PnL
-	}
-	return pnl
-}
-
-func sumHoldings(holdings kite.Holdings) (invested, current float64) {
-	for _, holding := range holdings {
-		quantity := float64(holding.Quantity + holding.T1Quantity)
-		invested += holding.AveragePrice * quantity
-		current += holding.LastPrice * quantity
-	}
-	return invested, current
-}
-
-func sumFunds(funds kite.MFHoldings) (invested, current float64) {
-	for _, fund := range funds {
-		invested += fund.AveragePrice * fund.Quantity
-		current += fund.LastPrice * fund.Quantity
-	}
-	return invested, current
-}
-
-func formatSigned(value float64) string {
-	if formatted := formatAmount(value); value > 0 && formatted != "0.00" {
-		return "+" + formatted
-	} else {
-		return formatted
-	}
-}
-
-func formatPercent(value, base float64) string {
-	if base == 0 {
-		return "—"
-	}
-	percent := value / base * 100
-	if percent > 0 {
-		return fmt.Sprintf("+%.2f%%", percent)
-	}
-	return fmt.Sprintf("%.2f%%", percent)
-}
-
-func firstError(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			return err
+		if !orderOpen(order) {
+			p.status = statusWarn(fmt.Sprintf("Order %s is %s; only open orders can be modified or cancelled", order.OrderID, strings.ToLower(fallback(order.Status, "unknown"))))
+			return nil
 		}
+		if key == "x" || key == "X" {
+			return a.confirmCancel(p.user.UserID, order)
+		}
+		return a.openOrder(modifyTicket(p.orderTarget(order).instrument, order, p.user.UserID))
+	case "o", "O":
+		target, ok := p.selectedTarget()
+		if !ok {
+			p.status = statusWarn("Select a position or holding to order") + statusInfo(" · funds cannot be ordered here")
+			return nil
+		}
+		return a.openOrderMenu(target)
 	}
 	return nil
+}
+
+// selectedTarget is the focused table's selected position or holding.
+// Group and fund rows are not tradable.
+func (p *portfolioScreen) selectedTarget() (tradeTarget, bool) {
+	switch reference := p.focused().selectedRef().(type) {
+	case kite.Position:
+		id := positionID(reference)
+		instrument, ok := p.data.instruments[id]
+		if !ok {
+			instrument = models.Instrument{ID: id, Exchange: reference.Exchange, TradingSymbol: reference.Tradingsymbol, LotSize: 1}
+		}
+		return tradeTarget{instrument: instrument, ltp: reference.LastPrice, held: reference}, true
+	case kite.Holding:
+		return tradeTarget{instrument: holdingInstrument(reference), ltp: reference.LastPrice, held: reference}, true
+	case kite.Order:
+		return p.orderTarget(reference), true
+	}
+	return tradeTarget{}, false
+}
+
+// toggleGroup collapses or expands a group, keeping its row selected.
+func (p *portfolioScreen) toggleGroup(underlying models.InstrumentID) {
+	if p.collapsed == nil {
+		p.collapsed = make(map[models.InstrumentID]bool)
+	}
+	p.collapsed[underlying] = !p.collapsed[underlying]
+	p.renderPositions()
+	p.positions.selectWhere(func(r row) bool { return r.ref == underlying })
+}
+
+func (p *portfolioScreen) render() {
+	p.renderPositions()
+	p.renderOrders()
+	p.renderHoldings()
+	p.renderFunds()
+}
+
+// sectionEmpty is a table's message when it has no rows: its error, or
+// that it is empty.
+func (p *portfolioScreen) sectionEmpty(g *grid, err error, empty string) {
+	switch {
+	case err != nil:
+		g.empty = styleRed.Render(quoteErrorText(err))
+	case p.loading && p.data.loadedAt.IsZero():
+		g.empty = styleMuted.Render("Loading…")
+	default:
+		g.empty = styleMuted.Render(empty)
+	}
+}
+
+func amountCell(value float64) cell { return textCell(formatAmount(value), styleText) }
+
+func signedCell(value float64) cell {
+	return textCell(formatSigned(value), signStyle(sign(value)))
+}
+
+func percentCell(value, base float64) cell {
+	return textCell(formatPercent(value, base), signStyle(sign(value)))
+}
+
+func (p *portfolioScreen) renderPositions() {
+	p.sectionEmpty(&p.positions, p.data.positionsErr, "No open positions")
+	var rows []row
+	if p.data.positionsErr == nil {
+		for _, group := range groupPositions(p.data.positions, p.data.instruments) {
+			indent := ""
+			// A lone position needs no group row.
+			if len(group.positions) > 1 {
+				marker := "▾"
+				if p.collapsed[group.underlying] {
+					marker = "▸"
+				}
+				name := fmt.Sprintf("%s %s (%d)", marker, displayName(p.data.instruments, group.underlying, string(group.underlying)), len(group.positions))
+				rows = append(rows, row{ref: group.underlying, cells: []cell{
+					textCell(name, styleYellow.Bold(true)), {}, {}, {}, {}, {},
+					textCell(formatSigned(group.pnl), signStyle(sign(group.pnl)).Bold(true)),
+				}})
+				if p.collapsed[group.underlying] {
+					continue
+				}
+				indent = "  "
+			}
+			for _, position := range group.positions {
+				rows = append(rows, row{ref: position, cells: []cell{
+					textCell(indent+displayName(p.data.instruments, positionID(position), position.Tradingsymbol), styleCyan),
+					textCell(position.Exchange, styleBlue),
+					textCell(position.Product, styleMuted),
+					textCell(fmt.Sprintf("%d", position.Quantity), quantityStyle(position.Quantity)),
+					amountCell(position.AveragePrice),
+					amountCell(position.LastPrice),
+					signedCell(position.PnL),
+				}})
+			}
+		}
+	}
+	p.positions.setRows(rows)
+}
+
+func (p *portfolioScreen) renderHoldings() {
+	p.sectionEmpty(&p.holdings, p.data.holdingsErr, "No holdings")
+	var rows []row
+	if p.data.holdingsErr == nil {
+		for _, holding := range p.data.holdings {
+			quantity := float64(holding.Quantity + holding.T1Quantity)
+			invested, current := holding.AveragePrice*quantity, holding.LastPrice*quantity
+			rows = append(rows, row{ref: holding, cells: []cell{
+				textCell(holding.Tradingsymbol, styleCyan),
+				textCell(fmt.Sprintf("%.0f", quantity), styleText),
+				amountCell(holding.AveragePrice),
+				amountCell(holding.LastPrice),
+				textCell(formatAmount(invested), styleMuted),
+				amountCell(current),
+				signedCell(current - invested),
+				percentCell(current-invested, invested),
+				percentCell(holding.DayChangePercentage, 100),
+			}})
+		}
+	}
+	p.holdings.setRows(rows)
+}
+
+func (p *portfolioScreen) renderFunds() {
+	p.sectionEmpty(&p.funds, p.data.fundsErr, "No mutual fund holdings")
+	var rows []row
+	if p.data.fundsErr == nil {
+		for _, fund := range p.data.funds {
+			invested, current := fund.AveragePrice*fund.Quantity, fund.LastPrice*fund.Quantity
+			rows = append(rows, row{ref: fund, cells: []cell{
+				textCell(fallback(fund.Fund, fund.Tradingsymbol), styleCyan),
+				textCell(fund.Folio, styleMuted),
+				textCell(fmt.Sprintf("%.3f", fund.Quantity), styleText),
+				amountCell(fund.AveragePrice),
+				amountCell(fund.LastPrice),
+				textCell(formatAmount(invested), styleMuted),
+				amountCell(current),
+				signedCell(current - invested),
+				percentCell(current-invested, invested),
+			}})
+		}
+	}
+	p.funds.setRows(rows)
+}
+
+// portfolioPills are the status bar's user, mode and price state.
+func (a *app) portfolioPills() []string {
+	p := a.portfolio
+	mode := "WEB"
+	if p.user.IsAPIUser {
+		mode = "API"
+	}
+	state := styleFaint.Render("not loaded")
+	switch {
+	case p.loading:
+		state = a.spinner.View() + styleYellow.Render(" loading")
+	case !p.data.pricedAt.IsZero():
+		state = styleGreen.Render("● live " + p.data.pricedAt.Format("15:04:05"))
+	case !p.data.loadedAt.IsZero():
+		state = styleCyan.Render(p.data.loadedAt.Format("15:04:05"))
+	}
+	return []string{state, pill(p.user.UserID+" · "+mode, colorSelection, colorText)}
+}
+
+// statCard is a small boxed figure for the portfolio's summary row.
+func statCard(title, value, sub string, w int) string {
+	body := " " + value
+	if sub != "" {
+		body += "  " + sub
+	}
+	return panel(title, "", body, w, 3, false)
+}
+
+// marginCard shows the margin used of the total, equity and commodity
+// together, coloured by how much is used, with what is free.
+func marginCard(data portfolio, w int) string {
+	switch {
+	case data.marginsErr != nil:
+		return statCard("Margin", styleRed.Render("failed"), "", w)
+	case data.loadedAt.IsZero():
+		return statCard("Margin", styleFaint.Render("—"), "", w)
+	}
+	used, free := marginUsed(data.margins)
+	total := used + free
+	style := styleGreen
+	switch {
+	case total > 0 && used/total >= 0.8:
+		style = styleRed
+	case total > 0 && used/total >= 0.5:
+		style = styleYellow
+	}
+	value := style.Bold(true).Render("₹"+formatShort(used)) + styleMuted.Render("/"+formatShort(total))
+	return statCard("Margin", value, styleFaint.Render("₹"+formatShort(free)+" free"), w)
+}
+
+// marginUsed is the margin blocked and the margin still available across
+// segments.
+func marginUsed(margins kite.AllMargins) (used, free float64) {
+	for _, segment := range []kite.Margins{margins.Equity, margins.Commodity} {
+		used += segment.Used.Debits
+		free += segment.Net
+	}
+	return used, free
+}
+
+// formatShort abbreviates an amount the Indian way: 1.4K, 6.4L, 1.25Cr.
+func formatShort(value float64) string {
+	sign := ""
+	if value < 0 {
+		sign, value = "-", -value
+	}
+	trim := func(text string) string { return strings.TrimSuffix(strings.TrimRight(text, "0"), ".") }
+	switch {
+	case value >= 1e7:
+		return sign + trim(fmt.Sprintf("%.2f", value/1e7)) + "Cr"
+	case value >= 1e5:
+		return sign + trim(fmt.Sprintf("%.1f", value/1e5)) + "L"
+	case value >= 1e3:
+		return sign + trim(fmt.Sprintf("%.1f", value/1e3)) + "K"
+	}
+	return sign + fmt.Sprintf("%.0f", value)
+}
+
+func (a *app) portfolioView(w, h int) string {
+	p := a.portfolio
+	data := p.data
+	positions := sumPositions(data.positions)
+	invested, current := sumHoldings(data.holdings)
+	fundsInvested, fundsCurrent := sumFunds(data.funds)
+	day := sumDayChange(data.holdings)
+	widths := splitWidth(w, 1, 1, 1, 1, 1)
+	name := p.user.UserID
+	if p.user.UserName != "" {
+		name += " · " + p.user.UserName
+	}
+	big := func(value float64) string { return signStyle(sign(value)).Bold(true).Render(formatSigned(value)) }
+	cards := joinColumns(
+		statCard("Positions P&L", big(positions), styleFaint.Render(fmt.Sprintf("%d open", len(data.positions))), widths[0]),
+		statCard("Holdings P&L", big(current-invested), signStyle(sign(current-invested)).Render(formatPercent(current-invested, invested)), widths[1]),
+		statCard("Day change", big(day), signStyle(sign(day)).Render(formatPercent(day, current-day)), widths[2]),
+		statCard("Funds P&L", big(fundsCurrent-fundsInvested), signStyle(sign(fundsCurrent-fundsInvested)).Render(formatPercent(fundsCurrent-fundsInvested, fundsInvested)), widths[3]),
+		marginCard(data, widths[4]),
+	)
+	rest := h - 3
+	detailW := 43
+	if w < detailMinWidth {
+		detailW = 0
+	}
+	tableW := w - detailW
+	heights := splitWidth(rest, 3, 3, 2, 3)
+	top := 1 + 3 // tab bar and cards
+	var tables []string
+	groups := groupPositions(data.positions, data.instruments)
+	titles := []struct{ title, info string }{
+		{"Positions", fmt.Sprintf("%d in %d underlyings · P&L %s", len(data.positions), len(groups), signed(positions))},
+		{"Holdings", fmt.Sprintf("%d · invested %s · current %s · P&L %s (%s)", len(data.holdings), formatAmount(invested), formatAmount(current), signed(current-invested), formatPercent(current-invested, invested))},
+		{"Mutual funds", fmt.Sprintf("%d · invested %s · current %s · P&L %s", len(data.funds), formatAmount(fundsInvested), formatAmount(fundsCurrent), signed(fundsCurrent-fundsInvested))},
+		{"Orders", ordersInfo(data.orders)},
+	}
+	errs := []error{data.positionsErr, data.holdingsErr, data.fundsErr, data.ordersErr}
+	for index, g := range p.grids() {
+		g.x, g.y = 1, top+2
+		focused := index == p.focus
+		info := styleMuted.Render(titles[index].info)
+		if errs[index] != nil {
+			info = styleRed.Render("failed")
+		}
+		tables = append(tables, panel(titles[index].title, info, g.view(tableW-2, heights[index]-2, focused), tableW, heights[index], focused))
+		top += heights[index]
+	}
+	left := strings.Join(tables, "\n")
+	body := left
+	if detailW > 0 {
+		title, info, detail := "Details", styleFaint.Render(name), p.detail()
+		if order, ok := p.focused().selectedRef().(kite.Order); ok && p.raw {
+			title, info, detail = p.rawDetail(order, detailW-4, rest-2)
+		}
+		body = joinColumns(left, textPanel(title, info, detail, detailW, rest, false))
+	}
+	return cards + "\n" + body
+}
+
+// detail describes the focused table's selected row: a position, a group
+// of positions, a holding or a fund.
+func (p *portfolioScreen) detail() string {
+	switch reference := p.focused().selectedRef().(type) {
+	case kite.Position:
+		return p.positionDetail(reference)
+	case models.InstrumentID:
+		return p.groupDetail(reference)
+	case kite.Holding:
+		return holdingDetail(reference)
+	case kite.Order:
+		return orderDetail(reference)
+	case kite.MFHolding:
+		return fundDetail(reference)
+	}
+	return styleFaint.Render("Select a row to see its details.")
+}
+
+// detailText builds a detail pane: a title, a subtitle and labelled
+// sections.
+type detailText struct {
+	strings.Builder
+}
+
+func newDetailText(title, subtitle string) *detailText {
+	text := &detailText{}
+	text.WriteString(styleCyan.Bold(true).Render(title) + "\n" + styleMuted.Render(subtitle))
+	return text
+}
+
+func (text *detailText) section(name string) {
+	text.WriteString("\n\n" + styleBlue.Bold(true).Render(name))
+}
+
+// field adds a label and an already styled value.
+func (text *detailText) field(label, value string) {
+	text.WriteString("\n" + styleMuted.Render(padRight(label, 14)) + " " + value)
+}
+
+func (text *detailText) plain(label, value string) {
+	text.field(label, styleText.Render(fallback(value, "—")))
+}
+
+func (text *detailText) line(value string) {
+	text.WriteString("\n" + value)
+}
+
+func (p *portfolioScreen) positionDetail(position kite.Position) string {
+	id := positionID(position)
+	instrument, known := p.data.instruments[id]
+	text := newDetailText(displayName(p.data.instruments, id, position.Tradingsymbol), string(id))
+
+	text.section("Instrument")
+	text.plain("ID", string(id))
+	text.plain("Token", fmt.Sprintf("%d", position.InstrumentToken))
+	if known {
+		text.plain("Type", instrument.InstrumentType)
+		text.plain("Segment", instrument.Segment)
+		if instrument.Expiry != nil {
+			text.plain("Expiry", formatExpiry(instrument.Expiry))
+		}
+		if instrument.Strike > 0 {
+			text.plain("Strike", formatStrike(instrument.Strike))
+		}
+		if instrument.LotSize > 0 {
+			text.plain("Lot size", fmt.Sprintf("%d", instrument.LotSize))
+			if lots := float64(position.Quantity) / float64(instrument.LotSize); lots != 0 {
+				text.plain("Lots", fmt.Sprintf("%g", lots))
+			}
+		}
+		if instrument.UnderlyingID != nil {
+			underlying := *instrument.UnderlyingID
+			text.plain("Underlying", displayName(p.data.instruments, underlying, string(underlying)))
+		}
+	} else {
+		text.field("Catalog", styleFaint.Render("not found"))
+	}
+
+	text.section("Position")
+	text.plain("Product", position.Product)
+	text.field("Net qty", quantityStyle(position.Quantity).Render(fmt.Sprintf("%d", position.Quantity)))
+	text.plain("Overnight qty", fmt.Sprintf("%d", position.OvernightQuantity))
+	if position.Multiplier != 0 && position.Multiplier != 1 {
+		text.plain("Multiplier", fmt.Sprintf("%g", position.Multiplier))
+	}
+	text.plain("Avg price", formatAmount(position.AveragePrice))
+	text.plain("LTP", formatAmount(position.LastPrice))
+	text.plain("Prev close", formatAmount(position.ClosePrice))
+	text.plain("Value", formatAmount(position.Value))
+	text.field("P&L", signed(position.PnL))
+	text.field("M2M", signed(position.M2M))
+	text.field("Realised", signed(position.Realised))
+	text.field("Unrealised", signed(position.Unrealised))
+
+	text.section("Activity")
+	text.field("Bought", trades(position.BuyQuantity, position.BuyPrice, position.BuyValue))
+	text.field("Sold", trades(position.SellQuantity, position.SellPrice, position.SellValue))
+	text.field("Bought today", trades(position.DayBuyQuantity, position.DayBuyPrice, position.DayBuyValue))
+	text.field("Sold today", trades(position.DaySellQuantity, position.DaySellPrice, position.DaySellValue))
+	return text.String()
+}
+
+func (p *portfolioScreen) groupDetail(underlying models.InstrumentID) string {
+	var group positionGroup
+	for _, candidate := range groupPositions(p.data.positions, p.data.instruments) {
+		if candidate.underlying == underlying {
+			group = candidate
+		}
+	}
+	text := newDetailText(displayName(p.data.instruments, underlying, string(underlying)), string(underlying))
+	var m2m, realised, unrealised float64
+	for _, position := range group.positions {
+		m2m += position.M2M
+		realised += position.Realised
+		unrealised += position.Unrealised
+	}
+	text.section("Underlying")
+	text.plain("ID", string(underlying))
+	text.plain("Positions", fmt.Sprintf("%d", len(group.positions)))
+	text.field("P&L", signed(group.pnl))
+	text.field("M2M", signed(m2m))
+	text.field("Realised", signed(realised))
+	text.field("Unrealised", signed(unrealised))
+
+	text.section("Legs")
+	for _, position := range group.positions {
+		text.line(quantityStyle(position.Quantity).Render(fmt.Sprintf("%+d", position.Quantity)) + " " +
+			styleText.Render(displayName(p.data.instruments, positionID(position), position.Tradingsymbol)) + "  " + signed(position.PnL))
+	}
+	text.WriteString("\n\n" + styleFaint.Render("Enter collapses or expands the group."))
+	return text.String()
+}
+
+func holdingDetail(holding kite.Holding) string {
+	id := string(holdingID(holding))
+	text := newDetailText(holding.Tradingsymbol, id)
+	quantity := float64(holding.Quantity + holding.T1Quantity)
+	invested, current := holding.AveragePrice*quantity, holding.LastPrice*quantity
+
+	text.section("Instrument")
+	text.plain("ID", id)
+	text.plain("Token", fmt.Sprintf("%d", holding.InstrumentToken))
+	text.plain("ISIN", holding.ISIN)
+	text.plain("Product", holding.Product)
+
+	text.section("Holding")
+	text.plain("Quantity", fmt.Sprintf("%d", holding.Quantity))
+	text.plain("T1 quantity", fmt.Sprintf("%d", holding.T1Quantity))
+	if holding.CollateralQuantity > 0 {
+		text.plain("Collateral", fmt.Sprintf("%d %s", holding.CollateralQuantity, holding.CollateralType))
+	}
+	text.plain("Avg price", formatAmount(holding.AveragePrice))
+	text.plain("LTP", formatAmount(holding.LastPrice))
+	text.plain("Prev close", formatAmount(holding.ClosePrice))
+	text.plain("Invested", formatAmount(invested))
+	text.plain("Current", formatAmount(current))
+	text.field("P&L", fmt.Sprintf("%s (%s)", signed(current-invested), formatPercent(current-invested, invested)))
+	text.field("Day change", fmt.Sprintf("%s (%s)", signed(holding.DayChange*quantity), formatPercent(holding.DayChangePercentage, 100)))
+	return text.String()
+}
+
+func fundDetail(fund kite.MFHolding) string {
+	text := newDetailText(fallback(fund.Fund, fund.Tradingsymbol), fund.Tradingsymbol)
+	invested, current := fund.AveragePrice*fund.Quantity, fund.LastPrice*fund.Quantity
+	text.section("Fund")
+	text.plain("Symbol", fund.Tradingsymbol)
+	text.plain("Folio", fund.Folio)
+	text.plain("Units", fmt.Sprintf("%.3f", fund.Quantity))
+	text.plain("Avg NAV", formatAmount(fund.AveragePrice))
+	text.plain("NAV", formatAmount(fund.LastPrice))
+	text.plain("NAV date", fund.LastPriceDate)
+	text.plain("Invested", formatAmount(invested))
+	text.plain("Current", formatAmount(current))
+	text.field("P&L", fmt.Sprintf("%s (%s)", signed(current-invested), formatPercent(current-invested, invested)))
+	return text.String()
+}
+
+// trades formats a quantity bought or sold at an average price, with the
+// value shortened to fit the pane.
+func trades(quantity int, price, value float64) string {
+	if quantity == 0 {
+		return styleFaint.Render("—")
+	}
+	return styleText.Render(fmt.Sprintf("%d @ %s (%s)", quantity, formatAmount(price), formatCount(value)))
 }

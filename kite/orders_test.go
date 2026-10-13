@@ -2,6 +2,9 @@ package kite
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/go-querystring/query"
@@ -405,5 +408,34 @@ func (ts *TestSuite) TestIssue64(t *testing.T) {
 
 	if !ord.ExchangeTimestamp.Equal(outOrd.ExchangeTimestamp.Time) {
 		t.Errorf("Incorrect timestamp parsing.\nwant:\t%v\ngot:\t%v", ord.ExchangeTimestamp, outOrd.ExchangeTimestamp)
+	}
+}
+
+func TestCancelOrderSendsParentOrderID(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("expected DELETE request, got %s", r.Method)
+		}
+		if got := r.URL.Query().Get("parent_order_id"); got != "parent-1" {
+			t.Errorf("parent_order_id = %q, want parent-1", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"order_id":"child-1"}}`)
+	}))
+	defer server.Close()
+
+	kc := New("test_api_key")
+	kc.SetBaseURI(server.URL)
+	kc.SetAccessToken("test_access_token")
+
+	parent := "parent-1"
+	response, err := kc.CancelOrder(VarietyCO, "child-1", &parent)
+	if err != nil {
+		t.Fatalf("expected cancel to succeed, got %v", err)
+	}
+	if response.OrderID != "child-1" {
+		t.Errorf("order ID = %q", response.OrderID)
 	}
 }

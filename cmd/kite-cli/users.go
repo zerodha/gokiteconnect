@@ -7,20 +7,14 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/devshoe/gokiteconnect/credentials"
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
-)
-
-const (
-	userTablePage = "users"
-	userFormPage  = "user-form"
-	userModalPage = "user-modal"
-	userBusyPage  = "user-busy"
 )
 
 const (
 	fieldUserID         = "User ID"
+	fieldProfile        = "Profile"
 	fieldChatID         = "Telegram chat ID"
 	fieldPassword       = "Password"
 	fieldTOTP           = "TOTP secret"
@@ -30,609 +24,545 @@ const (
 	fieldSubscription   = "Data subscription"
 )
 
-type userApp struct {
-	application *tview.Application
-	pages       *tview.Pages
-	manager     *credentials.UserManager
-	ctx         context.Context
-	database    string
+var authenticationModes = []string{"Web session", "API session"}
 
-	table      *tview.Table
-	detail     *tview.TextView
-	status     *tview.TextView
-	sudoButton *tview.Button
-
-	users   []credentials.Credentials
-	overlay string
-	busy    bool
-	sudo    bool
-
-	// open shows the selected user's portfolio; quit stops the whole app.
-	open func(credentials.Credentials)
-	quit func()
+// usersScreen lists the stored Kite accounts with the selected one's
+// session and, with sudo on, its secrets.
+type usersScreen struct {
+	grid   grid
+	users  []credentials.Credentials
+	status string
+	sudo   bool
 }
 
-// newUserApp builds the user screen on application. The screen's root is
-// ui.pages; the caller places it and routes key events to ui.capture.
-func newUserApp(ctx context.Context, application *tview.Application, manager *credentials.UserManager, database string) *userApp {
-	ui := &userApp{
-		application: application,
-		pages:       tview.NewPages(),
-		manager:     manager,
-		ctx:         ctx,
-		database:    database,
+func newUsersScreen() *usersScreen {
+	return &usersScreen{
+		grid: grid{
+			columns: []column{
+				{title: "USER ID", width: 10},
+				{title: "NAME", width: 12, flex: 2},
+				{title: "EMAIL", width: 12, flex: 3},
+				{title: "BROKER", width: 9},
+				{title: "MODE", width: 5},
+				{title: "CHAT ID", width: 12},
+				{title: "LAST LOGIN", width: 15},
+			},
+			empty: styleMuted.Render("No users yet · press A to add your first Kite account"),
+		},
+		status: statusInfo("Loading users…"),
 	}
-	ui.table = ui.newTable()
-	ui.detail = ui.newDetail()
-	actions := ui.newActions()
-	ui.status = tview.NewTextView().
-		SetDynamicColors(true).
-		SetTextColor(tcell.ColorLightCyan).
-		SetText(usersHelp)
-	ui.status.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
-
-	header := tview.NewTextView().
-		SetDynamicColors(true).
-		SetText("[aqua::b]◆[-] [white::b]CREDENTIALS[-] [lightblue::b]USER CONSOLE[-]  [lightcyan]Local Kite session control[-]").
-		SetTextAlign(tview.AlignCenter)
-	header.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
-	databaseView := tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(false).
-		SetWordWrap(false).
-		SetTextAlign(tview.AlignRight).
-		SetText(fmt.Sprintf("[yellow::b]DB[-] %s", tview.Escape(ui.database)))
-	databaseView.SetBorder(true).SetBorderColor(tcell.ColorLightYellow).SetTitle(" Connected database ").SetTitleColor(tcell.ColorLightYellow)
-	headerRow := tview.NewFlex().SetDirection(tview.FlexColumn).
-		// Keep both sides visible even in a narrow terminal. A proportional
-		// database pane avoids the fixed-width pane being pushed off-screen.
-		AddItem(header, 0, 3, false).
-		AddItem(databaseView, 0, 2, false)
-
-	help := tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(true).
-		SetText("[aqua::b]Selected user[-]\n\nUse the arrow keys to move through the table, or use the action buttons below it. Press Enter to open the highlighted account's portfolio, E to edit it, or I for instruments.\n\n[green]READY[-] means a usable session token is stored. [yellow]LOGIN NEEDED[-] means the session should be refreshed.")
-	help.SetBorder(true).SetTitle("About")
-	help.SetTitleColor(tcell.ColorLightPink)
-
-	rightPanel := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(ui.detail, 0, 2, false).
-		AddItem(help, 0, 1, false)
-	body := tview.NewFlex().
-		AddItem(ui.table, 0, 4, true).
-		AddItem(rightPanel, 36, 1, false)
-	root := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(headerRow, 3, 0, false).
-		AddItem(body, 0, 1, true).
-		AddItem(actions, 3, 0, false).
-		AddItem(ui.status, 2, 0, false)
-	ui.pages.AddPage(userTablePage, root, true, true)
-	return ui
 }
 
-const usersHelp = "  [yellow]↑↓ Ctrl+U/D[-] navigate  [green]Enter[-] portfolio  [yellow]I[-] instruments  [e] edit  [a] add  [d] delete  [f] refresh session  [r] reload  [s] sudo  [ctrl+c] quit"
+func (s *usersScreen) selected() (credentials.Credentials, bool) {
+	if user, ok := s.grid.selectedRef().(credentials.Credentials); ok {
+		return user, true
+	}
+	return credentials.Credentials{}, false
+}
 
-func (ui *userApp) newActions() *tview.Flex {
-	actions := tview.NewFlex().SetDirection(tview.FlexColumn)
-	actions.SetBorder(true).SetBorderColor(tcell.ColorDarkCyan).SetTitle(" Actions ").SetTitleColor(tcell.ColorLightYellow)
-	actions.AddItem(actionButton("▤ Portfolio [Enter]", tcell.ColorLightGreen, ui.openPortfolio), 0, 1, false)
-	actions.AddItem(actionButton("＋ Add new [A]", tcell.ColorLightGreen, ui.openCreate), 0, 1, false)
-	actions.AddItem(actionButton("✎ Edit [E]", tcell.ColorLightCyan, ui.openEdit), 0, 1, false)
-	actions.AddItem(actionButton("✖ Delete [D]", tcell.ColorLightCoral, ui.confirmDelete), 0, 1, false)
-	actions.AddItem(actionButton("↻ Refresh session [F]", tcell.ColorLightYellow, ui.refreshSession), 0, 1, false)
-	actions.AddItem(actionButton("⟳ Reload [R]", tcell.ColorLightSkyBlue, func() {
-		if err := ui.reload(); err != nil {
-			ui.showError(err)
+// setUsers fills the table, keeping selectID (or the selected user) selected.
+func (s *usersScreen) setUsers(users []credentials.Credentials, selectID string) {
+	if selectID == "" {
+		if user, ok := s.selected(); ok {
+			selectID = user.UserID
 		}
-	}), 0, 1, false)
-	ui.sudoButton = actionButton("⚠ Sudo OFF [S]", tcell.ColorLightYellow, ui.toggleSudo)
-	actions.AddItem(ui.sudoButton, 0, 1, false)
-	actions.AddItem(actionButton("⏻ Quit [Ctrl+C]", tcell.ColorLightPink, func() { ui.quit() }), 0, 1, false)
-	return actions
-}
-
-func (ui *userApp) newTable() *tview.Table {
-	table := tview.NewTable().
-		SetBorders(true).
-		SetBordersColor(tcell.ColorLightCyan).
-		SetSelectable(true, false).
-		SetFixed(1, 0).
-		SetEvaluateAllRows(true).
-		SetSelectedStyle(tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite).Bold(true))
-	table.SetTitle(" Users ").SetTitleColor(tcell.ColorLightCyan)
-	table.SetSelectedFunc(func(row, _ int) {
-		if row > 0 {
-			ui.openPortfolio()
-		}
-	})
-	table.SetSelectionChangedFunc(func(row, _ int) {
-		if row > 0 && row-1 < len(ui.users) {
-			ui.updateDetail(ui.users[row-1])
-		}
-	})
-	return table
-}
-
-func (ui *userApp) newDetail() *tview.TextView {
-	detail := tview.NewTextView().SetDynamicColors(true).SetWrap(true)
-	detail.SetBorder(true).SetTitle(" Selected user ").SetTitleColor(tcell.ColorLightPink)
-	detail.SetText("Move to a user to inspect its session and profile.")
-	return detail
-}
-
-func (ui *userApp) capture(event *tcell.EventKey) *tcell.EventKey {
-	if ui.busy {
-		return nil
 	}
-	if page := pageKey(ui.application, event); page != nil {
-		return page
-	}
-	if ui.overlay != "" {
-		_, typing := ui.application.GetFocus().(*tview.InputField)
-		if event.Key() == tcell.KeyRune && strings.EqualFold(string(event.Rune()), "q") && !typing {
-			ui.closeOverlay()
-			return nil
-		}
-		return event
-	}
-	if event.Key() != tcell.KeyRune {
-		return event
-	}
-	switch strings.ToLower(string(event.Rune())) {
-	case "a", "n":
-		ui.openCreate()
-		return nil
-	case "e":
-		ui.openEdit()
-		return nil
-	case "d":
-		ui.confirmDelete()
-		return nil
-	case "f":
-		ui.refreshSession()
-		return nil
-	case "r":
-		if err := ui.reload(); err != nil {
-			ui.showError(err)
-		}
-		return nil
-	case "s":
-		ui.toggleSudo()
-		return nil
-	}
-	return event
-}
-
-func (ui *userApp) reload() error {
-	users, err := ui.manager.ListUsers(ui.ctx)
-	if err != nil {
-		return err
-	}
-	ui.users = users
-	ui.table.Clear()
-	headers := []string{"USER ID", "NAME", "EMAIL", "BROKER", "MODE", "CHAT ID", "LAST LOGIN"}
-	for column, header := range headers {
-		ui.table.SetCell(0, column, tview.NewTableCell(header).
-			SetTextColor(tcell.ColorLightCyan).
-			SetAttributes(tcell.AttrBold).
-			SetSelectable(false))
-	}
-	for row, user := range users {
-		mode := "WEB"
-		modeColor := tcell.ColorLightCyan
+	s.users = users
+	rows := make([]row, 0, len(users))
+	for _, user := range users {
+		mode, modeStyle := "WEB", styleCyan
 		if user.IsAPIUser {
-			mode = "API"
-			modeColor = tcell.ColorLightPink
+			mode, modeStyle = "API", styleKey
 		}
 		lastLogin := "—"
 		if !user.LastLogin.IsZero() {
 			lastLogin = user.LastLogin.Local().Format("02 Jan 06 15:04")
 		}
-		values := []string{
-			user.UserID,
-			fallback(user.UserName, "—"),
-			fallback(user.Email, "—"),
-			fallback(user.Broker, "—"),
-			mode,
-			fallback(user.TelegramChatID, "—"),
-			lastLogin,
-		}
-		colors := []tcell.Color{tcell.ColorLightCyan, tcell.ColorWhite, tcell.ColorWhite, tcell.ColorLightBlue, modeColor, tcell.ColorYellow, tcell.ColorLightGray}
-		for column, value := range values {
-			ui.table.SetCell(row+1, column, tview.NewTableCell(truncate(value, 24)).SetTextColor(colors[column]))
-		}
+		rows = append(rows, row{ref: user, cells: []cell{
+			textCell(user.UserID, styleCyan),
+			textCell(fallback(user.UserName, "—"), styleText),
+			textCell(fallback(user.Email, "—"), styleText),
+			textCell(fallback(user.Broker, "—"), styleBlue),
+			textCell(mode, modeStyle),
+			textCell(fallback(user.TelegramChatID, "—"), styleYellow),
+			textCell(lastLogin, styleMuted),
+		}})
 	}
-	if len(users) > 0 {
-		ui.table.Select(1, 0)
-		ui.updateDetail(users[0])
-	} else {
-		ui.detail.SetText("[yellow::b]No users yet[-]\n\nPress [green]A[-] to add your first Kite account.")
+	s.grid.setRows(rows)
+	if selectID != "" {
+		s.grid.selectWhere(func(r row) bool {
+			user, _ := r.ref.(credentials.Credentials)
+			return strings.EqualFold(user.UserID, selectID)
+		})
 	}
-	ui.setStatus(fmt.Sprintf("  %d %s stored", len(users), pluralize("user", len(users))))
-	return nil
 }
 
-func (ui *userApp) updateDetail(user credentials.Credentials) {
+func sessionReady(user credentials.Credentials) bool {
+	if user.IsAPIUser {
+		return user.AccessToken != ""
+	}
+	return user.EncToken != ""
+}
+
+func (s *usersScreen) detail() string {
+	user, ok := s.selected()
+	if !ok {
+		return styleYellow.Bold(true).Render("No users yet") + "\n\nPress " + styleKey.Render("A") + " to add your first Kite account."
+	}
 	mode := "Web session"
 	if user.IsAPIUser {
 		mode = "API session"
 	}
-	session := "READY"
-	if (user.IsAPIUser && user.AccessToken == "") || (!user.IsAPIUser && user.EncToken == "") {
-		session = "LOGIN NEEDED"
+	session := styleGreen.Bold(true).Render("READY")
+	if !sessionReady(user) {
+		session = styleYellow.Bold(true).Render("LOGIN NEEDED")
 	}
 	lastLogin := "Never"
 	if !user.LastLogin.IsZero() {
 		lastLogin = user.LastLogin.Local().Format(time.RFC822)
 	}
-	detail := fmt.Sprintf("[aqua::b]%s[-]\n\n[white]Name[-]    %s\n[white]Email[-]   %s\n[white]Broker[-]  %s\n\n[white]Mode[-]    %s\n[white]Session[-] %s\n[white]Chat ID[-] %s\n\n[lightskyblue]Last login  %s[-]",
-		tview.Escape(user.UserID),
-		tview.Escape(fallback(user.UserName, "—")),
-		tview.Escape(fallback(user.Email, "—")),
-		tview.Escape(fallback(user.Broker, "—")),
-		mode,
-		session,
-		tview.Escape(fallback(user.TelegramChatID, "—")),
-		tview.Escape(lastLogin))
-	if ui.sudo {
-		detail += fmt.Sprintf("\n\n[red::b]SENSITIVE DATA · SUDO ENABLED[-]\n[white]Password[-]       %s\n[white]TOTP secret[-]    %s\n[white]API key[-]        %s\n[white]API secret[-]     %s\n\n[white]Enc token[-]      %s\n[white]Request token[-]  %s\n[white]Access token[-]   %s\n[white]KF session[-]     %s\n[white]Public token[-]   %s",
-			sensitiveValue(user.Password),
-			sensitiveValue(user.TOTPSecret),
-			sensitiveValue(user.APIKey),
-			sensitiveValue(user.APISecret),
-			sensitiveValue(user.EncToken),
-			sensitiveValue(user.RequestToken),
-			sensitiveValue(user.AccessToken),
-			sensitiveValue(user.KFSessionToken),
-			sensitiveValue(user.PublicToken))
-	} else {
-		detail += "\n\n[gray]Sensitive credentials hidden · toggle Sudo [S] to reveal.[-]"
+	line := func(label, value string) string {
+		return styleMuted.Render(padRight(label, 9)) + value
 	}
-	ui.detail.SetText(detail)
+	lines := []string{
+		styleCyan.Bold(true).Render(user.UserID),
+		"",
+		line("Name", styleText.Render(fallback(user.UserName, "—"))),
+		line("Email", styleText.Render(fallback(user.Email, "—"))),
+		line("Broker", styleBlue.Render(fallback(user.Broker, "—"))),
+		"",
+		line("Mode", styleText.Render(mode)),
+		line("Session", session),
+		line("Chat ID", styleYellow.Render(fallback(user.TelegramChatID, "—"))),
+		"",
+		line("Last in", styleBlue.Render(lastLogin)),
+		"",
+	}
+	if !s.sudo {
+		lines = append(lines, styleFaint.Render("Sensitive credentials hidden · toggle Sudo [S] to reveal."))
+		return strings.Join(lines, "\n")
+	}
+	secret := func(label, value string) string {
+		return styleMuted.Render(padRight(label, 15)) + styleRed.Render(fallback(value, "—"))
+	}
+	lines = append(lines,
+		styleRed.Bold(true).Render("SENSITIVE DATA · SUDO ENABLED"),
+		secret("Password", user.Password),
+		secret("TOTP secret", user.TOTPSecret),
+		secret("API key", user.APIKey),
+		secret("API secret", user.APISecret),
+		"",
+		secret("Enc token", user.EncToken),
+		secret("Request token", user.RequestToken),
+		secret("Access token", user.AccessToken),
+		secret("KF session", user.KFSessionToken),
+		secret("Public token", user.PublicToken),
+	)
+	return strings.Join(lines, "\n")
 }
 
-func (ui *userApp) toggleSudo() {
-	ui.sudo = !ui.sudo
-	if ui.sudo {
-		ui.sudoButton.SetLabel(tview.Escape("⚠ Sudo ON [S]")).SetLabelColor(tcell.ColorRed)
-		ui.setStatus("  [red::b]SUDO ENABLED[-] · raw credentials are visible in the selected-user panel")
-	} else {
-		ui.sudoButton.SetLabel(tview.Escape("⚠ Sudo OFF [S]")).SetLabelColor(tcell.ColorLightYellow)
-		ui.setStatus("  Sudo disabled · sensitive credentials are hidden")
+const usersAbout = "Enter opens the highlighted account's portfolio, E edits it and I opens the instruments. Click a row to select it; click it again to open it.\n\nREADY means a usable session token is stored. LOGIN NEEDED means the session should be refreshed with F."
+
+func (a *app) usersView(w, h int) string {
+	s := a.users
+	widths := splitWidth(w, 2, 1)
+	if widths[1] < 40 {
+		widths = []int{w - min(40, w/2), min(40, w/2)}
 	}
-	if user, ok := ui.selectedUser(); ok {
-		ui.updateDetail(user)
+	tableW, sideW := widths[0], widths[1]
+	s.grid.x, s.grid.y = 1, 3
+	info := styleMuted.Render(fmt.Sprintf("%d %s", len(s.users), pluralize("user", len(s.users))))
+	table := panel("Users", info, s.grid.view(tableW-2, h-2, true), tableW, h, true)
+	detailH := h * 2 / 3
+	title := "Selected user"
+	if s.sudo {
+		title = "Selected user · SUDO"
 	}
+	side := textPanel(title, "", s.detail(), sideW, detailH, false) + "\n" +
+		textPanel("About", "", styleMuted.Render(usersAbout), sideW, h-detailH, false)
+	return joinColumns(table, side)
 }
 
-func sensitiveValue(value string) string {
-	return tview.Escape(fallback(value, "—"))
+// joinColumns sets blocks side by side.
+func joinColumns(blocks ...string) string {
+	split := make([][]string, len(blocks))
+	height := 0
+	for index, block := range blocks {
+		split[index] = strings.Split(block, "\n")
+		height = max(height, len(split[index]))
+	}
+	lines := make([]string, height)
+	for index, block := range split {
+		width := 0
+		for _, line := range block {
+			width = max(width, ansi.StringWidth(line))
+		}
+		for line := range height {
+			text := ""
+			if line < len(block) {
+				text = block[line]
+			}
+			if index < len(split)-1 {
+				text = padRight(text, width)
+			}
+			lines[line] += text
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
-// openPortfolio shows the highlighted user's positions, holdings and funds.
-func (ui *userApp) openPortfolio() {
-	user, ok := ui.selectedUser()
+func (a *app) usersKey(msg tea.KeyPressMsg) tea.Cmd {
+	s := a.users
+	key := msg.String()
+	if s.grid.update(key) {
+		return nil
+	}
+	switch strings.ToLower(key) {
+	case "enter":
+		return a.openSelectedPortfolio()
+	case "a", "n":
+		a.openUserForm(credentials.Credentials{}, false)
+	case "e":
+		if user, ok := s.selected(); ok {
+			a.openUserForm(user, true)
+		} else {
+			a.showError(errNoUser)
+		}
+	case "d":
+		a.confirmDeleteUser()
+	case "f":
+		return a.refreshSession()
+	case "r":
+		return a.loadUsers("", "")
+	case "s":
+		s.sudo = !s.sudo
+		if s.sudo {
+			s.status = statusErr("SUDO ENABLED", "· raw credentials are visible in the selected-user panel")
+		} else {
+			s.status = statusInfo("Sudo disabled · sensitive credentials are hidden")
+		}
+	case "q", "esc":
+		if a.portfolio.user.UserID != "" {
+			a.show(screenPortfolio)
+		}
+	}
+	return nil
+}
+
+func (a *app) openSelectedPortfolio() tea.Cmd {
+	user, ok := a.users.selected()
 	if !ok {
-		ui.showError(errors.New("select a user first"))
-		return
+		a.showError(errNoUser)
+		return nil
 	}
-	if ui.open != nil {
-		ui.open(user)
-	}
+	return a.openPortfolio(user)
 }
 
-func (ui *userApp) openCreate() {
-	ui.openForm(credentials.Credentials{}, false)
+type usersLoadedMsg struct {
+	users    []credentials.Credentials
+	err      error
+	selectID string
+	// success is the finished operation's message.
+	success string
 }
 
-func (ui *userApp) openEdit() {
-	user, ok := ui.selectedUser()
-	if !ok {
-		ui.showError(errors.New("select a user first"))
-		return
-	}
-	ui.openForm(user, true)
+// userOpDoneMsg reports a create, update, delete or session refresh.
+type userOpDoneMsg struct {
+	err      error
+	success  string
+	selectID string
 }
 
-func (ui *userApp) selectedUser() (credentials.Credentials, bool) {
-	row, _ := ui.table.GetSelection()
-	if row <= 0 || row-1 >= len(ui.users) {
-		return credentials.Credentials{}, false
-	}
-	return ui.users[row-1], true
-}
-
-func (ui *userApp) openForm(user credentials.Credentials, editing bool) {
-	form := tview.NewForm().SetItemPadding(1).SetButtonsAlign(tview.AlignCenter)
-	form.SetBorder(true).SetBorderColor(tcell.ColorLightCyan)
-	if editing {
-		form.SetTitle(" Edit user ").SetTitleColor(tcell.ColorLightPink)
-		form.AddInputField(fieldUserID, user.UserID, 32, nil, nil)
-		form.GetFormItemByLabel(fieldUserID).(*tview.InputField).SetDisabled(true)
-		form.AddTextView("Profile", fmt.Sprintf("Name: %s\nEmail: %s\nBroker: %s", fallback(user.UserName, "Name pending profile"), fallback(user.Email, "Email pending profile"), fallback(user.Broker, "ZERODHA")), 32, 3, false, false)
-		form.AddInputField(fieldChatID, user.TelegramChatID, 32, nil, nil)
-		form.AddPasswordField(fieldPassword, "", 32, '*', nil)
-		form.AddPasswordField(fieldTOTP, "", 32, '*', nil)
-	} else {
-		form.SetTitle(" Add user ").SetTitleColor(tcell.ColorLightPink)
-		form.AddInputField(fieldUserID, "", 32, nil, nil)
-		form.AddTextView("Profile", "Name, email, and broker (ZERODHA) are populated from the Kite profile after login.", 32, 2, false, false)
-		form.AddInputField(fieldChatID, "", 32, nil, nil)
-		form.AddPasswordField(fieldPassword, "", 32, '*', nil)
-		form.AddPasswordField(fieldTOTP, "", 32, '*', nil)
-	}
-	modeIndex := 0
-	if user.IsAPIUser {
-		modeIndex = 1
-	}
-	form.AddDropDown(fieldAuthentication, []string{"Web session", "API session"}, modeIndex, func(option string, _ int) {
-		syncAPICredentialFields(form, option == "API session")
+// loadUsers reads the stored users, then selects selectID and reports
+// success.
+func (a *app) loadUsers(selectID, success string) tea.Cmd {
+	return a.task(func(ctx context.Context) tea.Msg {
+		users, err := a.deps.manager.ListUsers(ctx)
+		return usersLoadedMsg{users: users, err: err, selectID: selectID, success: success}
 	})
-	if user.IsAPIUser {
-		syncAPICredentialFields(form, true)
-	}
-	form.AddCheckbox(fieldSubscription, user.DataSubscription, nil)
-	form.AddButton("Save", func() { ui.submitForm(form, user, editing) })
-	form.AddButton("Cancel", ui.closeOverlay)
-	form.SetCancelFunc(ui.closeOverlay)
-
-	ui.overlay = userFormPage
-	ui.pages.AddAndSwitchToPage(userFormPage, form, true)
-	ui.application.SetFocus(form)
-	if editing {
-		ui.setStatus("  Blank password/API fields keep the existing secret. Escape cancels.")
-	} else {
-		ui.setStatus("  Enter credentials, then Save to authenticate and persist the account.")
-	}
 }
 
-func syncAPICredentialFields(form *tview.Form, isAPIUser bool) {
-	apiKeyIndex := form.GetFormItemIndex(fieldAPIKey)
-	apiSecretIndex := form.GetFormItemIndex(fieldAPISecret)
-	if isAPIUser {
-		if apiKeyIndex < 0 {
-			form.AddPasswordField(fieldAPIKey, "", 32, '*', nil)
+func (a *app) handleUsers(msg tea.Msg) (tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case usersLoadedMsg:
+		s := a.users
+		if msg.err != nil {
+			s.status = statusErr("Reload failed:", msg.err.Error())
+			if a.isBusy() {
+				a.closeOverlay()
+			}
+			a.showError(msg.err)
+			return nil, true
 		}
-		if apiSecretIndex < 0 {
-			form.AddPasswordField(fieldAPISecret, "", 32, '*', nil)
+		s.setUsers(msg.users, msg.selectID)
+		s.status = statusInfo(fmt.Sprintf("%d %s stored", len(msg.users), pluralize("user", len(msg.users))))
+		if msg.success != "" {
+			s.status = statusOK(msg.success)
+			if a.isBusy() {
+				a.closeOverlay()
+			}
 		}
+		if !a.openedDefault {
+			a.openedDefault = true
+			return a.openDefaultUser(), true
+		}
+		return nil, true
+	case userOpDoneMsg:
+		if msg.err != nil {
+			a.closeOverlay()
+			a.showError(msg.err)
+			return nil, true
+		}
+		return a.loadUsers(msg.selectID, msg.success), true
+	}
+	return nil, false
+}
+
+// openDefaultUser opens the default user's portfolio at start. Without one
+// stored, the app stays on the users screen.
+func (a *app) openDefaultUser() tea.Cmd {
+	wanted := a.deps.defaultUser
+	if wanted == "" {
+		return nil
+	}
+	for _, user := range a.users.users {
+		if strings.EqualFold(user.UserID, wanted) {
+			a.users.setUsers(a.users.users, user.UserID)
+			return a.openPortfolio(user)
+		}
+	}
+	a.users.status = statusWarn(fmt.Sprintf("Default user %s is not stored", wanted)) + statusInfo(" · pick a user")
+	return nil
+}
+
+// userOperation runs op behind the busy dialog.
+func (a *app) userOperation(message, success, selectID string, op func(context.Context) error) tea.Cmd {
+	return tea.Batch(a.busy(message), a.task(func(ctx context.Context) tea.Msg {
+		return userOpDoneMsg{err: op(ctx), success: success, selectID: selectID}
+	}))
+}
+
+func (a *app) confirmDeleteUser() {
+	user, ok := a.users.selected()
+	if !ok {
+		a.showError(errNoUser)
 		return
 	}
-	// Remove in reverse order so the second removal does not invalidate the
-	// index of the first field.
-	if apiSecretIndex >= 0 {
-		form.RemoveFormItem(apiSecretIndex)
-	}
-	if apiKeyIndex >= 0 {
-		form.RemoveFormItem(form.GetFormItemIndex(fieldAPIKey))
-	}
-}
-
-func (ui *userApp) submitForm(form *tview.Form, original credentials.Credentials, editing bool) {
-	if editing {
-		update, err := formUpdate(form, original)
-		if err != nil {
-			ui.showError(err)
-			return
-		}
-		ui.showBusy("Saving user and refreshing authentication…")
-		go func() {
-			err := ui.manager.UpdateUser(ui.ctx, update)
-			ui.application.QueueUpdateDraw(func() {
-				ui.finishOperation(err, "User updated.")
+	a.confirm("Delete user",
+		fmt.Sprintf("Delete %s?\nThis removes the stored credentials and session tokens.", styleCyan.Render(user.UserID)),
+		"Delete",
+		func(a *app) tea.Cmd {
+			return a.userOperation("Deleting user…", "User deleted.", "", func(ctx context.Context) error {
+				return a.deps.manager.DeleteUser(ctx, user.UserID)
 			})
-		}()
-		return
-	}
-	newUser, err := formCredentials(form)
-	if err != nil {
-		ui.showError(err)
-		return
-	}
-	ui.showBusy("Authenticating with Kite and saving user…")
-	go func() {
-		err := ui.manager.CreateUser(ui.ctx, newUser)
-		ui.application.QueueUpdateDraw(func() {
-			ui.finishOperation(err, "User created and authenticated.")
 		})
-	}()
 }
 
-func formCredentials(form *tview.Form) (credentials.Credentials, error) {
-	userID := formText(form, fieldUserID)
-	password := formText(form, fieldPassword)
-	totp := formText(form, fieldTOTP)
+func (a *app) refreshSession() tea.Cmd {
+	user, ok := a.users.selected()
+	if !ok {
+		a.showError(errNoUser)
+		return nil
+	}
+	return a.userOperation("Refreshing Kite session…", "Session refreshed and persisted.", user.UserID, func(ctx context.Context) error {
+		_, err := a.deps.manager.RefreshUserSession(ctx, user.UserID)
+		return err
+	})
+}
+
+// userForm adds or edits a user.
+type userForm struct {
+	form     *form
+	original credentials.Credentials
+	editing  bool
+}
+
+func (a *app) openUserForm(user credentials.Credentials, editing bool) {
+	f := newForm(18, 34, "Save", "Cancel")
+	if editing {
+		f.addInput(fieldUserID, user.UserID, anyText, false).disabled = true
+		f.addNote(fieldProfile, fmt.Sprintf("Name: %s\nEmail: %s\nBroker: %s",
+			fallback(user.UserName, "Name pending profile"), fallback(user.Email, "Email pending profile"), fallback(user.Broker, "ZERODHA")))
+		a.users.status = statusInfo("Blank password/API fields keep the existing secret. Escape cancels.")
+	} else {
+		f.addInput(fieldUserID, "", anyText, false)
+		f.addNote(fieldProfile, "Name, email, and broker (ZERODHA) are populated from the Kite profile after login.")
+		a.users.status = statusInfo("Enter credentials, then Save to authenticate and persist the account.")
+	}
+	f.addInput(fieldChatID, user.TelegramChatID, anyText, false)
+	f.addInput(fieldPassword, "", anyText, true)
+	f.addInput(fieldTOTP, "", anyText, true)
+	mode := 0
+	if user.IsAPIUser {
+		mode = 1
+	}
+	f.addSelect(fieldAuthentication, authenticationModes, mode)
+	f.addInput(fieldAPIKey, "", anyText, true)
+	f.addInput(fieldAPISecret, "", anyText, true)
+	f.addToggle(fieldSubscription, user.DataSubscription)
+	overlay := &userForm{form: f, original: user, editing: editing}
+	overlay.syncAPI()
+	f.focusFirst()
+	a.overlay = overlay
+}
+
+func (u *userForm) isAPI() bool {
+	return u.form.field(fieldAuthentication).value() == authenticationModes[1]
+}
+
+// syncAPI shows the API key and secret only for API sessions.
+func (u *userForm) syncAPI() {
+	hidden := !u.isAPI()
+	u.form.field(fieldAPIKey).hidden = hidden
+	u.form.field(fieldAPISecret).hidden = hidden
+}
+
+func (u *userForm) typing() bool {
+	current := u.form.current()
+	return current != nil && current.kind == fieldInput
+}
+
+func (u *userForm) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
+	switch key := msg.String(); {
+	case key == "esc", (key == "q" || key == "Q") && !u.typing():
+		a.closeOverlay()
+		return nil
+	}
+	pressed, _ := u.form.update(msg)
+	u.syncAPI()
+	switch pressed {
+	case 0:
+		return u.submit(a)
+	case 1:
+		a.closeOverlay()
+	}
+	return nil
+}
+
+func (u *userForm) submit(a *app) tea.Cmd {
+	if u.editing {
+		update, err := u.updateRequest()
+		if err != nil {
+			u.form.message = styleRed.Render(err.Error())
+			return nil
+		}
+		return a.userOperation("Saving user and refreshing authentication…", "User updated.", update.UserID, func(ctx context.Context) error {
+			return a.deps.manager.UpdateUser(ctx, update)
+		})
+	}
+	user, err := u.credentials()
+	if err != nil {
+		u.form.message = styleRed.Render(err.Error())
+		return nil
+	}
+	return a.userOperation("Authenticating with Kite and saving user…", "User created and authenticated.", user.UserID, func(ctx context.Context) error {
+		return a.deps.manager.CreateUser(ctx, user)
+	})
+}
+
+func (u *userForm) text(label string) string {
+	if field := u.form.field(label); !field.hidden {
+		return field.value()
+	}
+	return ""
+}
+
+func (u *userForm) credentials() (credentials.Credentials, error) {
+	userID, password, totp := u.text(fieldUserID), u.text(fieldPassword), u.text(fieldTOTP)
 	if userID == "" || password == "" || totp == "" {
 		return credentials.Credentials{}, errors.New("user ID, password, and TOTP secret are required")
 	}
-	_, mode := form.GetFormItemByLabel(fieldAuthentication).(*tview.DropDown).GetCurrentOption()
-	isAPI := mode == "API session"
-	apiKey := formText(form, fieldAPIKey)
-	apiSecret := formText(form, fieldAPISecret)
+	isAPI := u.isAPI()
+	apiKey, apiSecret := u.text(fieldAPIKey), u.text(fieldAPISecret)
 	if isAPI && (apiKey == "" || apiSecret == "") {
 		return credentials.Credentials{}, errors.New("API key and API secret are required for API authentication")
 	}
 	return credentials.Credentials{
 		UserID:           userID,
-		TelegramChatID:   formText(form, fieldChatID),
+		TelegramChatID:   u.text(fieldChatID),
 		Password:         password,
 		TOTPSecret:       totp,
 		APIKey:           apiKey,
 		APISecret:        apiSecret,
 		IsAPIUser:        isAPI,
-		DataSubscription: form.GetFormItemByLabel(fieldSubscription).(*tview.Checkbox).IsChecked(),
+		DataSubscription: u.form.field(fieldSubscription).on,
 	}, nil
 }
 
-func formUpdate(form *tview.Form, original credentials.Credentials) (credentials.CredentialsUpdate, error) {
+// updateRequest changes only what the form changed; blank secrets keep the
+// stored ones.
+func (u *userForm) updateRequest() (credentials.CredentialsUpdate, error) {
+	original := u.original
 	update := credentials.CredentialsUpdate{UserID: original.UserID}
-	chatID := formText(form, fieldChatID)
+	chatID := u.text(fieldChatID)
 	update.TelegramChatID = &chatID
-	if password := formText(form, fieldPassword); password != "" {
+	if password := u.text(fieldPassword); password != "" {
 		update.Password = &password
 	}
-	if totp := formText(form, fieldTOTP); totp != "" {
+	if totp := u.text(fieldTOTP); totp != "" {
 		update.TOTPSecret = &totp
 	}
-	if apiKey := formText(form, fieldAPIKey); apiKey != "" {
+	if apiKey := u.text(fieldAPIKey); apiKey != "" {
 		update.APIKey = &apiKey
 	}
-	if apiSecret := formText(form, fieldAPISecret); apiSecret != "" {
+	if apiSecret := u.text(fieldAPISecret); apiSecret != "" {
 		update.APISecret = &apiSecret
 	}
-	_, mode := form.GetFormItemByLabel(fieldAuthentication).(*tview.DropDown).GetCurrentOption()
-	isAPI := mode == "API session"
+	isAPI := u.isAPI()
 	if isAPI != original.IsAPIUser {
 		update.IsAPIUser = &isAPI
 	}
-	subscription := form.GetFormItemByLabel(fieldSubscription).(*tview.Checkbox).IsChecked()
-	if subscription != original.DataSubscription {
+	if subscription := u.form.field(fieldSubscription).on; subscription != original.DataSubscription {
 		update.DataSubscription = &subscription
 	}
 	if isAPI {
-		apiKeyValue := original.APIKey
+		apiKey, apiSecret := original.APIKey, original.APISecret
 		if update.APIKey != nil {
-			apiKeyValue = *update.APIKey
+			apiKey = *update.APIKey
 		}
-		apiSecretValue := original.APISecret
 		if update.APISecret != nil {
-			apiSecretValue = *update.APISecret
+			apiSecret = *update.APISecret
 		}
-		if apiKeyValue == "" || apiSecretValue == "" {
+		if apiKey == "" || apiSecret == "" {
 			return credentials.CredentialsUpdate{}, errors.New("API key and API secret are required for API authentication")
 		}
 	}
 	return update, nil
 }
 
-func formText(form *tview.Form, label string) string {
-	field, ok := form.GetFormItemByLabel(label).(*tview.InputField)
-	if !ok {
-		return ""
+func (u *userForm) view(_ *app, w, _ int) string {
+	title := "Add user"
+	if u.editing {
+		title = "Edit user"
 	}
-	return strings.TrimSpace(field.GetText())
+	width := min(64, w-2)
+	return modal(title, styleFaint.Render("Esc cancels"), u.form.view(width-4), width)
 }
 
-func (ui *userApp) confirmDelete() {
-	user, ok := ui.selectedUser()
-	if !ok {
-		ui.showError(errors.New("select a user first"))
+// openUserPicker lists the stored users to switch to; Enter opens the
+// chosen user's portfolio.
+func (a *app) openUserPicker() {
+	users := a.users.users
+	if len(users) == 0 {
+		a.notify(statusWarn("No users stored") + statusInfo(" · press Q to add one"))
 		return
 	}
-	modal := tview.NewModal().
-		SetText(fmt.Sprintf("Delete [aqua]%s[-]?\nThis removes the stored credentials and session tokens.", user.UserID)).
-		SetTextColor(tcell.ColorWhite).
-		AddButtons([]string{"Delete", "Cancel"}).
-		SetDoneFunc(func(index int, _ string) {
-			ui.closeOverlay()
-			if index == 0 {
-				ui.deleteUser(user.UserID)
-			}
-		})
-	ui.overlay = userModalPage
-	ui.pages.AddAndSwitchToPage(userModalPage, modal, true)
-	ui.application.SetFocus(modal)
-}
-
-func (ui *userApp) deleteUser(userID string) {
-	ui.showBusy("Deleting user…")
-	go func() {
-		err := ui.manager.DeleteUser(ui.ctx, userID)
-		ui.application.QueueUpdateDraw(func() {
-			ui.finishOperation(err, "User deleted.")
-		})
-	}()
-}
-
-func (ui *userApp) refreshSession() {
-	user, ok := ui.selectedUser()
-	if !ok {
-		ui.showError(errors.New("select a user first"))
-		return
+	picker := &menu{title: "Switch user", info: styleFaint.Render("Enter opens · Esc cancels"), width: 56}
+	for index, user := range users {
+		mode := "WEB"
+		if user.IsAPIUser {
+			mode = "API"
+		}
+		chosen := user
+		label := styleCyan.Render(fmt.Sprintf("%-10s", user.UserID)) + " " +
+			styleText.Render(fmt.Sprintf("%-20s", truncate(fallback(user.UserName, "—"), 20))) + " " + styleFaint.Render(mode)
+		picker.items = append(picker.items, menuItem{label: label, run: func(a *app) tea.Cmd {
+			a.users.setUsers(a.users.users, chosen.UserID)
+			return a.openPortfolio(chosen)
+		}})
+		if user.UserID == a.activeUser() {
+			picker.cursor = index
+		}
 	}
-	ui.showBusy("Refreshing Kite session…")
-	go func() {
-		_, err := ui.manager.RefreshUserSession(ui.ctx, user.UserID)
-		ui.application.QueueUpdateDraw(func() {
-			ui.finishOperation(err, "Session refreshed and persisted.")
-		})
-	}()
-}
-
-func (ui *userApp) finishOperation(err error, success string) {
-	ui.closeOverlay()
-	ui.busy = false
-	if err != nil {
-		ui.showError(err)
-		return
-	}
-	if reloadErr := ui.reload(); reloadErr != nil {
-		ui.showError(reloadErr)
-		return
-	}
-	ui.setStatus("  [green::b]✔[-] " + success)
-}
-
-func (ui *userApp) showBusy(message string) {
-	ui.busy = true
-	view := tview.NewTextView().SetDynamicColors(true).SetTextAlign(tview.AlignCenter)
-	view.SetText("\n\n[aqua::b]◆[-]\n\n" + message + "\n\n[lightcyan]Please wait…[-]")
-	view.SetBorder(true).SetTitle(" Working ").SetTitleColor(tcell.ColorLightCyan)
-	ui.overlay = userBusyPage
-	ui.pages.AddAndSwitchToPage(userBusyPage, view, true)
-	ui.application.SetFocus(view)
-}
-
-func (ui *userApp) showError(err error) {
-	if ui.busy {
-		ui.busy = false
-		ui.closeOverlay()
-	} else if ui.overlay != "" {
-		ui.closeOverlay()
-	}
-	modal := tview.NewModal().
-		SetText("[red::b]Operation failed[-]\n\n" + err.Error()).
-		AddButtons([]string{"OK"}).
-		SetDoneFunc(func(int, string) { ui.closeOverlay() })
-	ui.overlay = userModalPage
-	ui.pages.AddAndSwitchToPage(userModalPage, modal, true)
-	ui.application.SetFocus(modal)
-}
-
-func (ui *userApp) closeOverlay() {
-	if ui.overlay != "" {
-		ui.pages.RemovePage(ui.overlay)
-	}
-	ui.overlay = ""
-	ui.application.SetFocus(ui.table)
-}
-
-func (ui *userApp) setStatus(message string) {
-	ui.status.SetText(message)
-}
-
-func fallback(value, replacement string) string {
-	if value == "" {
-		return replacement
-	}
-	return value
-}
-
-func truncate(value string, width int) string {
-	runes := []rune(value)
-	if len(runes) <= width {
-		return value
-	}
-	if width < 2 {
-		return string(runes[:width])
-	}
-	return string(runes[:width-1]) + "…"
-}
-
-func pluralize(noun string, count int) string {
-	if count == 1 {
-		return noun
-	}
-	return noun + "s"
+	a.overlay = picker
 }
