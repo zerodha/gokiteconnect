@@ -18,6 +18,10 @@ const (
 	// GTTTypeOCO is used to monitor two trigger values
 	// where executing one cancels the other.
 	GTTTypeOCO GTTType = "two-leg"
+	// GTTTypeTrailingSingle is used for a single trailing stoploss.
+	GTTTypeTrailingSingle GTTType = "trailing-single"
+	// GTTTypeTrailingOCO is used for a trailing stoploss and a fixed target.
+	GTTTypeTrailingOCO GTTType = "trailing-two-leg"
 )
 
 // GTTs represents a list of GTT orders.
@@ -31,10 +35,13 @@ type GTTMeta struct {
 
 // GTTCondition represents the condition inside a GTT order.
 type GTTCondition struct {
-	Exchange      string    `json:"exchange"`
-	Tradingsymbol string    `json:"tradingsymbol"`
-	LastPrice     float64   `json:"last_price"`
-	TriggerValues []float64 `json:"trigger_values"`
+	Exchange       string    `json:"exchange"`
+	Tradingsymbol  string    `json:"tradingsymbol"`
+	LastPrice      float64   `json:"last_price"`
+	TriggerValues  []float64 `json:"trigger_values"`
+	TrailingPoints []float64 `json:"trailing_points,omitempty"`
+	// InitialTriggerPrice is the service-recorded initial stoploss price.
+	InitialTriggerPrice float64 `json:"initial_trigger_price,omitempty"`
 }
 
 // GTT represents a single GTT order.
@@ -57,6 +64,13 @@ type Trigger interface {
 	LimitPrices() []float64
 	Quantities() []float64
 	Type() GTTType
+}
+
+// TrailingTrigger extends Trigger with trailing increments in absolute price points.
+// Both single and OCO trailing triggers return one increment for the stoploss leg.
+type TrailingTrigger interface {
+	Trigger
+	TrailingPoints() []float64
 }
 
 type TriggerParams struct {
@@ -102,6 +116,35 @@ func (t *GTTOneCancelsOtherTrigger) Type() GTTType {
 	return GTTTypeOCO
 }
 
+// GTTTrailingSingleLegTrigger is a single trailing stoploss trigger.
+// TrailingPoint is a positive increment in absolute price points, not a percentage.
+type GTTTrailingSingleLegTrigger struct {
+	GTTSingleLegTrigger
+	TrailingPoint float64
+}
+
+func (t *GTTTrailingSingleLegTrigger) Type() GTTType {
+	return GTTTypeTrailingSingle
+}
+func (t *GTTTrailingSingleLegTrigger) TrailingPoints() []float64 {
+	return []float64{t.TrailingPoint}
+}
+
+// GTTTrailingOneCancelsOtherTrigger is an OCO trigger with a trailing stoploss
+// and a fixed target. Lower is the SELL stoploss; Upper is the BUY stoploss.
+// TrailingPoint is the stoploss increment in absolute price points.
+type GTTTrailingOneCancelsOtherTrigger struct {
+	GTTOneCancelsOtherTrigger
+	TrailingPoint float64
+}
+
+func (t *GTTTrailingOneCancelsOtherTrigger) Type() GTTType {
+	return GTTTypeTrailingOCO
+}
+func (t *GTTTrailingOneCancelsOtherTrigger) TrailingPoints() []float64 {
+	return []float64{t.TrailingPoint}
+}
+
 // GTTParams is a helper struct used to populate an
 // actual GTT before sending it to the API.
 type GTTParams struct {
@@ -131,7 +174,7 @@ func newGTT(o GTTParams) GTT {
 			Product:         o.Product,
 		})
 	}
-	return GTT{
+	gtt := GTT{
 		Type: o.Trigger.Type(),
 		Condition: GTTCondition{
 			Exchange:      o.Exchange,
@@ -141,6 +184,10 @@ func newGTT(o GTTParams) GTT {
 		},
 		Orders: orders,
 	}
+	if trigger, ok := o.Trigger.(TrailingTrigger); ok {
+		gtt.Condition.TrailingPoints = trigger.TrailingPoints()
+	}
+	return gtt
 }
 
 // GTTResponse is returned by the API calls to GTT API.
