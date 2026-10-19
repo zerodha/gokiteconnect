@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/devshoe/gokiteconnect/cmd/ticker-server/consumer"
 	"github.com/devshoe/gokiteconnect/cmd/ticker-server/producer"
+	baseconfig "github.com/devshoe/gokiteconnect/config"
 )
 
 type fakeProducerStatus struct{ status producer.Status }
@@ -95,16 +97,11 @@ func TestHealthReportsUnavailableAndRejectsInvalidQuery(t *testing.T) {
 func TestLoadTickerConfigDefaultsAndStorageRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TRADEBOT_LOCAL_STORAGE_ROOT", filepath.Join(home, "tradebot-test"))
-	t.Setenv("TRADEBOT_CREDENTIALS_SQLITE_PATH", "")
-	t.Setenv("TRADEBOT_INSTRUMENTS_DUCKDB_PATH", "")
-	t.Setenv("TRADEBOT_TICKER_USER_ID", "U1")
-	t.Setenv("TRADEBOT_NATS_URL", "nats://127.0.0.1:4222")
-	t.Setenv("TRADEBOT_HEARTBEAT_TOPIC", "")
-	t.Setenv("TRADEBOT_SUBSCRIPTION_TTL_SECONDS", "")
-	t.Setenv("TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS", "")
-	t.Setenv("TRADEBOT_TICKER_MAPPING_REFRESH_INTERVAL_SECONDS", "")
-	t.Setenv("TRADEBOT_TICKER_SERVICE_PORT", "")
+	writeTickerSettings(t, home, map[string]string{
+		"TRADEBOT_LOCAL_STORAGE_ROOT": filepath.Join(home, "tradebot-test"),
+		"TRADEBOT_TICKER_USER_ID":     "U1",
+		"TRADEBOT_NATS_URL":           "nats://127.0.0.1:4222",
+	})
 
 	got, err := loadTickerConfig()
 	if err != nil {
@@ -120,34 +117,31 @@ func TestLoadTickerConfigDefaultsAndStorageRoot(t *testing.T) {
 }
 
 func TestLoadTickerConfigValidation(t *testing.T) {
-	setValidTickerEnvironment(t)
-	t.Setenv("TRADEBOT_TICKER_USER_ID", "")
-	if _, err := loadTickerConfig(); err == nil {
-		t.Fatal("missing user ID was accepted")
-	}
-	setValidTickerEnvironment(t)
-	t.Setenv("TRADEBOT_NATS_URL", "http://127.0.0.1:4222")
-	if _, err := loadTickerConfig(); err == nil {
-		t.Fatal("unsupported NATS URL was accepted")
-	}
-	setValidTickerEnvironment(t)
-	t.Setenv("TRADEBOT_SUBSCRIPTION_TTL_SECONDS", "0")
-	if _, err := loadTickerConfig(); err == nil {
-		t.Fatal("invalid TTL was accepted")
+	for name, change := range map[string]map[string]string{
+		"missing user ID":          {"TRADEBOT_TICKER_USER_ID": ""},
+		"unsupported NATS URL":     {"TRADEBOT_NATS_URL": "http://127.0.0.1:4222"},
+		"invalid TTL":              {"TRADEBOT_SUBSCRIPTION_TTL_SECONDS": "0"},
+		"invalid port":             {"TRADEBOT_TICKER_SERVICE_PORT": "70000"},
+		"credentials off the root": {"TRADEBOT_CREDENTIALS_SQLITE_PATH": "../credentials.sqlite3"},
+	} {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		values := map[string]string{"TRADEBOT_TICKER_USER_ID": "U1", "TRADEBOT_NATS_URL": "nats://127.0.0.1:4222"}
+		maps.Copy(values, change)
+		writeTickerSettings(t, home, values)
+		if _, err := loadTickerConfig(); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
 	}
 }
 
-func setValidTickerEnvironment(t *testing.T) {
+func writeTickerSettings(t *testing.T, home string, values map[string]string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("TRADEBOT_LOCAL_STORAGE_ROOT", "")
-	t.Setenv("TRADEBOT_CREDENTIALS_SQLITE_PATH", "")
-	t.Setenv("TRADEBOT_INSTRUMENTS_DUCKDB_PATH", "")
-	t.Setenv("TRADEBOT_TICKER_USER_ID", "U1")
-	t.Setenv("TRADEBOT_NATS_URL", "nats://127.0.0.1:4222")
-	t.Setenv("TRADEBOT_HEARTBEAT_TOPIC", "")
-	t.Setenv("TRADEBOT_SUBSCRIPTION_TTL_SECONDS", "")
-	t.Setenv("TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS", "")
-	t.Setenv("TRADEBOT_TICKER_MAPPING_REFRESH_INTERVAL_SECONDS", "")
-	t.Setenv("TRADEBOT_TICKER_SERVICE_PORT", "")
+	var settings baseconfig.Settings
+	for key, value := range values {
+		settings.Set(key, value)
+	}
+	if err := baseconfig.WriteSettings(filepath.Join(home, "tradebot", "settings.json"), settings); err != nil {
+		t.Fatal(err)
+	}
 }

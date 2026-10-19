@@ -13,21 +13,15 @@
 // compatible accounts.<account>.orders message. Tick and price streams retain
 // the latest message per subject.
 //
-// Required configuration:
+// It reads ~/tradebot/settings.json (see config.SettingSpecs). It needs:
 //
 //	TRADEBOT_TICKER_USER_ID  Zerodha account stored in the credentials database
 //	TRADEBOT_NATS_URL        one or more NATS URLs
 //
-// Optional configuration:
-//
-//	TRADEBOT_LOCAL_STORAGE_ROOT=$HOME/tradebot
-//	TRADEBOT_CREDENTIALS_SQLITE_PATH=<storage root>/credentials.sqlite3
-//	TRADEBOT_INSTRUMENTS_DUCKDB_PATH=<storage root>/instruments.duckdb
-//	TRADEBOT_HEARTBEAT_TOPIC=ticks.subscriptions
-//	TRADEBOT_SUBSCRIPTION_TTL_SECONDS=60
-//	TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS=300
-//	TRADEBOT_TICKER_MAPPING_REFRESH_INTERVAL_SECONDS=900
-//	TRADEBOT_TICKER_SERVICE_PORT=8082
+// and also takes the storage paths, TRADEBOT_HEARTBEAT_TOPIC,
+// TRADEBOT_SUBSCRIPTION_TTL_SECONDS, TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS,
+// TRADEBOT_TICKER_MAPPING_REFRESH_INTERVAL_SECONDS and
+// TRADEBOT_TICKER_SERVICE_PORT, which have defaults.
 //
 // Run it with:
 //
@@ -381,34 +375,34 @@ func loadTickerConfig() (tickerConfig, error) {
 	if strings.ContainsAny(userID, ".*> \t\r\n") {
 		return tickerConfig{}, errors.New("TRADEBOT_TICKER_USER_ID must be a safe NATS subject token")
 	}
-	natsURL := strings.TrimSpace(os.Getenv("TRADEBOT_NATS_URL"))
+	natsURL := base.Settings.Get("TRADEBOT_NATS_URL")
 	if natsURL == "" {
 		return tickerConfig{}, errors.New("TRADEBOT_NATS_URL is required")
 	}
 	if err := validateNATSURLs(natsURL); err != nil {
 		return tickerConfig{}, err
 	}
-	port := envDefault("TRADEBOT_TICKER_SERVICE_PORT", defaultTickerPort)
+	port := settingDefault(base.Settings, "TRADEBOT_TICKER_SERVICE_PORT", defaultTickerPort)
 	portNumber, err := strconv.Atoi(port)
 	if err != nil || portNumber < 1 || portNumber > 65535 {
 		return tickerConfig{}, errors.New("TRADEBOT_TICKER_SERVICE_PORT must be a valid port")
 	}
-	ttl, err := durationFromSeconds("TRADEBOT_SUBSCRIPTION_TTL_SECONDS", defaultSubscriptionTTL)
+	ttl, err := durationFromSeconds(base.Settings, "TRADEBOT_SUBSCRIPTION_TTL_SECONDS", defaultSubscriptionTTL)
 	if err != nil {
 		return tickerConfig{}, err
 	}
-	tokenPoll, err := durationFromSeconds("TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS", defaultTokenPollInterval)
+	tokenPoll, err := durationFromSeconds(base.Settings, "TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS", defaultTokenPollInterval)
 	if err != nil {
 		return tickerConfig{}, err
 	}
-	mappingRefresh, err := durationFromSeconds("TRADEBOT_TICKER_MAPPING_REFRESH_INTERVAL_SECONDS", defaultMappingRefresh)
+	mappingRefresh, err := durationFromSeconds(base.Settings, "TRADEBOT_TICKER_MAPPING_REFRESH_INTERVAL_SECONDS", defaultMappingRefresh)
 	if err != nil {
 		return tickerConfig{}, err
 	}
 	return tickerConfig{
 		UserID:                 userID,
 		NATSURL:                natsURL,
-		HeartbeatTopic:         envDefault("TRADEBOT_HEARTBEAT_TOPIC", defaultHeartbeatTopic),
+		HeartbeatTopic:         settingDefault(base.Settings, "TRADEBOT_HEARTBEAT_TOPIC", defaultHeartbeatTopic),
 		CredentialsPath:        base.CredentialsPath,
 		InstrumentsPath:        base.InstrumentsPath,
 		Port:                   port,
@@ -418,8 +412,8 @@ func loadTickerConfig() (tickerConfig, error) {
 	}, nil
 }
 
-func durationFromSeconds(name string, fallback time.Duration) (time.Duration, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
+func durationFromSeconds(settings baseconfig.Settings, name string, fallback time.Duration) (time.Duration, error) {
+	raw := settings.Get(name)
 	if raw == "" {
 		return fallback, nil
 	}
@@ -430,8 +424,8 @@ func durationFromSeconds(name string, fallback time.Duration) (time.Duration, er
 	return time.Duration(seconds) * time.Second, nil
 }
 
-func envDefault(name, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+func settingDefault(settings baseconfig.Settings, name, fallback string) string {
+	if value := settings.Get(name); value != "" {
 		return value
 	}
 	return fallback

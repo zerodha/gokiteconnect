@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/devshoe/gokiteconnect/config"
 	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
@@ -416,12 +419,13 @@ func niftyMarket() (*fakeCatalog, *fakeQuotes) {
 
 func explorerDeps(t *testing.T, store *fakeCatalog, quotes *fakeQuotes, lists listStore, placer *fakePlacer) appDeps {
 	deps := appDeps{
-		manager:     mustManager(t),
-		openCatalog: func(context.Context) (catalog, listStore, error) { return store, lists, nil },
-		place:       placer.place,
-		modify:      placer.modify,
-		cancel:      placer.cancel,
-		strikeEvery: -1,
+		manager:      mustManager(t),
+		openCatalog:  func(context.Context) (catalog, listStore, error) { return store, lists, nil },
+		place:        placer.place,
+		settingsPath: filepath.Join(t.TempDir(), "settings.json"),
+		modify:       placer.modify,
+		cancel:       placer.cancel,
+		strikeEvery:  -1,
 		loadPortfolio: func(context.Context, credentials.Credentials) portfolio {
 			return portfolio{loadedAt: time.Now(), loggedIn: true}
 		},
@@ -961,5 +965,209 @@ func TestOrderFormSteppers(t *testing.T) {
 		if got := formatShort(value); got != want {
 			t.Errorf("formatShort(%v) = %s, want %s", value, got, want)
 		}
+	}
+}
+
+func TestSettingsDialog(t *testing.T) {
+	store, _ := niftyMarket()
+	deps := explorerDeps(t, store, nil, nil, &fakePlacer{})
+	h := newHarness(t, deps)
+	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
+
+	// s opens settings; S stays sudo on the users screen.
+	h.press("S")
+	if !h.a.users.sudo || h.a.overlay != nil {
+		t.Fatalf("S: sudo %v, overlay %T", h.a.users.sudo, h.a.overlay)
+	}
+	h.press("S", "s")
+	s, ok := h.a.overlay.(*settingsForm)
+	if !ok {
+		t.Fatalf("s opened %T", h.a.overlay)
+	}
+	screen := h.screen()
+	for _, want := range []string{"Settings", "Base Path", "~/tradebot", "Where local files are stored", "Default User", "CC0006", "Price Mode", "quote", "NATS URL"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("settings lack %q:\n%s", want, screen)
+		}
+	}
+	// Only the focused setting's help shows, and hidden settings don't.
+	for _, unwanted := range []string{"The account whose portfolio", "Credentials Database", "Instruments Database", "environment"} {
+		if strings.Contains(screen, unwanted) {
+			t.Errorf("settings show %q:\n%s", unwanted, screen)
+		}
+	}
+
+	// Edit the default user, switch the price mode to ticker, and save.
+	h.press("down")
+	if got := s.form.current().label; got != "Default User" {
+		t.Fatalf("focused %q", got)
+	}
+	h.waitFor("the default user's help", h.shows("The account whose portfolio"))
+	if screen := h.screen(); strings.Contains(screen, "Where local files are stored") {
+		t.Errorf("the base path's help stayed:\n%s", screen)
+	}
+	for range len("CC0006") {
+		h.press("backspace")
+	}
+	h.typeText("ab1234")
+	h.press("down", "right")
+	h.waitFor("the ticker note", h.shows("Needs ticker-server running"))
+	// Enter on a field saves once something changed.
+	h.press("enter")
+	if h.a.overlay != nil {
+		t.Fatalf("Save left %T open: %s", h.a.overlay, ansi.Strip(s.message))
+	}
+	saved, err := config.ReadSettings(deps.settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.Get("TRADEBOT_LOCAL_STORAGE_ROOT") + "|" + saved.Get("TRADEBOT_DEFAULT_USER_ID") + "|" + saved.Get("TRADEBOT_PRICE_MODE"); got != "~/tradebot|AB1234|ticker" {
+		t.Errorf("saved %s", got)
+	}
+	h.waitFor("the saved notice", h.shows("Settings saved"))
+
+	// Enter with nothing changed moves on instead of saving.
+	h.press("s")
+	s = h.a.overlay.(*settingsForm)
+	h.press("enter")
+	if h.a.overlay == nil || s.form.current().label != "Default User" {
+		t.Fatalf("Enter without changes: overlay %T", h.a.overlay)
+	}
+
+	// An emptied field takes its default again.
+	for range len("AB1234") {
+		h.press("backspace")
+	}
+	pressSave(h, s)
+	if h.a.overlay != nil {
+		t.Fatalf("Save left %T open", h.a.overlay)
+	}
+	if saved, err = config.ReadSettings(deps.settingsPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.Get("TRADEBOT_DEFAULT_USER_ID"); got != "CC0006" {
+		t.Errorf("emptied default user reads %q, want the default", got)
+	}
+	if hidden := saved[1]; hidden.Key != "TRADEBOT_CREDENTIALS_SQLITE_PATH" || hidden.Visible || hidden.Value != "" {
+		t.Errorf("a hidden setting changed: %+v", hidden)
+	}
+}
+
+// pressSave moves down to the Save button and presses it.
+func pressSave(h *harness, s *settingsForm) {
+	h.t.Helper()
+	for s.form.button() != 0 {
+		h.press("down")
+	}
+	h.press("enter")
+}
+
+func TestPositionGroupShowsUnderlyingLTP(t *testing.T) {
+	nifty := models.InstrumentID("NSE:NIFTY 50")
+	data := portfolio{
+		positions: []kite.Position{
+			{Tradingsymbol: "NIFTY26OCTFUT", Exchange: "NFO", Quantity: 75},
+			{Tradingsymbol: "NIFTY26OCT25000PE", Exchange: "NFO", Quantity: 75},
+		},
+		instruments: map[models.InstrumentID]models.Instrument{
+			"NFO:NIFTY26OCTFUT":     {ID: "NFO:NIFTY26OCTFUT", UnderlyingID: &nifty},
+			"NFO:NIFTY26OCT25000PE": {ID: "NFO:NIFTY26OCT25000PE", UnderlyingID: &nifty},
+			nifty:                   {ID: nifty, DisplayName: "NIFTY 50"},
+		},
+	}
+	if ids := data.priceIDs(); !slices.Contains(ids, string(nifty)) {
+		t.Fatalf("the underlying is not priced: %v", ids)
+	}
+	data = data.withPrices(kite.QuoteOHLC{string(nifty): {LastPrice: 25100.5, OHLC: models.OHLC{Close: 25000}}}, time.Now())
+
+	p := newPortfolioScreen()
+	p.data = data
+	p.render()
+	group := p.positions.rows[0]
+	if group.ref != nifty || len(group.cells) < 6 || group.cells[5].text != "25,100.50" {
+		t.Fatalf("group row = %+v", group)
+	}
+	if detail := ansi.Strip(p.groupDetail(nifty)); !strings.Contains(detail, "25,100.50") || !strings.Contains(detail, "+100.50") {
+		t.Errorf("group detail lacks the underlying's price:\n%s", detail)
+	}
+}
+
+func TestGroupExitAndCharges(t *testing.T) {
+	nifty := models.InstrumentID("NSE:NIFTY 50")
+	store, _ := niftyMarket()
+	placer := &fakePlacer{}
+	deps := explorerDeps(t, store, nil, nil, placer)
+	orders := kite.Orders{
+		{OrderID: "1001", Status: "COMPLETE", Exchange: "NSE", TradingSymbol: "INFY", TransactionType: "BUY", OrderType: "MARKET", Product: "CNC", Quantity: 10, FilledQuantity: 10, AveragePrice: 1500},
+		{OrderID: "1002", Status: "REJECTED", Exchange: "NFO", TradingSymbol: "NIFTY26OCT25000PE", TransactionType: "SELL", OrderType: "LIMIT", Product: "NRML", Quantity: 75, Price: 120},
+	}
+	deps.loadPortfolio = func(context.Context, credentials.Credentials) portfolio {
+		data := portfolio{
+			positions: []kite.Position{
+				{Tradingsymbol: "NIFTY26OCTFUT", Exchange: "NFO", Product: "NRML", Quantity: 75, LastPrice: 25000},
+				{Tradingsymbol: "NIFTY26OCT25000PE", Exchange: "NFO", Product: "NRML", Quantity: -75, LastPrice: 100},
+			},
+			orders: orders,
+			instruments: map[models.InstrumentID]models.Instrument{
+				"NFO:NIFTY26OCTFUT":     {ID: "NFO:NIFTY26OCTFUT", Exchange: "NFO", TradingSymbol: "NIFTY26OCTFUT", LotSize: 75, UnderlyingID: &nifty},
+				"NFO:NIFTY26OCT25000PE": {ID: "NFO:NIFTY26OCT25000PE", Exchange: "NFO", TradingSymbol: "NIFTY26OCT25000PE", LotSize: 75, UnderlyingID: &nifty},
+				nifty:                   {ID: nifty, DisplayName: "NIFTY 50"},
+			},
+			loadedAt: time.Now(),
+			loggedIn: true,
+		}
+		data.orderCharges, data.chargesErr = readOrderCharges(data.orders)
+		return data
+	}
+	deps.defaultUser = "ab1234"
+	h := newHarness(t, deps)
+	h.waitFor("the portfolio", func() bool { return h.a.screen == screenPortfolio && !h.a.portfolio.loading })
+
+	// The orders table sums the day's executed orders' charges: 10 INFY
+	// bought for delivery at 1,500 cost 17.81.
+	h.waitFor("the day's charges", h.shows("charges ₹17.81"))
+
+	// O on a position's order form estimates its charges.
+	p := h.a.portfolio
+	h.press("down", "o", "b")
+	if _, ok := h.a.overlay.(*orderForm); !ok {
+		t.Fatalf("o b opened %T", h.a.overlay)
+	}
+	h.waitFor("the order's charges", h.shows("Charges ≈ ₹"))
+	h.press("esc")
+
+	// X on the group header exits every leg at market, buying back the
+	// short put before selling the future.
+	h.press("up")
+	if _, ok := p.focused().selectedRef().(models.InstrumentID); !ok {
+		t.Fatalf("selected %T, want the group header", p.focused().selectedRef())
+	}
+	h.press("x")
+	m, ok := h.a.overlay.(*menu)
+	if !ok {
+		t.Fatalf("X opened %T", h.a.overlay)
+	}
+	screen := h.screen()
+	for _, want := range []string{"Exit NIFTY 50", "BUY 75", "SELL 75", "Charges ≈ ₹", "Exit all 2"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("exit dialog lacks %q:\n%s", want, screen)
+		}
+	}
+	if m.cursor != 1 {
+		t.Errorf("the exit dialog defaults to item %d, want Keep", m.cursor)
+	}
+	h.press("y")
+	h.waitFor("the exit notice", h.shows("2 orders placed"))
+	placer.mu.Lock()
+	defer placer.mu.Unlock()
+	if len(placer.orders) != 2 {
+		t.Fatalf("placed %+v", placer.orders)
+	}
+	first, second := placer.orders[0].params, placer.orders[1].params
+	if first.TransactionType != "BUY" || first.Tradingsymbol != "NIFTY26OCT25000PE" || first.Quantity != 75 || first.OrderType != "MARKET" || first.Product != "NRML" {
+		t.Errorf("first exit = %+v", first)
+	}
+	if second.TransactionType != "SELL" || second.Tradingsymbol != "NIFTY26OCTFUT" || second.Quantity != 75 {
+		t.Errorf("second exit = %+v", second)
 	}
 }

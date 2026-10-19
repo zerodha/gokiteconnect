@@ -1,27 +1,31 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/spf13/viper"
-	"github.com/subosito/gotenv"
 )
 
 // Config holds local settings shared by the command-line tools.
 //
-// Values come from TRADEBOT_* environment variables, optionally loaded from a
-// .env file. Process environment values always win over the .env file.
+// Values come only from the settings file, ~/tradebot/settings.json; a
+// setting the file leaves empty takes its default.
 type Config struct {
 	// StorageRoot is TRADEBOT_LOCAL_STORAGE_ROOT, default ~/tradebot.
 	StorageRoot string
-	// CredentialsPath is TRADEBOT_CREDENTIALS_SQLITE_PATH, default <StorageRoot>/credentials.sqlite3.
+	// CredentialsPath is TRADEBOT_CREDENTIALS_SQLITE_PATH under StorageRoot,
+	// default credentials.sqlite3.
 	CredentialsPath string
-	// InstrumentsPath is TRADEBOT_INSTRUMENTS_DUCKDB_PATH, default <StorageRoot>/instruments.duckdb.
+	// InstrumentsPath is TRADEBOT_INSTRUMENTS_DUCKDB_PATH under StorageRoot,
+	// default instruments.duckdb.
 	InstrumentsPath string
+	// ListsPath is TRADEBOT_LISTS_SQLITE_PATH under StorageRoot, default
+	// lists.sqlite3.
+	ListsPath string
+	// CandlesPath is TRADEBOT_CANDLES_DUCKDB_PATH under StorageRoot, default
+	// market-data/historical_data.duckdb.
+	CandlesPath string
 	// TickerUserID is TRADEBOT_TICKER_USER_ID, the Zerodha account the ticker streams for.
 	TickerUserID string
 	// DataUserID is TRADEBOT_DATA_USER_ID, the Zerodha API user whose session
@@ -31,38 +35,75 @@ type Config struct {
 	// DefaultUserID is TRADEBOT_DEFAULT_USER_ID, default CC0006: the
 	// account kite-cli opens at start.
 	DefaultUserID string
+	// PriceMode is TRADEBOT_PRICE_MODE: PriceModeQuote (the default) or
+	// PriceModeTicker.
+	PriceMode string
+	// SettingsPath is the settings file.
+	SettingsPath string
+	// Settings are the settings file's entries, for settings the fields
+	// above don't cover.
+	Settings Settings
 }
 
-// Load reads Config from the environment. It first loads the working
-// directory's .env, or the .env beside the nearest parent go.mod.
+// Load reads Config from the settings file.
 func Load() (Config, error) {
-	if err := loadDotEnv(); err != nil {
-		return Config{}, err
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Config{}, err
 	}
+	settingsPath, err := SettingsPath()
+	if err != nil {
+		return Config{}, err
+	}
+	settings, err := ReadSettings(settingsPath)
+	if err != nil {
+		return Config{}, fmt.Errorf("read settings: %w", err)
+	}
 
-	v := viper.New()
-	v.SetEnvPrefix("TRADEBOT")
-	v.AutomaticEnv()
-
-	v.SetDefault("local_storage_root", "~/tradebot")
-	root := expandHome(v.GetString("local_storage_root"), home)
-
-	v.SetDefault("credentials_sqlite_path", filepath.Join(root, "credentials.sqlite3"))
-	v.SetDefault("instruments_duckdb_path", filepath.Join(root, "instruments.duckdb"))
-	v.SetDefault("default_user_id", "CC0006")
+	root := filepath.Clean(expandHome(settings.Get("TRADEBOT_LOCAL_STORAGE_ROOT"), home))
+	credentials, err := underRoot(root, settings, "TRADEBOT_CREDENTIALS_SQLITE_PATH")
+	if err != nil {
+		return Config{}, err
+	}
+	instruments, err := underRoot(root, settings, "TRADEBOT_INSTRUMENTS_DUCKDB_PATH")
+	if err != nil {
+		return Config{}, err
+	}
+	lists, err := underRoot(root, settings, "TRADEBOT_LISTS_SQLITE_PATH")
+	if err != nil {
+		return Config{}, err
+	}
+	candles, err := underRoot(root, settings, "TRADEBOT_CANDLES_DUCKDB_PATH")
+	if err != nil {
+		return Config{}, err
+	}
+	priceMode := strings.ToLower(settings.Get("TRADEBOT_PRICE_MODE"))
+	if priceMode != PriceModeQuote && priceMode != PriceModeTicker {
+		return Config{}, fmt.Errorf("price mode %q: want %s or %s", priceMode, PriceModeQuote, PriceModeTicker)
+	}
 
 	return Config{
-		StorageRoot:     filepath.Clean(root),
-		CredentialsPath: filepath.Clean(expandHome(v.GetString("credentials_sqlite_path"), home)),
-		InstrumentsPath: filepath.Clean(expandHome(v.GetString("instruments_duckdb_path"), home)),
-		TickerUserID:    strings.TrimSpace(v.GetString("ticker_user_id")),
-		DataUserID:      strings.TrimSpace(v.GetString("data_user_id")),
-		DefaultUserID:   strings.TrimSpace(v.GetString("default_user_id")),
+		StorageRoot:     root,
+		CredentialsPath: credentials,
+		InstrumentsPath: instruments,
+		ListsPath:       lists,
+		CandlesPath:     candles,
+		TickerUserID:    settings.Get("TRADEBOT_TICKER_USER_ID"),
+		DataUserID:      settings.Get("TRADEBOT_DATA_USER_ID"),
+		DefaultUserID:   settings.Get("TRADEBOT_DEFAULT_USER_ID"),
+		PriceMode:       priceMode,
+		SettingsPath:    settingsPath,
+		Settings:        settings,
 	}, nil
+}
+
+// underRoot is key's path, which is relative to the storage root.
+func underRoot(root string, settings Settings, key string) (string, error) {
+	offset := settings.Get(key)
+	if filepath.IsAbs(offset) || !filepath.IsLocal(offset) {
+		return "", fmt.Errorf("%s %q: want a path inside the base path", key, offset)
+	}
+	return filepath.Join(root, offset), nil
 }
 
 // expandHome replaces a leading ~ or $HOME with home.
@@ -77,58 +118,4 @@ func expandHome(value, home string) string {
 		}
 	}
 	return value
-}
-
-// loadDotEnv loads the working directory's .env, or the .env beside the
-// nearest parent go.mod. Existing process environment values always win.
-func loadDotEnv() error {
-	path, err := findDotEnv()
-	if err != nil || path == "" {
-		return err
-	}
-	if err := gotenv.Load(path); err != nil {
-		return fmt.Errorf("load %s: %w", path, err)
-	}
-	return nil
-}
-
-func findDotEnv() (string, error) {
-	directory, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve working directory: %w", err)
-	}
-	if found, err := isRegularFile(filepath.Join(directory, ".env")); err != nil || found {
-		return filepath.Join(directory, ".env"), err
-	}
-
-	for parent := filepath.Dir(directory); parent != directory; parent = filepath.Dir(directory) {
-		directory = parent
-		isModuleRoot, err := isRegularFile(filepath.Join(directory, "go.mod"))
-		if err != nil {
-			return "", err
-		}
-		if !isModuleRoot {
-			continue
-		}
-		path := filepath.Join(directory, ".env")
-		if found, err := isRegularFile(path); err != nil || !found {
-			return "", err
-		}
-		return path, nil
-	}
-	return "", nil
-}
-
-func isRegularFile(path string) (bool, error) {
-	info, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return false, fmt.Errorf("%s is not a regular file", path)
-	}
-	return true, nil
 }

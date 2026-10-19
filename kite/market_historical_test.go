@@ -40,13 +40,13 @@ func TestHistoricalBatchDuration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.interval, func(t *testing.T) {
-			got, ok := historicalBatchDuration(tt.interval)
+			got, ok := HistoricalBatchDuration(tt.interval)
 			if ok != tt.ok {
-				t.Fatalf("historicalBatchDuration(%q) ok = %t, want %t", tt.interval, ok, tt.ok)
+				t.Fatalf("HistoricalBatchDuration(%q) ok = %t, want %t", tt.interval, ok, tt.ok)
 			}
 			want := time.Duration(tt.days) * 24 * time.Hour
 			if got != want {
-				t.Fatalf("historicalBatchDuration(%q) = %s, want %s", tt.interval, got, want)
+				t.Fatalf("HistoricalBatchDuration(%q) = %s, want %s", tt.interval, got, want)
 			}
 		})
 	}

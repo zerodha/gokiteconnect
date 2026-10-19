@@ -251,7 +251,7 @@ func TestClientRefreshLifecycle(t *testing.T) {
 	if err := tableRows.Close(); err != nil {
 		t.Fatalf("close repository tables: %v", err)
 	}
-	if want := []string{"instruments", "list_items", "list_metadata"}; !reflect.DeepEqual(tableNames, want) {
+	if want := []string{"instruments"}; !reflect.DeepEqual(tableNames, want) {
 		t.Fatalf("repository tables = %v, want %v", tableNames, want)
 	}
 

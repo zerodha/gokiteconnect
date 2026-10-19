@@ -54,8 +54,11 @@ type explorerScreen struct {
 	masterIndices []nse.NSEIndexMetadata
 
 	// Prices come from the data user's REST quotes.
-	quoteSource   quoteSource
-	quoteLabel    string
+	quoteSource quoteSource
+	quoteLabel  string
+	// tickerDown marks price mode ticker priced from quotes, the ticker
+	// not running when prices connected.
+	tickerDown    bool
 	quoteErr      error
 	quotes        map[string]kite.QuoteData
 	quotesAt      time.Time
@@ -299,7 +302,14 @@ func (a *app) handleExplorer(msg tea.Msg) (tea.Cmd, bool) {
 	case quotesConnectedMsg:
 		e.connecting = false
 		e.quoteSource, e.quoteLabel, e.quoteErr = msg.source, msg.label, msg.err
-		if msg.err != nil {
+		e.tickerDown = false
+		var unavailable tickerUnavailableError
+		switch {
+		case msg.source != nil && errors.As(msg.err, &unavailable):
+			// Price mode ticker without a running ticker: quotes instead.
+			e.quoteErr, e.tickerDown = nil, true
+			e.status = statusErr("Ticker unavailable, using quotes:", unavailable.err.Error()+" · R retries")
+		case msg.err != nil:
 			e.status = statusErr("Prices off:", msg.err.Error())
 			return nil, true
 		}
@@ -880,6 +890,9 @@ func (a *app) explorerKey(msg tea.KeyPressMsg) tea.Cmd {
 		return a.refreshCatalog()
 	case "o":
 		return a.orderSelected()
+	case "h":
+		id, _ := e.selectedInstrumentID()
+		return a.openHistory(id)
 	}
 	return nil
 }
@@ -1102,10 +1115,15 @@ func (a *app) quoteHeader() string {
 		return styleFaint.Render("prices connecting…")
 	case e.quoteErr != nil:
 		return styleRed.Render("prices " + e.quoteLabel + " · failed")
-	case e.quotesAt.IsZero():
-		return styleGreen.Render("● prices " + e.quoteLabel)
 	}
-	return styleGreen.Render("● prices " + e.quoteLabel + " · " + e.quotesAt.Format("15:04:05"))
+	header := "● prices " + e.quoteLabel
+	if !e.quotesAt.IsZero() {
+		header += " · " + e.quotesAt.Format("15:04:05")
+	}
+	if e.tickerDown {
+		return styleGreen.Render(header) + styleYellow.Render(" · ticker down")
+	}
+	return styleGreen.Render(header)
 }
 
 // instrumentDetail describes an instrument and, with prices on, its quote.
@@ -1178,11 +1196,11 @@ func (a *app) explorerHelp() string {
 	case e.searchFocused:
 		return help("type", "to search", "Enter/↓", "results", "Esc", "table", "^C", "quit")
 	case e.mode == viewChain:
-		return help("←→", "call/put", "Tab", "futures", "E", "expiry", "[ ]", "cycle", "F", "filters", "%", "BE", "O", "order", "A", "add to list", "R", "prices", "C", "catalog", "Q", "back")
+		return help("←→", "call/put", "Tab", "futures", "E", "expiry", "[ ]", "cycle", "F", "filters", "%", "BE", "O", "order", "A", "add to list", "H", "history", "R", "prices", "C", "catalog", "Q", "back")
 	case e.mode == viewLists:
-		return help("N", "new", "E", "rename", "A", "add instrument", "D", "delete", "R", "refresh NSE list", "M", "NSE master list", "O", "order", "Tab", "items", "Q", "back")
+		return help("N", "new", "E", "rename", "A", "add instrument", "D", "delete", "R", "refresh NSE list", "M", "NSE master list", "O", "order", "H", "history", "Tab", "items", "Q", "back")
 	}
-	return help("/", "search", "Enter", "chain", "U", "underlyings", "L", "lists", "A", "add to list", "O", "order", "R", "prices", "C", "catalog", "Q", "back")
+	return help("/", "search", "Enter", "chain", "U", "underlyings", "L", "lists", "A", "add to list", "O", "order", "H", "history", "R", "prices", "C", "catalog", "s", "settings", "Q", "back")
 }
 
 func (a *app) explorerView(w, h int) string {

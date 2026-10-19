@@ -115,6 +115,23 @@ Use a new database path, or reopen a database previously created by the DuckDB
 repository. Legacy tradebot databases are rejected without modification. DuckDB
 uses CGO, so builds must have a working C toolchain and `CGO_ENABLED=1`.
 
+The catalog file is opened read-only, so kite-cli, ticker-server,
+instruments-cli and market-data-service can all have it open at once. A refresh
+never writes to it: `Replace` builds the new catalog in a sibling file
+(`instruments.duckdb.next-<pid>`), renames it over the old one and reopens.
+Processes already reading keep their snapshot until they reopen the catalog.
+Within one process DuckDB shares a single instance per file, so the process
+that refreshes needs to hold only one handle on it; `Replace` reports an error
+if another handle in the same process still has the old catalog open.
+
+Instrument lists live in their own SQLite database,
+`repository.NewListsSQLiteRepository(ctx, "lists.sqlite3", "instruments.duckdb")`,
+which several processes can write (WAL mode with a busy timeout). The first open copies across
+the lists an older instruments database held, once. If that database was refreshed before
+then, its first `Replace` hard-linked the old file to
+`instruments.duckdb.lists-legacy`, and the copy reads from there. Once the lists
+show up in `lists.sqlite3` that file can be deleted.
+
 ### Terminal console (kite-cli)
 
 `kite-cli` combines `users-cli` and `instruments-cli` in one application,
@@ -125,7 +142,7 @@ and Lip Gloss:
 go run ./cmd/kite-cli
 ```
 
-The tab bar along the top switches between Users, Portfolio and Instruments,
+The tab bar along the top switches between Users, Portfolio, Instruments and History,
 and the mouse works too: click a tab or a row to select it, click a selected
 row again to open it, and scroll tables with the wheel. The previous
 tview-based console is kept as `cmd/kite-cli-old` with the same flags and
@@ -162,7 +179,14 @@ order menu for its instrument. On an order Kite has not yet completed,
 cancelled or rejected, `M` modifies it: the order form opens with its
 quantity, type, price and trigger, and its account, side and product are
 fixed. `X` cancels it, after you confirm with `Y`. Either way the portfolio
-reloads afterwards.
+reloads afterwards. The Orders title also totals the estimated charges of the
+day's executed orders, and an executed order's details pane breaks its charges
+down into brokerage, STT, exchange charges, GST, stamp duty and SEBI fees.
+
+`X` (or `O`) on a group header exits every position in the group at market,
+after a confirmation that lists the legs and their estimated charges and
+defaults to keeping them. Buys are placed first, so short legs are covered
+before their hedges are sold.
 
 `O` opens the order menu for the selected position or holding, or the
 selected instrument in the explorer (a search result, chain contract, future
@@ -190,13 +214,100 @@ quantity by one lot from any field. In the price and trigger fields, `Left` and
 `Right` move the price by the instrument's tick size, starting from the last
 price when the field is empty. It places a regular day
 order tagged `kite-cli`, with Kite's automatic market protection on market and
-SL-M orders, and shows Kite's reason when it is rejected. Nothing is sent until
-**Place** is pressed; `Escape` cancels.
+SL-M orders, and shows Kite's reason when it is rejected. Below the summary it
+shows the order's estimated charges at its price (the last price for a market
+order). Nothing is sent until **Place** is pressed; `Escape` cancels.
+
+Charges are estimated locally by `kite.EstimateOrderCharges` (and
+`kite.CalculateCharges` for one order), from Zerodha's published rates for
+equity delivery, intraday, futures and options on NSE and BSE. They can drift
+from what the contract note says when rates change.
+
+`s` opens the settings dialog from any screen (on the users screen, `Shift+S`
+toggles sudo). It edits `~/tradebot/settings.json`, the only place the tools
+read configuration from (environment variables and `.env` are no longer
+read). The file is an object keyed by each setting's `TRADEBOT_*` name:
+
+```json
+{
+  "TRADEBOT_LOCAL_STORAGE_ROOT": {
+    "display_name": "Base Path",
+    "value": "",
+    "default": "~/tradebot",
+    "help": "Where local files are stored: the credentials, instrument and candle databases.",
+    "visible": true
+  }
+}
+```
+
+The dialog labels each setting with its `display_name`; when that is empty,
+the label comes from the key, so `TRADEBOT_ABC_DEF` reads "Abc Def". It
+lists only `visible` settings and shows the focused one's `help` and
+default below the fields. An empty `value` means the `default`:
+
+| Setting              | Key                                                | Default               | Visible |
+| -------------------- | -------------------------------------------------- | --------------------- | ------- |
+| Base Path            | `TRADEBOT_LOCAL_STORAGE_ROOT`                      | `~/tradebot`          | yes     |
+| Credentials Database | `TRADEBOT_CREDENTIALS_SQLITE_PATH`                 | `credentials.sqlite3` | no      |
+| Instruments Database | `TRADEBOT_INSTRUMENTS_DUCKDB_PATH`                 | `instruments.duckdb`  | no      |
+| Lists Database       | `TRADEBOT_LISTS_SQLITE_PATH`                       | `lists.sqlite3`       | no      |
+| Candles Database     | `TRADEBOT_CANDLES_DUCKDB_PATH`                     | `market-data/historical_data.duckdb` | no      |
+| Default User         | `TRADEBOT_DEFAULT_USER_ID`                         | `CC0006`              | yes     |
+| Price Mode           | `TRADEBOT_PRICE_MODE`                              | `quote`               | yes     |
+| Data User            | `TRADEBOT_DATA_USER_ID`                            |                       | yes     |
+| Ticker User          | `TRADEBOT_TICKER_USER_ID`                          |                       | yes     |
+| NATS URL             | `TRADEBOT_NATS_URL`                                |                       | yes     |
+| NATS WebSocket URL   | `TRADEBOT_NATS_WS_URL`                             | `ws://localhost:9222` | yes     |
+| Heartbeat Topic      | `TRADEBOT_HEARTBEAT_TOPIC`                         | `ticks.subscriptions` | yes     |
+| Subscription TTL     | `TRADEBOT_SUBSCRIPTION_TTL_SECONDS`                | `60`                  | yes     |
+| Token Poll Interval  | `TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS`      | `300`                 | yes     |
+| Mapping Refresh      | `TRADEBOT_TICKER_MAPPING_REFRESH_INTERVAL_SECONDS` | `900`                 | yes     |
+| Ticker Port          | `TRADEBOT_TICKER_SERVICE_PORT`                     | `8082`                | yes     |
+
+The database paths are relative to Base Path and must stay inside it.
+Price Mode is `quote` or `ticker`. `quote` polls Kite every `-quotes-every`.
+`ticker` has kite-cli read the ticks ticker-server publishes, over the local
+NATS WebSocket at NATS WebSocket URL; it never opens a Kite ticker itself. It
+sends the IDs on screen (explorer and portfolio) as the `{"ids": [...]}`
+heartbeat on Heartbeat Topic, at once when new ones appear and every 15s,
+dropping IDs not shown for 30s, and redraws on ticks at most four times a
+second. Instruments without a tick from the last 30s, such as outside market
+hours, are priced from quotes. When ticker-server's health endpoint (on
+Ticker Port) or the WebSocket doesn't answer, kite-cli shows the error, marks
+the explorer's prices `ticker down` and polls quotes; `R` tries the ticker
+again. Saved settings apply the next time a tool starts.
+The file always lives in `~/tradebot`, since Base Path is read from it.
 
 `I` opens the instruments explorer
 described below from either screen, `Q` goes back one screen, and `Ctrl+C`
-quits. The catalog is `-instruments-db`; the price flags match
+quits. The catalog is `-instruments-db` and the lists `-lists-db`; the price flags match
 `instruments-cli`.
+
+`H` opens the History screen, which shows what Candles Database
+(`-candles-db`) holds. It lists the default sync list, `DEFAULT SYNC`: the
+main NSE indices, `BSE:SENSEX` and `BSE:BANKEX`, then every NSE stock and
+index with futures or options. The list is built from the catalog the first
+time and saved as an auto-generated list owned by `ADMIN`; `R` rebuilds it, for
+example after the F&O list changes. Each row shows the stored range of 1m and
+1d candles. A pane on the right shows the selected instrument's latest candles.
+
+`s` on the History screen syncs the selected instrument. It runs the standard
+sync: 1m candles from 2015 and 1d candles from the earliest Kite has, both up
+to yesterday's close. Run it again to fetch only what's new. Syncs run one at a
+time in the background, using the Data User's stored session. Instruments
+pressed while a sync runs are queued. `A` syncs every instrument on the screen
+after asking, and `X` drops the queue and stops the running sync, keeping what
+it stored. While a sync runs, the status line shows live progress: the
+interval, the percentage done, the time of the last stored candle and how many
+candles it has stored. On the right, a counter shows which sync of the batch is
+running and how many have failed. The SYNC column marks each row as queued,
+syncing (with its percentage), done, failed or stopped. The candles database is opened only for each read or sync, so other
+tools can use it in between. Since `s` syncs here, open settings from another
+screen.
+
+In the explorer, `H` opens History on the selected instrument (a search
+result, chain contract, future or list item). If the instrument isn't in the
+list, it's added to the top of the screen for this session only.
 
 ### Instruments terminal explorer
 
@@ -206,9 +317,10 @@ Run the full-screen catalog browser on its own with:
 go run ./cmd/instruments-cli
 ```
 
-The explorer uses `$TRADEBOT_LOCAL_STORAGE_ROOT/instruments.duckdb` by default.
-Set `TRADEBOT_INSTRUMENTS_DUCKDB_PATH` or pass `-db /path/to/catalog.duckdb`
-to use another catalog. The public Kite instrument master does not require a
+The explorer uses `instruments.duckdb` under Base Path by default. Set
+Instruments Database in settings or pass `-db /path/to/catalog.duckdb` to use
+another catalog, and `-lists-db` for the lists database (Lists Database,
+`lists.sqlite3`). The public Kite instrument master does not require a
 stored user session or API key. A missing or stale catalog is refreshed when the
 application opens.
 
@@ -224,7 +336,7 @@ the selected contract's premium per lot and the margin Kite blocks for one lot
 calculator.
 
 Prices come from full quotes fetched with the data user's session:
-`TRADEBOT_DATA_USER_ID` or `-data-user`, otherwise the first API user with a
+Data User (`TRADEBOT_DATA_USER_ID`) or `-data-user`, otherwise the first API user with a
 data subscription. Visible prices refresh every `-quotes-every` (5s by
 default); `-no-quotes` turns them off.
 
@@ -235,6 +347,45 @@ default); `-no-quotes` turns them off.
 - `R` refreshes prices, `C` forces a complete catalog refresh, and `L` opens lists.
 
 The explorer does not place trades. Mouse navigation is supported.
+
+## Local candles (market-data-service)
+
+`market-data-service` (package `marketdata`) keeps the candles database at
+Candles Database. It's a library, without a server, for a command-line tool to drive:
+
+```go
+store, err := repository.NewCandlesDuckDBRepository(ctx, cfg.CandlesPath, "")
+if err != nil {
+	log.Fatal(err)
+}
+defer store.Close()
+
+svc := marketdata.New(store,
+	marketdata.NewKiteSource(cfg.CredentialsPath, cfg.DataUserID, marketdata.CatalogTokens(cfg.InstrumentsPath)),
+	marketdata.ListsReader(cfg.ListsPath, cfg.InstrumentsPath), nil)
+
+// Cache NSE:INFY's 1m candles from 2015 and 1d candles from the earliest Kite
+// has, resuming after the last stored candles, up to yesterday's close.
+results, err := svc.SyncStandard(ctx, "NSE:INFY")
+```
+
+- `SyncStandard` runs `Sync` for the standard intervals, 1m and 1d. Every intraday interval is aggregated from 1m.
+- `SyncRequest.Progress` and `SyncStandardProgress` report a sync's progress after each stored batch, as a `SyncProgress`. `Fraction` gives the share of the range done.
+- `DefaultSyncList` builds the default sync list from an instrument catalog. The list holds `DefaultSyncIndices` (tradebot's NSE index set, `BSE:SENSEX` and `BSE:BANKEX`), then every NSE F&O underlying. `RebuildDefaultSyncList` saves it as the auto-generated `DEFAULT SYNC` list.
+- `Sync` fetches one instrument's interval and stores it, replacing candles already stored. A zero `From` resumes after the last stored candle, or starts in 2015 (intraday) or 1990, before Kite's earliest daily candles. A zero `To` is the last settled close: yesterday at 15:30 IST.
+- `SyncAll` brings every stored series up to date. A series that fails is reported, and the rest carry on.
+- `PreviewReconcile` and `Reconcile` compare the stored instruments with an instrument list. `Reconcile` drops instruments not in the list and backfills new ones.
+- `Candles`, `RecentCandles` and `Availability` read. Intraday intervals are aggregated from 1m candles. 1d is the stored day candles, whose close is the closing auction price that 1m candles miss; days after the last stored one are aggregated from 1m until synced. 1W is aggregated from the days, in weeks from Monday.
+- `PutCandles` writes (with `replace` to overwrite). `DeleteCandles` deletes one interval, or every interval when the interval is empty. `FlushLiveCandles` clears live candles.
+
+Refused requests match `errors.Is(err, marketdata.ErrInvalid)`.
+
+The Kite source uses the Data User's stored session and never logs in. It finds
+instrument tokens with a `TokenLookup`. `CatalogTokens` reads them from the
+instruments database at most once an hour, opening it only for the read. A process
+that keeps the catalog open, like kite-cli, looks tokens up there instead. The
+source requests one Kite batch window at a time, 100ms apart, and stores each
+batch as it arrives.
 
 ## Kite ticker usage
 

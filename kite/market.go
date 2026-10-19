@@ -88,10 +88,46 @@ type historicalDataParams struct {
 
 const historicalBatchDelay = 100 * time.Millisecond
 
-// historicalBatchDuration returns the maximum date range used for a single
+// HistoricalInterval is Kite's historical-data interval for a candle
+// interval, such as "minute" for 1m and "day" for 1d.
+func HistoricalInterval(interval models.CandleInterval) (string, bool) {
+	switch interval {
+	case models.CandleInterval1m:
+		return "minute", true
+	case models.CandleInterval2m:
+		return "2minute", true
+	case models.CandleInterval3m:
+		return "3minute", true
+	case models.CandleInterval4m:
+		return "4minute", true
+	case models.CandleInterval5m:
+		return "5minute", true
+	case models.CandleInterval10m:
+		return "10minute", true
+	case models.CandleInterval15m:
+		return "15minute", true
+	case models.CandleInterval30m:
+		return "30minute", true
+	case models.CandleInterval1h:
+		return "60minute", true
+	case models.CandleInterval2h:
+		return "2hour", true
+	case models.CandleInterval3h:
+		return "3hour", true
+	case models.CandleInterval4h:
+		return "4hour", true
+	case models.CandleInterval1d:
+		return "day", true
+	case models.CandleInterval1W:
+		return "week", true
+	}
+	return "", false
+}
+
+// HistoricalBatchDuration returns the maximum date range used for a single
 // historical-data request. These limits mirror the interval-specific batching
 // rules used by tradebot.
-func historicalBatchDuration(interval string) (time.Duration, bool) {
+func HistoricalBatchDuration(interval string) (time.Duration, bool) {
 	switch interval {
 	case "minute", "2minute":
 		return 60 * 24 * time.Hour, true
@@ -352,7 +388,7 @@ func (c *Client) formatHistoricalData(inp historicalDataReceived) ([]HistoricalD
 // [from, to) bounds and are delayed by 100ms to respect upstream rate limits.
 // Unknown interval strings retain the legacy single-request behavior.
 func (c *Client) GetHistoricalData(instrumentToken int, interval string, fromDate time.Time, toDate time.Time, continuous bool, OI bool) ([]HistoricalData, error) {
-	batchSize, batchable := historicalBatchDuration(interval)
+	batchSize, batchable := HistoricalBatchDuration(interval)
 	if !batchable || !toDate.After(fromDate) || !fromDate.Add(batchSize).Before(toDate) {
 		return c.getHistoricalDataBatch(instrumentToken, interval, fromDate, toDate, continuous, OI)
 	}

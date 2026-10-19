@@ -48,7 +48,8 @@ func sideStyle(side string) lipgloss.Style {
 }
 
 // ordersInfo counts the day's orders by outcome for the panel title.
-func ordersInfo(orders kite.Orders) string {
+func ordersInfo(data portfolio) string {
+	orders := data.orders
 	var complete, working, failed int
 	for _, order := range orders {
 		switch order.Status {
@@ -60,7 +61,18 @@ func ordersInfo(orders kite.Orders) string {
 			working++
 		}
 	}
-	return fmt.Sprintf("%d today · %d complete · %d open · %d closed", len(orders), complete, working, failed)
+	info := fmt.Sprintf("%d today · %d complete · %d open · %d closed", len(orders), complete, working, failed)
+	switch {
+	case data.chargesErr != nil:
+		info += " · charges unavailable"
+	case len(data.orderCharges) > 0:
+		total := 0.0
+		for _, charges := range data.orderCharges {
+			total += charges.Total
+		}
+		info += " · charges ₹" + formatAmount(total)
+	}
+	return info
 }
 
 // renderOrders lists the day's orders, newest first.
@@ -118,7 +130,7 @@ func (p *portfolioScreen) orderTarget(order kite.Order) tradeTarget {
 }
 
 // orderDetail summarises an order for the details pane.
-func orderDetail(order kite.Order) string {
+func orderDetail(order kite.Order, charges map[string]kite.Charges) string {
 	text := newDetailText(order.TradingSymbol, "Order "+order.OrderID)
 	text.section("Status")
 	text.field("Status", orderStatusStyle(order.Status).Render(fallback(order.Status, "—")))
@@ -151,6 +163,15 @@ func orderDetail(order kite.Order) string {
 	if order.AveragePrice > 0 {
 		text.plain("Average", formatPrice(order.AveragePrice))
 		text.plain("Value", formatAmount(order.AveragePrice*order.FilledQuantity))
+	}
+	if charged, ok := charges[order.OrderID]; ok {
+		text.section("Charges")
+		text.field("Total", styleYellow.Render("₹"+formatAmount(charged.Total)))
+		for _, part := range strings.Split(chargesBreakdown(charged), " · ") {
+			if name, value, ok := strings.Cut(part, " "); ok {
+				text.plain(strings.ToUpper(name[:1])+name[1:], value)
+			}
+		}
 	}
 
 	text.section("Timeline")

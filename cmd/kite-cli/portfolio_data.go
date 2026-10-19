@@ -40,6 +40,14 @@ type portfolio struct {
 	prices    priceSource
 	pricedAt  time.Time
 	pricesErr error
+	// tickerErr is why price mode ticker fell back to quotes.
+	tickerErr error
+	// underlyings are the quotes of the positions' underlyings, by ID.
+	underlyings kite.QuoteOHLC
+	// orderCharges are the estimated charges of each order's executed part,
+	// by order ID; chargesErr is why they are missing.
+	orderCharges map[string]kite.Charges
+	chargesErr   error
 }
 
 type portfolioLoader func(context.Context, credentials.Credentials) portfolio
@@ -62,7 +70,6 @@ func kitePortfolioLoader(manager *credentials.UserManager, resolve instrumentRes
 		result := readPortfolio(client)
 		result.loggedIn = loggedIn
 		result.prices = client
-		result = result.reprice()
 		// Orders are resolved too, for their lot and tick sizes.
 		lookups := slices.Clone(result.positions)
 		for _, order := range result.orders {
@@ -71,7 +78,8 @@ func kitePortfolioLoader(manager *credentials.UserManager, resolve instrumentRes
 		if len(lookups) > 0 && resolve != nil {
 			result.instruments, result.instrumentsErr = resolve(ctx, lookups)
 		}
-		return result
+		// Priced once resolved, so the underlyings are priced too.
+		return result.reprice()
 	}
 }
 
@@ -167,6 +175,9 @@ func readPortfolio(client *kite.Client) portfolio {
 	result.funds, result.fundsErr = client.GetMFHoldings()
 	result.orders, result.ordersErr = client.GetOrders()
 	result.margins, result.marginsErr = client.GetUserMargins()
+	if result.ordersErr == nil {
+		result.orderCharges, result.chargesErr = readOrderCharges(result.orders)
+	}
 	result.loadedAt = time.Now()
 	return result
 }
@@ -181,7 +192,8 @@ type priceSource interface {
 	GetOHLC(instruments ...string) (kite.QuoteOHLC, error)
 }
 
-// priceIDs lists the EXCHANGE:TRADINGSYMBOL of every position and holding.
+// priceIDs lists the EXCHANGE:TRADINGSYMBOL of every position, holding and
+// position underlying.
 func (data portfolio) priceIDs() []string {
 	ids := make([]string, 0, len(data.positions)+len(data.holdings))
 	for _, position := range data.positions {
@@ -189,6 +201,11 @@ func (data portfolio) priceIDs() []string {
 	}
 	for _, holding := range data.holdings {
 		ids = append(ids, string(holdingID(holding)))
+	}
+	for _, group := range groupPositions(data.positions, data.instruments) {
+		if !slices.Contains(ids, string(group.underlying)) {
+			ids = append(ids, string(group.underlying))
+		}
 	}
 	return ids
 }
@@ -241,7 +258,13 @@ func (data portfolio) withPrices(quotes kite.QuoteOHLC, at time.Time) portfolio 
 		}
 		holdings[index] = holding
 	}
-	data.positions, data.holdings = positions, holdings
+	underlyings := kite.QuoteOHLC{}
+	for _, group := range groupPositions(data.positions, data.instruments) {
+		if quote, ok := quotes[string(group.underlying)]; ok && quote.LastPrice > 0 {
+			underlyings[string(group.underlying)] = quote
+		}
+	}
+	data.positions, data.holdings, data.underlyings = positions, holdings, underlyings
 	data.pricedAt = at
 	return data
 }

@@ -23,6 +23,7 @@ const (
 	screenUsers screenID = iota
 	screenPortfolio
 	screenInstruments
+	screenHistory
 )
 
 // appDeps is everything kite-cli talks to, so tests can replace it.
@@ -36,9 +37,15 @@ type appDeps struct {
 	loadPortfolio portfolioLoader
 	// loadQuotes connects the data user; nil turns prices off.
 	loadQuotes quoteLoader
-	place      orderPlacer
-	modify     orderModifier
-	cancel     orderCanceller
+	// candles is the local candles database the history screen shows and
+	// syncs; nil turns syncing off.
+	candles     candleDB
+	candlesPath string
+	// settingsPath is the settings file S edits.
+	settingsPath string
+	place        orderPlacer
+	modify       orderModifier
+	cancel       orderCanceller
 	// defaultUser's portfolio opens at start, when stored.
 	defaultUser string
 	// every is how often visible prices refresh; 0 refreshes only on R.
@@ -80,9 +87,10 @@ func (t *tracker) close() {
 	t.wg.Wait()
 }
 
-// app is kite-cli: the users screen, a user's portfolio and the instruments
-// explorer, with dialogs over them. Q goes back a screen, I opens the
-// instruments, U picks a user, O opens the order menu and Ctrl+C quits.
+// app is kite-cli: the users screen, a user's portfolio, the instruments
+// explorer and the candle history, with dialogs over them. Q goes back a
+// screen, I opens the instruments, H the history, U picks a user, O opens
+// the order menu and Ctrl+C quits.
 type app struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -97,8 +105,11 @@ type app struct {
 	users         *usersScreen
 	portfolio     *portfolioScreen
 	explorer      *explorerScreen
-	overlay       overlay
-	spinner       spinner.Model
+	history       *historyScreen
+	// historyBack is the screen the history screen goes back to.
+	historyBack screenID
+	overlay     overlay
+	spinner     spinner.Model
 	// tabs are the tab bar's screen positions, for clicks.
 	tabs []tabSpot
 	// openedDefault records that the default user was looked for.
@@ -124,6 +135,7 @@ func newApp(parent context.Context, deps appDeps) *app {
 	a.users = newUsersScreen()
 	a.portfolio = newPortfolioScreen()
 	a.explorer = newExplorerScreen()
+	a.history = newHistoryScreen()
 	return a
 }
 
@@ -218,6 +230,9 @@ func (a *app) handle(msg tea.Msg) tea.Cmd {
 	if cmd, handled := a.handleUsers(msg); handled {
 		return cmd
 	}
+	if _, ok := msg.(tickerTicksMsg); ok {
+		return a.periodic()
+	}
 	if cmd, handled := a.handlePortfolio(msg); handled {
 		return cmd
 	}
@@ -225,6 +240,9 @@ func (a *app) handle(msg tea.Msg) tea.Cmd {
 		return cmd
 	}
 	if cmd, handled := a.handleOrders(msg); handled {
+		return cmd
+	}
+	if cmd, handled := a.handleHistory(msg); handled {
 		return cmd
 	}
 	return nil
@@ -256,11 +274,23 @@ func (a *app) key(msg tea.KeyPressMsg) tea.Cmd {
 	if a.screen != screenInstruments && (key == "i" || key == "I") {
 		return a.openInstruments()
 	}
+	// H opens the history screen; the explorer's H opens it on the
+	// selected instrument.
+	if (key == "h" || key == "H") && a.screen != screenHistory && a.screen != screenInstruments {
+		return a.openHistory("")
+	}
+	// s opens settings anywhere but while typing a search and on the
+	// history screen, where it syncs; S stays sudo on the users screen.
+	if key == "s" && a.screen != screenHistory && !(a.screen == screenInstruments && a.explorer.searchFocused) {
+		return a.openSettings()
+	}
 	switch a.screen {
 	case screenPortfolio:
 		return a.portfolioKey(msg)
 	case screenInstruments:
 		return a.explorerKey(msg)
+	case screenHistory:
+		return a.historyKey(msg)
 	}
 	return a.usersKey(msg)
 }
@@ -272,14 +302,19 @@ func (a *app) focusedGrid() *grid {
 		return a.portfolio.focused()
 	case screenInstruments:
 		return a.explorer.focused()
+	case screenHistory:
+		return &a.history.grid
 	}
 	return &a.users.grid
 }
 
 // selectionChanged runs after a table's selection moved.
 func (a *app) selectionChanged() tea.Cmd {
-	if a.screen == screenInstruments {
+	switch a.screen {
+	case screenInstruments:
 		return a.explorerSelectionChanged()
+	case screenHistory:
+		return a.historySelectionChanged()
 	}
 	return nil
 }
@@ -317,6 +352,8 @@ func (a *app) screenGrids() []*grid {
 		return a.portfolio.grids()
 	case screenInstruments:
 		return a.explorer.grids()
+	case screenHistory:
+		return []*grid{&a.history.grid}
 	}
 	return []*grid{&a.users.grid}
 }
@@ -337,6 +374,8 @@ func (a *app) switchTo(target screenID) tea.Cmd {
 		if a.screen != screenInstruments {
 			return a.openInstruments()
 		}
+	case screenHistory:
+		return a.openHistory("")
 	case screenPortfolio:
 		if a.portfolio.user.UserID == "" {
 			a.notify(statusWarn("Pick a user first"))
@@ -385,6 +424,8 @@ func (a *app) notify(message string) {
 		a.portfolio.status = message
 	case screenInstruments:
 		a.explorer.status = message
+	case screenHistory:
+		a.history.status = message
 	default:
 		a.users.status = message
 	}
@@ -556,6 +597,8 @@ func (a *app) render() string {
 		body = a.portfolioView(w, bodyHeight)
 	case screenInstruments:
 		body = a.explorerView(w, bodyHeight)
+	case screenHistory:
+		body = a.historyView(w, bodyHeight)
 	default:
 		body = a.usersView(w, bodyHeight)
 	}
@@ -577,7 +620,7 @@ func (a *app) tabBar(w int) string {
 	for _, tab := range []struct {
 		label  string
 		screen screenID
-	}{{"Users", screenUsers}, {portfolio, screenPortfolio}, {"Instruments", screenInstruments}} {
+	}{{"Users", screenUsers}, {portfolio, screenPortfolio}, {"Instruments", screenInstruments}, {"History", screenHistory}} {
 		style := lipgloss.NewStyle().Padding(0, 1).Foreground(colorMuted)
 		if tab.screen == a.screen {
 			style = style.Background(colorSelection).Foreground(colorText).Bold(true)
@@ -595,8 +638,11 @@ func (a *app) tabBar(w int) string {
 }
 
 func (a *app) databaseLabel() string {
-	if a.screen == screenInstruments {
+	switch a.screen {
+	case screenInstruments:
 		return "DB " + a.deps.catalogPath
+	case screenHistory:
+		return "DB " + a.deps.candlesPath
 	}
 	return "DB " + a.deps.credentialsDB
 }
@@ -611,6 +657,9 @@ func (a *app) statusBar(w int) string {
 	case screenInstruments:
 		mode, message = a.explorer.modeName(), a.explorer.status
 		pills = []string{a.quoteHeader()}
+	case screenHistory:
+		mode, message = a.historyModeName(), a.historyStatus()
+		pills = a.historyPills()
 	default:
 		mode, message = "USERS", a.users.status
 		if a.users.sudo {
@@ -635,11 +684,13 @@ func (a *app) helpBar(w int) string {
 	var text string
 	switch a.screen {
 	case screenPortfolio:
-		text = help("O", "order", "M/X", "modify / cancel order", "Tab", "next table", "Enter", "collapse / raw order", "J/K", "scroll raw", "R", "reload", "U", "switch user", "I", "instruments", "Q", "users", "^C", "quit")
+		text = help("O", "order", "M/X", "modify / cancel order · X on a group exits it", "Tab", "next table", "Enter", "collapse / raw order", "J/K", "scroll raw", "R", "reload", "U", "switch user", "I", "instruments", "H", "history", "s", "settings", "Q", "users", "^C", "quit")
 	case screenInstruments:
 		text = a.explorerHelp()
+	case screenHistory:
+		text = a.historyHelp()
 	default:
-		text = help("Enter", "portfolio", "I", "instruments", "A", "add", "E", "edit", "D", "delete", "F", "refresh session", "R", "reload", "S", "sudo", "^C", "quit")
+		text = help("Enter", "portfolio", "I", "instruments", "H", "history", "A", "add", "E", "edit", "D", "delete", "F", "refresh session", "R", "reload", "⇧S", "sudo", "s", "settings", "^C", "quit")
 	}
 	return ansi.Truncate(" "+text, w, "…")
 }

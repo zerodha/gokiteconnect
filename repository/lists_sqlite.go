@@ -5,15 +5,19 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/devshoe/gokiteconnect/models"
 )
 
-// Lists live beside the instrument catalog in the same DuckDB file. Items
-// store only the instrument ID and when it was added; list order is the order
+// Lists live in their own SQLite database, which several processes can
+// write: the instrument catalog is read-only between refreshes. Items store
+// only the instrument ID and when it was added; list order is the order
 // items were added.
 const createListTablesSQL = `
 	CREATE TABLE IF NOT EXISTS list_metadata (
@@ -24,33 +28,179 @@ const createListTablesSQL = `
 		is_index       BOOLEAN NOT NULL DEFAULT FALSE,
 		auto_generated BOOLEAN NOT NULL DEFAULT FALSE,
 		url            TEXT,
-		created_at     TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
-		updated_at     TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+		created_at     DATETIME NOT NULL,
+		updated_at     DATETIME NOT NULL,
+		UNIQUE (created_by, name)
 	);
 
 	CREATE TABLE IF NOT EXISTS list_items (
 		list_id    TEXT NOT NULL,
 		id         TEXT NOT NULL,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+		created_at DATETIME NOT NULL,
 		PRIMARY KEY (list_id, id)
+	);
+
+	CREATE TABLE IF NOT EXISTS list_migrations (
+		source      TEXT PRIMARY KEY,
+		migrated_at DATETIME NOT NULL
 	);
 `
 
 const listColumns = "list_id, created_by, list_number, name, is_index, auto_generated, url, created_at, updated_at"
 
 // listItemBatchSize bounds the number of rows in one multi-row INSERT.
-const listItemBatchSize = 500
+const listItemBatchSize = 400
 
-func (s *InstrumentsDuckDBRepository) initializeListSchema(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, createListTablesSQL); err != nil {
-		return fmt.Errorf("lists: create tables: %w", err)
+// duckDBListsMigration marks the one-time copy of lists out of the DuckDB
+// instrument catalog.
+const duckDBListsMigration = "duckdb-instruments"
+
+// ListsSQLiteRepository stores instrument lists in SQLite.
+type ListsSQLiteRepository struct {
+	db *sql.DB
+}
+
+// NewListsSQLiteRepository opens the lists database at databasePath, creating it when new. The
+// first time, it copies the lists an instruments DuckDB catalog at legacyInstrumentsPath held
+// before lists moved here; an empty legacyInstrumentsPath skips that.
+func NewListsSQLiteRepository(ctx context.Context, databasePath, legacyInstrumentsPath string) (*ListsSQLiteRepository, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("%w: context is required", models.ErrInvalidInput)
+	}
+	databasePath = strings.TrimSpace(databasePath)
+	if databasePath == "" {
+		return nil, fmt.Errorf("%w: lists database path is required", models.ErrInvalidInput)
+	}
+	dsn := "file:" + databasePath + "?_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate"
+	if databasePath == ":memory:" {
+		dsn = "file::memory:?_txlock=immediate"
+	}
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("lists: open SQLite: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, createListTablesSQL); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("lists: create tables: %w", err)
+	}
+	store := &ListsSQLiteRepository{db: db}
+	if legacy := strings.TrimSpace(legacyInstrumentsPath); legacy != "" && legacy != ":memory:" {
+		if err := store.migrateFromDuckDB(ctx, legacy); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
+	return store, nil
+}
+
+// Close closes the database.
+func (s *ListsSQLiteRepository) Close() error { return s.db.Close() }
+
+// migrateFromDuckDB copies the lists of the instruments catalog at path, or
+// of the copy Replace kept aside, once.
+func (s *ListsSQLiteRepository) migrateFromDuckDB(ctx context.Context, path string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("lists: begin migration: %w", err)
+	}
+	defer tx.Rollback()
+	var done int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM list_migrations WHERE source = ?", duckDBListsMigration).Scan(&done); err != nil {
+		return fmt.Errorf("lists: read migrations: %w", err)
+	}
+	if done > 0 {
+		return nil
+	}
+	for _, source := range []string{LegacyListsPath(path), path} {
+		copied, err := copyDuckDBLists(ctx, tx, source)
+		if err != nil {
+			return err
+		}
+		if copied {
+			break
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO list_migrations (source, migrated_at) VALUES (?, ?)", duckDBListsMigration, time.Now().UTC()); err != nil {
+		return fmt.Errorf("lists: record migration: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("lists: commit migration: %w", err)
 	}
 	return nil
 }
 
+// copyDuckDBLists copies the list tables of the DuckDB file at path,
+// reporting false when there is no such file or it has none.
+func copyDuckDBLists(ctx context.Context, tx *sql.Tx, path string) (bool, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	source, err := sql.Open("duckdb", path+"?access_mode=read_only")
+	if err != nil {
+		return false, fmt.Errorf("lists: open %s to migrate its lists: %w", path, err)
+	}
+	defer source.Close()
+	has, err := hasListTables(ctx, source)
+	if err != nil {
+		return false, fmt.Errorf("lists: migrate from %s: %w", path, err)
+	}
+	if !has {
+		return false, nil
+	}
+
+	rows, err := source.QueryContext(ctx, "SELECT "+listColumns+" FROM list_metadata ORDER BY created_by, list_number")
+	if err != nil {
+		return false, fmt.Errorf("lists: read lists of %s: %w", path, err)
+	}
+	var lists []models.List
+	for rows.Next() {
+		list, err := scanList(rows)
+		if err != nil {
+			rows.Close()
+			return false, fmt.Errorf("lists: read lists of %s: %w", path, err)
+		}
+		lists = append(lists, list)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return false, fmt.Errorf("lists: read lists of %s: %w", path, err)
+	}
+	for _, list := range lists {
+		if _, err := tx.ExecContext(ctx,
+			"INSERT OR IGNORE INTO list_metadata ("+listColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			list.ID, list.CreatedBy, list.Number, list.Name, list.IsIndex, list.AutoGenerated, nullableText(list.URL),
+			list.CreatedAt.UTC(), list.UpdatedAt.UTC(),
+		); err != nil {
+			return false, fmt.Errorf("lists: migrate %q: %w", list.Name, err)
+		}
+	}
+
+	items, err := source.QueryContext(ctx, "SELECT list_id, id, created_at FROM list_items ORDER BY list_id, created_at, id")
+	if err != nil {
+		return false, fmt.Errorf("lists: read list items of %s: %w", path, err)
+	}
+	defer items.Close()
+	for items.Next() {
+		var listID, id string
+		var createdAt time.Time
+		if err := items.Scan(&listID, &id, &createdAt); err != nil {
+			return false, fmt.Errorf("lists: read list items of %s: %w", path, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			"INSERT OR IGNORE INTO list_items (list_id, id, created_at) VALUES (?, ?, ?)", listID, id, createdAt.UTC(),
+		); err != nil {
+			return false, fmt.Errorf("lists: migrate items of %q: %w", listID, err)
+		}
+	}
+	if err := items.Err(); err != nil {
+		return false, fmt.Errorf("lists: read list items of %s: %w", path, err)
+	}
+	return true, nil
+}
+
 // CreateList stores a new list and its items. ID, Number and timestamps are
 // assigned by the repository. Names are unique per user.
-func (s *InstrumentsDuckDBRepository) CreateList(ctx context.Context, list models.List) (models.List, error) {
+func (s *ListsSQLiteRepository) CreateList(ctx context.Context, list models.List) (models.List, error) {
 	list.Name = strings.TrimSpace(list.Name)
 	list.CreatedBy = strings.TrimSpace(list.CreatedBy)
 	if list.Name == "" || list.CreatedBy == "" {
@@ -69,11 +219,12 @@ func (s *InstrumentsDuckDBRepository) CreateList(ctx context.Context, list model
 		return models.List{}, err
 	}
 
+	now := time.Now().UTC()
 	list.ID = uuid.NewString()
-	if err := insertListMetadata(ctx, tx, list); err != nil {
+	if err := insertListMetadata(ctx, tx, list, now); err != nil {
 		return models.List{}, err
 	}
-	if err := insertListItems(ctx, tx, list.ID, list.InstrumentIDs()); err != nil {
+	if err := insertListItems(ctx, tx, list.ID, list.InstrumentIDs(), now); err != nil {
 		return models.List{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -85,7 +236,7 @@ func (s *InstrumentsDuckDBRepository) CreateList(ctx context.Context, list model
 // ReplaceAutoGeneratedList creates or updates the auto-generated list that
 // has the same creator and name. The list keeps its ID and number; items that
 // are still present keep their original created_at.
-func (s *InstrumentsDuckDBRepository) ReplaceAutoGeneratedList(ctx context.Context, list models.List) (models.List, error) {
+func (s *ListsSQLiteRepository) ReplaceAutoGeneratedList(ctx context.Context, list models.List) (models.List, error) {
 	list.Name = strings.TrimSpace(list.Name)
 	list.CreatedBy = strings.TrimSpace(list.CreatedBy)
 	if list.Name == "" || list.CreatedBy == "" {
@@ -99,11 +250,12 @@ func (s *InstrumentsDuckDBRepository) ReplaceAutoGeneratedList(ctx context.Conte
 	}
 	defer tx.Rollback()
 
+	now := time.Now().UTC()
 	list.ID, err = findListID(ctx, tx, list.CreatedBy, list.Name)
 	switch {
 	case errors.Is(err, models.ErrNotFound):
 		list.ID = uuid.NewString()
-		if err := insertListMetadata(ctx, tx, list); err != nil {
+		if err := insertListMetadata(ctx, tx, list, now); err != nil {
 			return models.List{}, err
 		}
 	case err != nil:
@@ -111,9 +263,9 @@ func (s *InstrumentsDuckDBRepository) ReplaceAutoGeneratedList(ctx context.Conte
 	default:
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE list_metadata
-			SET is_index = ?, auto_generated = TRUE, url = ?, updated_at = current_timestamp
+			SET is_index = ?, auto_generated = TRUE, url = ?, updated_at = ?
 			WHERE list_id = ?`,
-			list.IsIndex, nullableText(list.URL), list.ID,
+			list.IsIndex, nullableText(list.URL), now, list.ID,
 		); err != nil {
 			return models.List{}, fmt.Errorf("lists: update %q: %w", list.Name, err)
 		}
@@ -122,7 +274,7 @@ func (s *InstrumentsDuckDBRepository) ReplaceAutoGeneratedList(ctx context.Conte
 		}
 	}
 
-	if err := insertListItems(ctx, tx, list.ID, list.InstrumentIDs()); err != nil {
+	if err := insertListItems(ctx, tx, list.ID, list.InstrumentIDs(), now); err != nil {
 		return models.List{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -132,7 +284,7 @@ func (s *InstrumentsDuckDBRepository) ReplaceAutoGeneratedList(ctx context.Conte
 }
 
 // GetList returns one list with its items.
-func (s *InstrumentsDuckDBRepository) GetList(ctx context.Context, id string) (models.List, error) {
+func (s *ListsSQLiteRepository) GetList(ctx context.Context, id string) (models.List, error) {
 	list, err := scanList(s.db.QueryRowContext(ctx,
 		"SELECT "+listColumns+" FROM list_metadata WHERE list_id = ?", id,
 	))
@@ -152,7 +304,7 @@ func (s *InstrumentsDuckDBRepository) GetList(ctx context.Context, id string) (m
 
 // GetLists returns every list created by createdBy, or every list when
 // createdBy is empty, ordered by creator and list number.
-func (s *InstrumentsDuckDBRepository) GetLists(ctx context.Context, createdBy string) ([]models.List, error) {
+func (s *ListsSQLiteRepository) GetLists(ctx context.Context, createdBy string) ([]models.List, error) {
 	where, args := "", []any{}
 	if createdBy = strings.TrimSpace(createdBy); createdBy != "" {
 		where, args = " WHERE created_by = ?", []any{createdBy}
@@ -190,7 +342,7 @@ func (s *InstrumentsDuckDBRepository) GetLists(ctx context.Context, createdBy st
 }
 
 // RenameList changes a list's name. Names are unique per user.
-func (s *InstrumentsDuckDBRepository) RenameList(ctx context.Context, id string, name string) error {
+func (s *ListsSQLiteRepository) RenameList(ctx context.Context, id string, name string) error {
 	if name = strings.TrimSpace(name); name == "" {
 		return fmt.Errorf("%w: list name is required", models.ErrInvalidInput)
 	}
@@ -215,7 +367,7 @@ func (s *InstrumentsDuckDBRepository) RenameList(ctx context.Context, id string,
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		"UPDATE list_metadata SET name = ?, updated_at = current_timestamp WHERE list_id = ?", name, id,
+		"UPDATE list_metadata SET name = ?, updated_at = ? WHERE list_id = ?", name, time.Now().UTC(), id,
 	); err != nil {
 		return fmt.Errorf("lists: rename %q: %w", id, err)
 	}
@@ -226,7 +378,7 @@ func (s *InstrumentsDuckDBRepository) RenameList(ctx context.Context, id string,
 }
 
 // DeleteList removes a list and its items.
-func (s *InstrumentsDuckDBRepository) DeleteList(ctx context.Context, id string) error {
+func (s *ListsSQLiteRepository) DeleteList(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("lists: begin delete: %w", err)
@@ -251,15 +403,15 @@ func (s *InstrumentsDuckDBRepository) DeleteList(ctx context.Context, id string)
 
 // AddListItems appends instruments to a list. Instruments already in the list
 // keep their position.
-func (s *InstrumentsDuckDBRepository) AddListItems(ctx context.Context, id string, instrumentIDs []models.InstrumentID) error {
-	return s.changeListItems(ctx, id, func(tx *sql.Tx) error {
-		return insertListItems(ctx, tx, id, instrumentIDs)
+func (s *ListsSQLiteRepository) AddListItems(ctx context.Context, id string, instrumentIDs []models.InstrumentID) error {
+	return s.changeListItems(ctx, id, func(tx *sql.Tx, now time.Time) error {
+		return insertListItems(ctx, tx, id, instrumentIDs, now)
 	})
 }
 
 // RemoveListItems removes instruments from a list.
-func (s *InstrumentsDuckDBRepository) RemoveListItems(ctx context.Context, id string, instrumentIDs []models.InstrumentID) error {
-	return s.changeListItems(ctx, id, func(tx *sql.Tx) error {
+func (s *ListsSQLiteRepository) RemoveListItems(ctx context.Context, id string, instrumentIDs []models.InstrumentID) error {
+	return s.changeListItems(ctx, id, func(tx *sql.Tx, _ time.Time) error {
 		if len(instrumentIDs) == 0 {
 			return nil
 		}
@@ -277,21 +429,22 @@ func (s *InstrumentsDuckDBRepository) RemoveListItems(ctx context.Context, id st
 	})
 }
 
-func (s *InstrumentsDuckDBRepository) changeListItems(ctx context.Context, id string, change func(*sql.Tx) error) error {
+func (s *ListsSQLiteRepository) changeListItems(ctx context.Context, id string, change func(*sql.Tx, time.Time) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("lists: begin item change: %w", err)
 	}
 	defer tx.Rollback()
 
-	result, err := tx.ExecContext(ctx, "UPDATE list_metadata SET updated_at = current_timestamp WHERE list_id = ?", id)
+	now := time.Now().UTC()
+	result, err := tx.ExecContext(ctx, "UPDATE list_metadata SET updated_at = ? WHERE list_id = ?", now, id)
 	if err != nil {
 		return fmt.Errorf("lists: touch %q: %w", id, err)
 	}
 	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
 		return fmt.Errorf("%w: list %q", models.ErrNotFound, id)
 	}
-	if err := change(tx); err != nil {
+	if err := change(tx, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -300,9 +453,11 @@ func (s *InstrumentsDuckDBRepository) changeListItems(ctx context.Context, id st
 	return nil
 }
 
-func (s *InstrumentsDuckDBRepository) listItems(ctx context.Context, where string, args ...any) (map[string][]models.ListItem, error) {
+func (s *ListsSQLiteRepository) listItems(ctx context.Context, where string, args ...any) (map[string][]models.ListItem, error) {
+	// Items added together share created_at; rowid keeps them in the order
+	// they were added.
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT list_id, id, created_at FROM list_items "+where+" ORDER BY list_id, created_at, id", args...,
+		"SELECT list_id, id, created_at FROM list_items "+where+" ORDER BY list_id, created_at, rowid", args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("lists: query items: %w", err)
@@ -339,13 +494,13 @@ func findListID(ctx context.Context, tx *sql.Tx, createdBy, name string) (string
 	return id, nil
 }
 
-func insertListMetadata(ctx context.Context, tx *sql.Tx, list models.List) error {
+func insertListMetadata(ctx context.Context, tx *sql.Tx, list models.List, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO list_metadata (list_id, created_by, list_number, name, is_index, auto_generated, url)
-		SELECT ?, ?, COALESCE(max(list_number), 0) + 1, ?, ?, ?, ?
+		INSERT INTO list_metadata (list_id, created_by, list_number, name, is_index, auto_generated, url, created_at, updated_at)
+		SELECT ?, ?, COALESCE(max(list_number), 0) + 1, ?, ?, ?, ?, ?, ?
 		FROM list_metadata
 		WHERE created_by = ?`,
-		list.ID, list.CreatedBy, list.Name, list.IsIndex, list.AutoGenerated, nullableText(list.URL), list.CreatedBy,
+		list.ID, list.CreatedBy, list.Name, list.IsIndex, list.AutoGenerated, nullableText(list.URL), now, now, list.CreatedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("lists: insert %q: %w", list.Name, err)
@@ -353,17 +508,17 @@ func insertListMetadata(ctx context.Context, tx *sql.Tx, list models.List) error
 	return nil
 }
 
-func insertListItems(ctx context.Context, tx *sql.Tx, listID string, instrumentIDs []models.InstrumentID) error {
+func insertListItems(ctx context.Context, tx *sql.Tx, listID string, instrumentIDs []models.InstrumentID, now time.Time) error {
 	for start := 0; start < len(instrumentIDs); start += listItemBatchSize {
 		batch := instrumentIDs[start:min(start+listItemBatchSize, len(instrumentIDs))]
 		values := make([]string, 0, len(batch))
-		args := make([]any, 0, 2*len(batch))
+		args := make([]any, 0, 3*len(batch))
 		for _, instrumentID := range batch {
-			values = append(values, "(?, ?)")
-			args = append(args, listID, string(instrumentID))
+			values = append(values, "(?, ?, ?)")
+			args = append(args, listID, string(instrumentID), now)
 		}
 		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO list_items (list_id, id) VALUES "+strings.Join(values, ", ")+" ON CONFLICT DO NOTHING", args...,
+			"INSERT INTO list_items (list_id, id, created_at) VALUES "+strings.Join(values, ", ")+" ON CONFLICT DO NOTHING", args...,
 		); err != nil {
 			return fmt.Errorf("lists: insert items into %q: %w", listID, err)
 		}

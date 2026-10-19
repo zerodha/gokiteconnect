@@ -41,6 +41,7 @@ func run() error {
 		return err
 	}
 	instrumentsFlag := flag.String("instruments-db", settings.InstrumentsPath, "DuckDB database used for the instrument catalog")
+	listsFlag := flag.String("lists-db", settings.ListsPath, "SQLite database used for instrument lists")
 	credentialsFlag := flag.String("credentials-db", settings.CredentialsPath, "SQLite database used for the credentials store")
 	dataUserFlag := flag.String("data-user", settings.DataUserID, "API user whose session fetches instrument prices; empty picks the first API user with a data subscription")
 	quotesEvery := flag.Duration("quotes-every", 5*time.Second, "how often visible prices (instruments and portfolio) refresh; 0 refreshes only on R")
@@ -56,6 +57,15 @@ func run() error {
 	if instrumentsPath != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(instrumentsPath), 0o700); err != nil {
 			return fmt.Errorf("create instruments directory: %w", err)
+		}
+	}
+	listsPath := strings.TrimSpace(*listsFlag)
+	if listsPath == "" {
+		return errors.New("lists database path is required")
+	}
+	if listsPath != ":memory:" {
+		if err := os.MkdirAll(filepath.Dir(listsPath), 0o700); err != nil {
+			return fmt.Errorf("create lists directory: %w", err)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(credentialsPath), 0o700); err != nil {
@@ -81,20 +91,7 @@ func run() error {
 	defer stop()
 
 	factory := func(ctx context.Context) (catalog, listStore, error) {
-		repository, err := instrumentstore.NewInstrumentsDuckDBRepository(ctx, instrumentsPath)
-		if err != nil {
-			return nil, nil, err
-		}
-		client := kite.New("")
-		client.SetAppName("kite-cli")
-		client.SetTimeout(kiteRequestTimeout)
-		client.SetInstrumentRepository(repository)
-		instruments := client.Instruments()
-		if _, err := instruments.RefreshIfStale(ctx); err != nil {
-			_ = instruments.Close()
-			return nil, nil, err
-		}
-		return instruments, repository, nil
+		return openCatalog(ctx, "kite-cli", instrumentsPath, listsPath)
 	}
 
 	// The explorer and the positions' underlyings share one catalog, opened
@@ -153,4 +150,39 @@ type closeOnceCatalog struct {
 func (c *closeOnceCatalog) Close() error {
 	c.once.Do(func() { c.err = c.catalog.Close() })
 	return c.err
+}
+
+// catalogWithLists closes the lists database with the catalog.
+type catalogWithLists struct {
+	*kite.InstrumentCatalog
+	lists *instrumentstore.ListsSQLiteRepository
+}
+
+func (c catalogWithLists) Close() error {
+	return errors.Join(c.InstrumentCatalog.Close(), c.lists.Close())
+}
+
+// openCatalog opens the lists, migrating them out of an older instruments
+// database first, then the catalog, refreshing it when stale. The catalog
+// is read-only between refreshes, so other tools can read it meanwhile.
+func openCatalog(ctx context.Context, appName, instrumentsPath, listsPath string) (catalog, listStore, error) {
+	lists, err := instrumentstore.NewListsSQLiteRepository(ctx, listsPath, instrumentsPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	repository, err := instrumentstore.NewInstrumentsDuckDBRepository(ctx, instrumentsPath)
+	if err != nil {
+		_ = lists.Close()
+		return nil, nil, err
+	}
+	client := kite.New("")
+	client.SetAppName(appName)
+	client.SetTimeout(kiteRequestTimeout)
+	client.SetInstrumentRepository(repository)
+	instruments := catalogWithLists{InstrumentCatalog: client.Instruments(), lists: lists}
+	if _, err := instruments.RefreshIfStale(ctx); err != nil {
+		_ = instruments.Close()
+		return nil, nil, err
+	}
+	return instruments, lists, nil
 }

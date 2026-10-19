@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/devshoe/gokiteconnect/kite"
@@ -64,7 +65,18 @@ var requiredInstrumentColumns = []string{
 }
 
 // InstrumentsDuckDBRepository stores a normalized instrument catalog in a package-owned DuckDB schema.
+//
+// A file catalog is opened read-only, so any number of processes can read it
+// at once. Replace never writes to it: it builds the new catalog in a sibling
+// file and renames it over the old one, then reopens. Processes still reading
+// the old file keep their snapshot until they reopen.
 type InstrumentsDuckDBRepository struct {
+	// path is the catalog file; empty for an in-memory catalog, which is
+	// opened read-write and replaced in place.
+	path string
+
+	// mu guards db: Replace swaps it while queries hold the read lock.
+	mu sync.RWMutex
 	db *sql.DB
 }
 
@@ -73,8 +85,9 @@ var ErrIncompatibleInstrumentsDatabase = errors.New("instruments: incompatible d
 
 var _ kite.InstrumentRepository = (*InstrumentsDuckDBRepository)(nil)
 
-// NewInstrumentsDuckDBRepository opens databasePath. The path must be new or point to a database
-// previously created by this repository.
+// NewInstrumentsDuckDBRepository opens databasePath read-only, creating an empty catalog when it
+// is new. The path must be new or point to a database previously created by this repository.
+// ":memory:" opens a private read-write catalog.
 func NewInstrumentsDuckDBRepository(ctx context.Context, databasePath string) (*InstrumentsDuckDBRepository, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("%w: context is required", models.ErrInvalidInput)
@@ -87,23 +100,47 @@ func NewInstrumentsDuckDBRepository(ctx context.Context, databasePath string) (*
 		return nil, fmt.Errorf("%w: database path is required", models.ErrInvalidInput)
 	}
 
-	isMemory := databasePath == ":memory:"
-	existed := false
-	if !isMemory {
-		info, err := os.Stat(databasePath)
-		switch {
-		case err == nil:
-			if info.IsDir() {
-				return nil, fmt.Errorf("%w: database path is a directory", models.ErrInvalidInput)
-			}
-			existed = true
-		case errors.Is(err, os.ErrNotExist):
-		case err != nil:
-			return nil, fmt.Errorf("instruments: inspect database path: %w", err)
+	if databasePath == ":memory:" {
+		db, err := openDuckDB(ctx, databasePath)
+		if err != nil {
+			return nil, err
 		}
+		store := &InstrumentsDuckDBRepository{db: db}
+		if err := store.initializeSchema(ctx); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		return store, nil
 	}
 
-	db, err := sql.Open("duckdb", databasePath)
+	info, err := os.Stat(databasePath)
+	switch {
+	case err == nil:
+		if info.IsDir() {
+			return nil, fmt.Errorf("%w: database path is a directory", models.ErrInvalidInput)
+		}
+	case errors.Is(err, os.ErrNotExist):
+		if err := writeSnapshot(ctx, databasePath, nil, time.Time{}); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("instruments: inspect database path: %w", err)
+	}
+
+	db, err := openDuckDB(ctx, databasePath+"?access_mode=read_only")
+	if err != nil {
+		return nil, err
+	}
+	store := &InstrumentsDuckDBRepository{path: databasePath, db: db}
+	if err := store.validateSchema(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+func openDuckDB(ctx context.Context, dsn string) (*sql.DB, error) {
+	db, err := sql.Open("duckdb", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("instruments: open DuckDB: %w", err)
 	}
@@ -113,21 +150,60 @@ func NewInstrumentsDuckDBRepository(ctx context.Context, databasePath string) (*
 		_ = db.Close()
 		return nil, fmt.Errorf("instruments: connect to DuckDB: %w", err)
 	}
+	return db, nil
+}
 
-	store := &InstrumentsDuckDBRepository{db: db}
-	initialize := store.initializeSchema
-	if existed {
-		initialize = store.validateSchema
+// writeSnapshot writes catalog to a new file beside path and renames it
+// over path. Readers of the old file keep it until they close it.
+func writeSnapshot(ctx context.Context, path string, catalog []models.Instrument, refreshedAt time.Time) error {
+	next := fmt.Sprintf("%s.next-%d", path, os.Getpid())
+	removeDuckDBFiles(next)
+	if err := buildSnapshot(ctx, next, catalog, refreshedAt); err != nil {
+		removeDuckDBFiles(next)
+		return err
 	}
-	if err := initialize(ctx); err != nil {
-		_ = db.Close()
-		return nil, err
+	// A WAL left by a writer that crashed belongs to the old file.
+	_ = os.Remove(path + ".wal")
+	if err := os.Rename(next, path); err != nil {
+		removeDuckDBFiles(next)
+		return fmt.Errorf("instruments: activate refreshed catalog: %w", err)
 	}
-	if err := store.initializeListSchema(ctx); err != nil {
-		_ = db.Close()
-		return nil, err
+	return nil
+}
+
+func buildSnapshot(ctx context.Context, path string, catalog []models.Instrument, refreshedAt time.Time) error {
+	db, err := openDuckDB(ctx, path)
+	if err != nil {
+		return err
 	}
-	return store, nil
+	defer db.Close()
+	connection, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("instruments: reserve refresh connection: %w", err)
+	}
+	defer connection.Close()
+	if _, err := connection.ExecContext(ctx, createInstrumentTableSQL("instruments")); err != nil {
+		return fmt.Errorf("instruments: create catalog table: %w", err)
+	}
+	if err := appendCatalog(ctx, connection, "instruments", catalog, refreshedAt); err != nil {
+		return err
+	}
+	if err := createInstrumentIndexes(ctx, connection); err != nil {
+		return err
+	}
+	// Fold the WAL into the file, so the rename moves the whole catalog.
+	if _, err := connection.ExecContext(ctx, "CHECKPOINT"); err != nil {
+		return fmt.Errorf("instruments: checkpoint refreshed catalog: %w", err)
+	}
+	if err := connection.Close(); err != nil {
+		return err
+	}
+	return db.Close()
+}
+
+func removeDuckDBFiles(path string) {
+	_ = os.Remove(path)
+	_ = os.Remove(path + ".wal")
 }
 
 func (s *InstrumentsDuckDBRepository) initializeSchema(ctx context.Context) error {
@@ -178,9 +254,93 @@ func (s *InstrumentsDuckDBRepository) validateSchema(ctx context.Context) error 
 	return nil
 }
 
-// Replace atomically replaces the complete catalog snapshot.
+// Replace atomically replaces the complete catalog snapshot. A file catalog
+// is rebuilt in a new file, swapped in by rename, and reopened.
 func (s *InstrumentsDuckDBRepository) Replace(ctx context.Context, catalog []models.Instrument, refreshedAt time.Time) error {
-	connection, err := s.db.Conn(ctx)
+	if s.path == "" {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return replaceInPlace(ctx, s.db, catalog, refreshedAt)
+	}
+	if err := s.keepLegacyLists(ctx); err != nil {
+		return err
+	}
+	if err := writeSnapshot(ctx, s.path, catalog, refreshedAt); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// DuckDB shares one instance per file within a process, so the old
+	// file is closed before the new one is opened.
+	if err := s.db.Close(); err != nil {
+		return fmt.Errorf("instruments: close replaced catalog: %w", err)
+	}
+	db, err := openDuckDB(ctx, s.path+"?access_mode=read_only")
+	if err != nil {
+		// Leave a handle that fails cleanly rather than a closed one.
+		s.db = closedDuckDB()
+		return err
+	}
+	s.db = db
+	var got sql.NullTime
+	if err := db.QueryRowContext(ctx, "SELECT max(refreshed_at) FROM instruments").Scan(&got); err != nil {
+		return fmt.Errorf("instruments: read refreshed catalog: %w", err)
+	}
+	if len(catalog) > 0 && (!got.Valid || !got.Time.Equal(refreshedAt.UTC().Truncate(time.Microsecond))) {
+		return fmt.Errorf("instruments: refreshed %s, but another handle in this process still holds the old catalog; reopen it", s.path)
+	}
+	return nil
+}
+
+// LegacyListsPath is where Replace keeps a catalog file that still holds
+// lists from before they moved to SQLite, until NewListsSQLiteRepository
+// migrates them.
+func LegacyListsPath(instrumentsPath string) string {
+	return instrumentsPath + ".lists-legacy"
+}
+
+// keepLegacyLists hard-links the catalog file aside before its first
+// replacement when it still holds lists, so the swap doesn't lose them.
+func (s *InstrumentsDuckDBRepository) keepLegacyLists(ctx context.Context) error {
+	legacy := LegacyListsPath(s.path)
+	if _, err := os.Stat(legacy); err == nil {
+		return nil
+	}
+	s.mu.RLock()
+	has, err := hasListTables(ctx, s.db)
+	s.mu.RUnlock()
+	if err != nil || !has {
+		return err
+	}
+	if err := os.Link(s.path, legacy); err != nil {
+		return fmt.Errorf("instruments: keep lists of %s: %w", s.path, err)
+	}
+	return nil
+}
+
+// hasListTables reports whether db has the list tables DuckDB catalogs
+// held before lists moved to SQLite.
+func hasListTables(ctx context.Context, db *sql.DB) (bool, error) {
+	var count int
+	if err := db.QueryRowContext(ctx,
+		"SELECT count(*) FROM information_schema.tables WHERE table_name IN ('list_metadata', 'list_items')",
+	).Scan(&count); err != nil {
+		return false, fmt.Errorf("instruments: inspect list tables: %w", err)
+	}
+	return count == 2, nil
+}
+
+// closedDuckDB is a handle whose queries fail, for a catalog that could
+// not be reopened.
+func closedDuckDB() *sql.DB {
+	db, _ := sql.Open("duckdb", ":memory:")
+	_ = db.Close()
+	return db
+}
+
+func replaceInPlace(ctx context.Context, db *sql.DB, catalog []models.Instrument, refreshedAt time.Time) error {
+	connection, err := db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("instruments: reserve refresh connection: %w", err)
 	}
@@ -202,11 +362,9 @@ func (s *InstrumentsDuckDBRepository) Replace(ctx context.Context, catalog []mod
 	if _, err := connection.ExecContext(ctx, createInstrumentTableSQL("instruments_next")); err != nil {
 		return fmt.Errorf("instruments: create refresh staging table: %w", err)
 	}
-
-	if err := appendCatalog(ctx, connection, catalog, refreshedAt); err != nil {
+	if err := appendCatalog(ctx, connection, "instruments_next", catalog, refreshedAt); err != nil {
 		return err
 	}
-
 	if _, err := connection.ExecContext(ctx, "DROP TABLE instruments"); err != nil {
 		return fmt.Errorf("instruments: replace old catalog: %w", err)
 	}
@@ -223,13 +381,13 @@ func (s *InstrumentsDuckDBRepository) Replace(ctx context.Context, catalog []mod
 	return nil
 }
 
-func appendCatalog(ctx context.Context, connection *sql.Conn, catalog []models.Instrument, refreshedAt time.Time) error {
+func appendCatalog(ctx context.Context, connection *sql.Conn, table string, catalog []models.Instrument, refreshedAt time.Time) error {
 	return connection.Raw(func(driverConnection any) error {
 		rawConnection, ok := driverConnection.(driver.Conn)
 		if !ok {
 			return errors.New("instruments: DuckDB connection does not expose a driver connection")
 		}
-		appender, err := duckdb.NewAppenderFromConn(rawConnection, "", "instruments_next")
+		appender, err := duckdb.NewAppenderFromConn(rawConnection, "", table)
 		if err != nil {
 			return fmt.Errorf("instruments: create catalog appender: %w", err)
 		}
@@ -281,6 +439,8 @@ func appendCatalog(ctx context.Context, connection *sql.Conn, catalog []models.I
 
 // LastRefreshedAt returns the time of the last successful replacement.
 func (s *InstrumentsDuckDBRepository) LastRefreshedAt(ctx context.Context) (time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var refreshedAt sql.NullTime
 	if err := s.db.QueryRowContext(ctx,
 		"SELECT max(refreshed_at) FROM instruments",
@@ -309,6 +469,8 @@ func (s *InstrumentsDuckDBRepository) List(ctx context.Context, exchanges []stri
 
 // Get returns one instrument by ID.
 func (s *InstrumentsDuckDBRepository) Get(ctx context.Context, id models.InstrumentID) (models.Instrument, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	row := s.db.QueryRowContext(ctx,
 		"SELECT "+instrumentColumns+" FROM instruments WHERE id = ?",
 		id,
@@ -318,6 +480,8 @@ func (s *InstrumentsDuckDBRepository) Get(ctx context.Context, id models.Instrum
 
 // GetByToken returns one instrument by token.
 func (s *InstrumentsDuckDBRepository) GetByToken(ctx context.Context, token int64) (models.Instrument, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	row := s.db.QueryRowContext(ctx,
 		"SELECT "+instrumentColumns+" FROM instruments WHERE instrument_token = ?",
 		token,
@@ -354,6 +518,8 @@ func (s *InstrumentsDuckDBRepository) ListUnderlyingIDs(ctx context.Context, exc
 		}
 	}
 	query += " ORDER BY underlying_id"
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("instruments: list underlying IDs: %w", err)
@@ -448,6 +614,8 @@ func (s *InstrumentsDuckDBRepository) Search(ctx context.Context, queryText stri
 }
 
 func (s *InstrumentsDuckDBRepository) queryInstruments(ctx context.Context, query string, args ...any) ([]models.Instrument, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("instruments: query catalog: %w", err)
@@ -467,13 +635,11 @@ func (s *InstrumentsDuckDBRepository) queryInstruments(ctx context.Context, quer
 	return catalog, nil
 }
 
-// Close checkpoints and closes the database.
+// Close closes the database.
 func (s *InstrumentsDuckDBRepository) Close() error {
-	checkpointErr := func() error {
-		_, err := s.db.Exec("CHECKPOINT")
-		return err
-	}()
-	return errors.Join(checkpointErr, s.db.Close())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.db.Close()
 }
 
 type scanner interface {

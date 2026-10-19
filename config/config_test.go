@@ -6,22 +6,27 @@ import (
 	"testing"
 )
 
-var configEnvironmentKeys = []string{
-	"TRADEBOT_LOCAL_STORAGE_ROOT",
-	"TRADEBOT_CREDENTIALS_SQLITE_PATH",
-	"TRADEBOT_INSTRUMENTS_DUCKDB_PATH",
-	"TRADEBOT_TICKER_USER_ID",
-	"TRADEBOT_DATA_USER_ID",
+// writeHomeSettings makes a home whose settings file holds values.
+func writeHomeSettings(t *testing.T, values map[string]string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var settings Settings
+	for key, value := range values {
+		settings.Set(key, value)
+	}
+	if err := WriteSettings(filepath.Join(home, "tradebot", "settings.json"), settings); err != nil {
+		t.Fatal(err)
+	}
+	return home
 }
 
 func TestLoadUsesTradebotHomeDefaults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TRADEBOT_LOCAL_STORAGE_ROOT", "")
-	t.Setenv("TRADEBOT_CREDENTIALS_SQLITE_PATH", "")
-	t.Setenv("TRADEBOT_INSTRUMENTS_DUCKDB_PATH", "")
-	t.Setenv("TRADEBOT_TICKER_USER_ID", "")
-	t.Setenv("TRADEBOT_DATA_USER_ID", "")
+	// The environment no longer counts.
+	t.Setenv("TRADEBOT_LOCAL_STORAGE_ROOT", "/elsewhere")
+	t.Setenv("TRADEBOT_TICKER_USER_ID", "ENV001")
 
 	got, err := Load()
 	if err != nil {
@@ -37,126 +42,70 @@ func TestLoadUsesTradebotHomeDefaults(t *testing.T) {
 	if got.InstrumentsPath != filepath.Join(wantRoot, "instruments.duckdb") {
 		t.Fatalf("unexpected instruments database path: got %q", got.InstrumentsPath)
 	}
+	if got.CandlesPath != filepath.Join(wantRoot, "market-data", "historical_data.duckdb") {
+		t.Fatalf("unexpected candles database path: got %q", got.CandlesPath)
+	}
 	if got.TickerUserID != "" || got.DataUserID != "" {
 		t.Fatalf("unexpected user IDs: ticker %q, data %q", got.TickerUserID, got.DataUserID)
 	}
+	if got.DefaultUserID != "CC0006" || got.PriceMode != PriceModeQuote {
+		t.Fatalf("default user %q, price mode %q", got.DefaultUserID, got.PriceMode)
+	}
+	if got.SettingsPath != filepath.Join(home, "tradebot", "settings.json") {
+		t.Fatalf("settings path = %q", got.SettingsPath)
+	}
 }
 
-func TestLoadEnvironmentOverridesExpandHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("TRADEBOT_LOCAL_STORAGE_ROOT", "$HOME/custom")
-	t.Setenv("TRADEBOT_CREDENTIALS_SQLITE_PATH", "~/state/users.sqlite3")
-	t.Setenv("TRADEBOT_INSTRUMENTS_DUCKDB_PATH", "~/state/instruments.duckdb")
-	t.Setenv("TRADEBOT_TICKER_USER_ID", "  CC0006  ")
-	t.Setenv("TRADEBOT_DATA_USER_ID", " DA0001 ")
+func TestLoadReadsSettingsAndJoinsOffsets(t *testing.T) {
+	home := writeHomeSettings(t, map[string]string{
+		"TRADEBOT_LOCAL_STORAGE_ROOT":      "$HOME/custom",
+		"TRADEBOT_CREDENTIALS_SQLITE_PATH": "state/users.sqlite3",
+		"TRADEBOT_INSTRUMENTS_DUCKDB_PATH": "state/instruments.duckdb",
+		"TRADEBOT_CANDLES_DUCKDB_PATH":     "state/candles.duckdb",
+		"TRADEBOT_TICKER_USER_ID":          "  CC0006  ",
+		"TRADEBOT_DATA_USER_ID":            " DA0001 ",
+		"TRADEBOT_DEFAULT_USER_ID":         "AB1234",
+		"TRADEBOT_PRICE_MODE":              "Ticker",
+		"TRADEBOT_NATS_URL":                "nats://127.0.0.1:4222",
+	})
 
 	got, err := Load()
 	if err != nil {
 		t.Fatalf("Load returned an error: %v", err)
 	}
-	if got.StorageRoot != filepath.Join(home, "custom") {
-		t.Fatalf("unexpected overridden root: %q", got.StorageRoot)
+	root := filepath.Join(home, "custom")
+	if got.StorageRoot != root {
+		t.Fatalf("unexpected root: %q", got.StorageRoot)
 	}
-	if got.CredentialsPath != filepath.Join(home, "state", "users.sqlite3") {
-		t.Fatalf("unexpected overridden database path: %q", got.CredentialsPath)
+	if got.CredentialsPath != filepath.Join(root, "state", "users.sqlite3") {
+		t.Fatalf("unexpected database path: %q", got.CredentialsPath)
 	}
-	if got.InstrumentsPath != filepath.Join(home, "state", "instruments.duckdb") {
-		t.Fatalf("unexpected overridden instruments database path: %q", got.InstrumentsPath)
+	if got.InstrumentsPath != filepath.Join(root, "state", "instruments.duckdb") {
+		t.Fatalf("unexpected instruments database path: %q", got.InstrumentsPath)
 	}
-	if got.TickerUserID != "CC0006" {
-		t.Fatalf("unexpected ticker user ID: %q", got.TickerUserID)
+	if got.CandlesPath != filepath.Join(root, "state", "candles.duckdb") {
+		t.Fatalf("unexpected candles database path: %q", got.CandlesPath)
 	}
-	if got.DataUserID != "DA0001" {
-		t.Fatalf("unexpected data user ID: %q", got.DataUserID)
+	if got.TickerUserID != "CC0006" || got.DataUserID != "DA0001" || got.DefaultUserID != "AB1234" || got.PriceMode != PriceModeTicker {
+		t.Fatalf("ticker %q, data %q, default %q, price mode %q", got.TickerUserID, got.DataUserID, got.DefaultUserID, got.PriceMode)
+	}
+	if url := got.Settings.Get("TRADEBOT_NATS_URL"); url != "nats://127.0.0.1:4222" {
+		t.Fatalf("NATS URL = %q", url)
 	}
 	if _, err := os.Stat(got.CredentialsPath); !os.IsNotExist(err) {
 		t.Fatalf("config unexpectedly created the database: %v", err)
 	}
-	if _, err := os.Stat(got.InstrumentsPath); !os.IsNotExist(err) {
-		t.Fatalf("config unexpectedly created the instruments database: %v", err)
-	}
 }
 
-func TestLoadRootOverrideDerivesDatabasePath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("TRADEBOT_LOCAL_STORAGE_ROOT", filepath.Join(home, "custom"))
-	t.Setenv("TRADEBOT_CREDENTIALS_SQLITE_PATH", "")
-	t.Setenv("TRADEBOT_INSTRUMENTS_DUCKDB_PATH", "")
-	t.Setenv("TRADEBOT_TICKER_USER_ID", "")
-
-	got, err := Load()
-	if err != nil {
-		t.Fatalf("Load returned an error: %v", err)
-	}
-	want := filepath.Join(home, "custom", "credentials.sqlite3")
-	if got.CredentialsPath != want {
-		t.Fatalf("unexpected derived database path: got %q want %q", got.CredentialsPath, want)
-	}
-	wantInstruments := filepath.Join(home, "custom", "instruments.duckdb")
-	if got.InstrumentsPath != wantInstruments {
-		t.Fatalf("unexpected derived instruments database path: got %q want %q", got.InstrumentsPath, wantInstruments)
-	}
-}
-
-func TestLoadDiscoversDotEnvFromChildDirectory(t *testing.T) {
-	home := t.TempDir()
-	root := t.TempDir()
-	commandDirectory := filepath.Join(root, "cmd", "ticker")
-	if err := os.MkdirAll(commandDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test/dotenv\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	dotEnv := []byte("TRADEBOT_LOCAL_STORAGE_ROOT=$HOME/dotenv-state\n" +
-		"TRADEBOT_CREDENTIALS_SQLITE_PATH=$HOME/dotenv-state/users.sqlite3\n" +
-		"TRADEBOT_INSTRUMENTS_DUCKDB_PATH=$HOME/dotenv-state/instruments.duckdb\n" +
-		"TRADEBOT_TICKER_USER_ID=DOTENV01\n")
-	if err := os.WriteFile(filepath.Join(root, ".env"), dotEnv, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(commandDirectory)
-	t.Setenv("HOME", home)
-	for _, key := range configEnvironmentKeys {
-		unsetEnvironment(t, key)
-	}
-
-	got, err := Load()
-	if err != nil {
-		t.Fatalf("Load returned an error: %v", err)
-	}
-	stateDirectory := filepath.Join(home, "dotenv-state")
-	if got.StorageRoot != stateDirectory {
-		t.Fatalf("storage root=%q", got.StorageRoot)
-	}
-	if got.CredentialsPath != filepath.Join(stateDirectory, "users.sqlite3") {
-		t.Fatalf("credentials path=%q", got.CredentialsPath)
-	}
-	if got.InstrumentsPath != filepath.Join(stateDirectory, "instruments.duckdb") {
-		t.Fatalf("instruments path=%q", got.InstrumentsPath)
-	}
-	if got.TickerUserID != "DOTENV01" {
-		t.Fatalf("ticker user ID=%q", got.TickerUserID)
-	}
-}
-
-func unsetEnvironment(t *testing.T, key string) {
-	t.Helper()
-	value, present := os.LookupEnv(key)
-	if err := os.Unsetenv(key); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		var err error
-		if present {
-			err = os.Setenv(key, value)
-		} else {
-			err = os.Unsetenv(key)
+func TestLoadRejectsBadSettings(t *testing.T) {
+	for name, values := range map[string]map[string]string{
+		"absolute credentials path": {"TRADEBOT_CREDENTIALS_SQLITE_PATH": "/var/credentials.sqlite3"},
+		"instruments off the root":  {"TRADEBOT_INSTRUMENTS_DUCKDB_PATH": "../instruments.duckdb"},
+		"unknown price mode":        {"TRADEBOT_PRICE_MODE": "smoke-signals"},
+	} {
+		writeHomeSettings(t, values)
+		if _, err := Load(); err == nil {
+			t.Errorf("%s was accepted", name)
 		}
-		if err != nil {
-			t.Errorf("restore %s: %v", key, err)
-		}
-	})
+	}
 }

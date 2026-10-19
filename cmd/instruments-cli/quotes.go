@@ -81,7 +81,7 @@ func dataUser(ctx context.Context, store credentials.CredentialsRepository, user
 			}
 		}
 		if user == nil {
-			return nil, errors.New("no API user with a data subscription; set TRADEBOT_DATA_USER_ID")
+			return nil, errors.New("no API user with a data subscription; set TRADEBOT_DATA_USER_ID in ~/tradebot/settings.json")
 		}
 	}
 	if !user.IsAPIUser {

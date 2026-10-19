@@ -29,8 +29,8 @@ type catalog interface {
 	GetOptions(context.Context, models.OptionsFilter) ([]models.Instrument, error)
 }
 
-// listStore persists instrument lists. The CLI's lists share the catalog's
-// database, so the store is closed together with the catalog.
+// listStore persists instrument lists, in their own database opened and
+// closed together with the catalog.
 type listStore interface {
 	GetLists(context.Context, string) ([]models.List, error)
 	CreateList(context.Context, models.List) (models.List, error)
@@ -47,8 +47,8 @@ type indexSource interface {
 	GetIndex(context.Context, nse.NSEIndexMetadata) (models.List, error)
 }
 
-// catalogFactory opens the catalog and the list store that shares its database.
-// The list store may be nil when lists are unavailable.
+// catalogFactory opens the catalog and the list store opened with it. The
+// list store may be nil when lists are unavailable.
 type catalogFactory func(context.Context) (catalog, listStore, error)
 
 type initialCatalog struct {

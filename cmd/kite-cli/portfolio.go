@@ -146,6 +146,8 @@ func (a *app) handlePortfolio(msg tea.Msg) (tea.Cmd, bool) {
 			status = statusErr("Live prices failed, showing Kite's portfolio prices:", quoteErrorText(data.pricesErr))
 		} else if data.instrumentsErr != nil {
 			status = statusWarn("Positions are not grouped: " + quoteErrorText(data.instrumentsErr))
+		} else if data.tickerErr != nil {
+			status = statusErr("Ticker unavailable, using quotes:", data.tickerErr.Error())
 		}
 		var cmd tea.Cmd
 		if data.loggedIn {
@@ -234,6 +236,9 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "u", "U":
 		a.openUserPicker()
 	case "m", "M", "x", "X":
+		if underlying, ok := p.focused().selectedRef().(models.InstrumentID); ok && (key == "x" || key == "X") {
+			return a.confirmExitGroup(underlying)
+		}
 		order, ok := p.focused().selectedRef().(kite.Order)
 		if !ok {
 			return nil
@@ -247,6 +252,9 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return a.openOrder(modifyTicket(p.orderTarget(order).instrument, order, p.user.UserID))
 	case "o", "O":
+		if underlying, ok := p.focused().selectedRef().(models.InstrumentID); ok {
+			return a.confirmExitGroup(underlying)
+		}
 		target, ok := p.selectedTarget()
 		if !ok {
 			p.status = statusWarn("Select a position or holding to order") + statusInfo(" · funds cannot be ordered here")
@@ -262,18 +270,23 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 func (p *portfolioScreen) selectedTarget() (tradeTarget, bool) {
 	switch reference := p.focused().selectedRef().(type) {
 	case kite.Position:
-		id := positionID(reference)
-		instrument, ok := p.data.instruments[id]
-		if !ok {
-			instrument = models.Instrument{ID: id, Exchange: reference.Exchange, TradingSymbol: reference.Tradingsymbol, LotSize: 1}
-		}
-		return tradeTarget{instrument: instrument, ltp: reference.LastPrice, held: reference}, true
+		return p.positionTarget(reference), true
 	case kite.Holding:
 		return tradeTarget{instrument: holdingInstrument(reference), ltp: reference.LastPrice, held: reference}, true
 	case kite.Order:
 		return p.orderTarget(reference), true
 	}
 	return tradeTarget{}, false
+}
+
+// positionTarget is position's instrument, at its last price, to close.
+func (p *portfolioScreen) positionTarget(position kite.Position) tradeTarget {
+	id := positionID(position)
+	instrument, ok := p.data.instruments[id]
+	if !ok {
+		instrument = models.Instrument{ID: id, Exchange: position.Exchange, TradingSymbol: position.Tradingsymbol, LotSize: 1}
+	}
+	return tradeTarget{instrument: instrument, ltp: position.LastPrice, held: position}
 }
 
 // toggleGroup collapses or expands a group, keeping its row selected.
@@ -329,8 +342,12 @@ func (p *portfolioScreen) renderPositions() {
 					marker = "▸"
 				}
 				name := fmt.Sprintf("%s %s (%d)", marker, displayName(p.data.instruments, group.underlying, string(group.underlying)), len(group.positions))
+				var ltp cell
+				if quote, ok := p.data.underlyings[string(group.underlying)]; ok {
+					ltp = textCell(formatAmount(quote.LastPrice), styleYellow.Bold(true))
+				}
 				rows = append(rows, row{ref: group.underlying, cells: []cell{
-					textCell(name, styleYellow.Bold(true)), {}, {}, {}, {}, {},
+					textCell(name, styleYellow.Bold(true)), {}, {}, {}, {}, ltp,
 					textCell(formatSigned(group.pnl), signStyle(sign(group.pnl)).Bold(true)),
 				}})
 				if p.collapsed[group.underlying] {
@@ -511,7 +528,7 @@ func (a *app) portfolioView(w, h int) string {
 		{"Positions", fmt.Sprintf("%d in %d underlyings · P&L %s", len(data.positions), len(groups), signed(positions))},
 		{"Holdings", fmt.Sprintf("%d · invested %s · current %s · P&L %s (%s)", len(data.holdings), formatAmount(invested), formatAmount(current), signed(current-invested), formatPercent(current-invested, invested))},
 		{"Mutual funds", fmt.Sprintf("%d · invested %s · current %s · P&L %s", len(data.funds), formatAmount(fundsInvested), formatAmount(fundsCurrent), signed(fundsCurrent-fundsInvested))},
-		{"Orders", ordersInfo(data.orders)},
+		{"Orders", ordersInfo(data)},
 	}
 	errs := []error{data.positionsErr, data.holdingsErr, data.fundsErr, data.ordersErr}
 	for index, g := range p.grids() {
@@ -547,7 +564,7 @@ func (p *portfolioScreen) detail() string {
 	case kite.Holding:
 		return holdingDetail(reference)
 	case kite.Order:
-		return orderDetail(reference)
+		return orderDetail(reference, p.data.orderCharges)
 	case kite.MFHolding:
 		return fundDetail(reference)
 	}
@@ -654,7 +671,32 @@ func (p *portfolioScreen) groupDetail(underlying models.InstrumentID) string {
 	}
 	text.section("Underlying")
 	text.plain("ID", string(underlying))
-	text.plain("Positions", fmt.Sprintf("%d", len(group.positions)))
+	if instrument, ok := p.data.instruments[underlying]; ok {
+		if instrument.InstrumentType != "" {
+			text.plain("Type", instrument.InstrumentType)
+		}
+		if instrument.Segment != "" {
+			text.plain("Segment", instrument.Segment)
+		}
+		if instrument.LotSize > 1 {
+			text.plain("Lot size", fmt.Sprintf("%d", instrument.LotSize))
+		}
+	}
+	if quote, ok := p.data.underlyings[string(underlying)]; ok {
+		text.plain("LTP", formatAmount(quote.LastPrice))
+		if close := quote.OHLC.Close; close > 0 {
+			change := quote.LastPrice - close
+			text.field("Day change", signed(change)+" "+signStyle(sign(change)).Render(formatPercent(change, close)))
+			text.plain("Prev close", formatAmount(close))
+		}
+		if ohlc := quote.OHLC; ohlc.Open > 0 {
+			text.plain("Open", formatAmount(ohlc.Open))
+			text.plain("High / Low", formatAmount(ohlc.High)+" / "+formatAmount(ohlc.Low))
+		}
+	}
+
+	text.section("Positions")
+	text.plain("Count", fmt.Sprintf("%d", len(group.positions)))
 	text.field("P&L", signed(group.pnl))
 	text.field("M2M", signed(m2m))
 	text.field("Realised", signed(realised))
@@ -665,7 +707,7 @@ func (p *portfolioScreen) groupDetail(underlying models.InstrumentID) string {
 		text.line(quantityStyle(position.Quantity).Render(fmt.Sprintf("%+d", position.Quantity)) + " " +
 			styleText.Render(displayName(p.data.instruments, positionID(position), position.Tradingsymbol)) + "  " + signed(position.PnL))
 	}
-	text.WriteString("\n\n" + styleFaint.Render("Enter collapses or expands the group."))
+	text.WriteString("\n\n" + styleFaint.Render("Enter collapses or expands the group; X exits all of it."))
 	return text.String()
 }
 

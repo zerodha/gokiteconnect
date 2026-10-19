@@ -121,6 +121,8 @@ type orderForm struct {
 	placing bool
 	// summary shows the order as it will be placed, or why it cannot be.
 	summary string
+	// charges estimates what the order costs.
+	charges string
 }
 
 type orderDoneMsg struct {
@@ -246,9 +248,10 @@ func (o *orderForm) refresh() {
 
 	userID, params, err := o.order()
 	if err != nil {
-		o.summary = styleRed.Render(err.Error())
+		o.summary, o.charges = styleRed.Render(err.Error()), ""
 		return
 	}
+	o.charges = orderCharges(params, o.ticket.ltp)
 	at := "at market"
 	switch params.OrderType {
 	case kite.OrderTypeLimit:
@@ -402,7 +405,11 @@ func (o *orderForm) view(_ *app, w, _ int) string {
 	case o.ticket.closing:
 		title = "Close position"
 	}
-	body := header + "\n\n" + o.form.view(width-4) + "\n\n" + o.summary + "\n" +
+	charges := ""
+	if o.charges != "" {
+		charges = o.charges + "\n"
+	}
+	body := header + "\n\n" + o.form.view(width-4) + "\n\n" + o.summary + "\n" + charges +
 		styleFaint.Render("↑↓ field · ←→ option/tick · +/- lot · Enter next · Esc cancel")
 	return modal(title, "", body, width)
 }
@@ -509,6 +516,12 @@ func (a *app) handleOrders(msg tea.Msg) (tea.Cmd, bool) {
 				msg.params.OrderType, msg.params.Quantity, priceOrMarket(msg.params.Price)))), true
 		}
 		return a.orderPlaced(msg.userID, msg.orderID, msg.params), true
+	case groupExitMsg:
+		if len(msg.failures) > 0 {
+			a.showError(fmt.Errorf("exit %s: %d of %d orders failed\n%s", msg.name, len(msg.failures), len(msg.failures)+len(msg.placed), strings.Join(msg.failures, "\n")))
+			return a.orderChanged(msg.userID, statusWarn(fmt.Sprintf("Exit %s: %d placed, %d failed", msg.name, len(msg.placed), len(msg.failures)))), true
+		}
+		return a.orderChanged(msg.userID, statusOK(fmt.Sprintf("Exit %s · %d orders placed · check their status in Kite", msg.name, len(msg.placed)))), true
 	case orderCancelledMsg:
 		if msg.err != nil {
 			a.showError(fmt.Errorf("cancel order %s: %s", msg.order.OrderID, quoteErrorText(msg.err)))
@@ -898,4 +911,106 @@ func (a *app) confirmCancel(userID string, order kite.Order) tea.Cmd {
 	m.cursor = 1
 	a.overlay = m
 	return nil
+}
+
+// groupExitMsg reports exiting a group's positions: the orders placed and
+// why the others failed.
+type groupExitMsg struct {
+	userID   string
+	name     string
+	placed   []string
+	failures []string
+}
+
+// confirmExitGroup offers to close every open position under underlying
+// at market, in one go.
+func (a *app) confirmExitGroup(underlying models.InstrumentID) tea.Cmd {
+	p := a.portfolio
+	if a.deps.place == nil {
+		a.notify(statusWarn("Ordering is unavailable"))
+		return nil
+	}
+	name := displayName(p.data.instruments, underlying, string(underlying))
+	var exits []kite.OrderParams
+	var legs []string
+	var charged []kite.OrderChargesParam
+	for _, group := range groupPositions(p.data.positions, p.data.instruments) {
+		if group.underlying != underlying {
+			continue
+		}
+		for _, position := range group.positions {
+			ticket, err := closingTicket(p.positionTarget(position))
+			if err != nil {
+				continue
+			}
+			params, err := orderParams(ticket.instrument, orderInput{side: ticket.side, orderType: kite.OrderTypeMarket, product: ticket.product, quantity: strconv.Itoa(ticket.quantity)})
+			if err != nil {
+				a.showError(fmt.Errorf("exit %s: %w", position.Tradingsymbol, err))
+				return nil
+			}
+			exits = append(exits, params)
+			if position.LastPrice > 0 {
+				charged = append(charged, chargesParam(params, position.LastPrice))
+			}
+		}
+	}
+	if len(exits) == 0 {
+		a.notify(statusWarn("Nothing open under " + name))
+		return nil
+	}
+	// Buy back shorts before selling longs, so a hedge isn't lifted while
+	// the short it covers is still open.
+	sort.SliceStable(exits, func(i, j int) bool {
+		return exits[i].TransactionType == kite.TransactionTypeBuy && exits[j].TransactionType != kite.TransactionTypeBuy
+	})
+	width := 48
+	for _, params := range exits {
+		style := styleGreen
+		if params.TransactionType == kite.TransactionTypeSell {
+			style = styleRed
+		}
+		leg := fmt.Sprintf("%s %d", params.TransactionType, params.Quantity)
+		legs = append(legs, style.Bold(true).Render(leg)+" "+styleText.Render(params.Tradingsymbol)+styleFaint.Render(" · "+params.Product))
+		width = max(width, len(leg)+len(params.Tradingsymbol)+len(params.Product)+12)
+	}
+	userID, place := p.user.UserID, a.deps.place
+	m := &menu{title: "Exit " + name, info: styleMuted.Render(userID), width: width, keyFold: "YN",
+		body:   strings.Join(legs, "\n") + "\n" + styleFaint.Render("All at market, buys first.") + exitCharges(charged, len(exits)),
+		footer: "key or ↑↓ Enter · Esc keep"}
+	m.items = []menuItem{
+		{key: "Y", label: styleRed.Bold(true).Render("Y") + "  " + styleText.Render(fmt.Sprintf("Exit all %d", len(exits))), run: func(a *app) tea.Cmd {
+			a.notify(statusInfo(fmt.Sprintf("Exiting %d positions in %s…", len(exits), name)))
+			return a.task(func(ctx context.Context) tea.Msg {
+				msg := groupExitMsg{userID: userID, name: name}
+				for _, params := range exits {
+					orderID, err := place(ctx, userID, params)
+					if err != nil {
+						msg.failures = append(msg.failures, params.Tradingsymbol+": "+quoteErrorText(err))
+						continue
+					}
+					msg.placed = append(msg.placed, orderID)
+				}
+				return msg
+			})
+		}},
+		{key: "N", label: styleGreen.Bold(true).Render("N") + "  " + styleText.Render("Keep them"), run: func(*app) tea.Cmd { return nil }},
+	}
+	// Keep is the default, so a stray Enter exits nothing.
+	m.cursor = 1
+	a.overlay = m
+	return nil
+}
+
+// exitCharges estimates what exiting costs at the last prices, noting legs
+// without one.
+func exitCharges(params []kite.OrderChargesParam, legs int) string {
+	charges, err := kite.EstimateOrderCharges(params)
+	if err != nil || len(charges) == 0 {
+		return ""
+	}
+	text := "\n" + styleMuted.Render("Charges ") + styleYellow.Render("≈ ₹"+formatAmount(chargesTotal(charges)))
+	if len(charges) < legs {
+		text += styleFaint.Render(fmt.Sprintf(" for %d of %d legs", len(charges), legs))
+	}
+	return text
 }

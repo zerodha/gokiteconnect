@@ -866,6 +866,8 @@ type menu struct {
 	cursor int
 	width  int
 	footer string
+	// body is shown above the items.
+	body string
 	// keyFold matches item keys regardless of case for these keys.
 	keyFold string
 }
@@ -916,6 +918,9 @@ func (m *menu) view(_ *app, w, h int) string {
 	visible := max(min(len(m.items), h-8), 1)
 	first := min(max(m.cursor-visible/2, 0), max(len(m.items)-visible, 0))
 	var lines []string
+	if m.body != "" {
+		lines = append(lines, m.body, "")
+	}
 	for index := first; index < len(m.items) && index < first+visible; index++ {
 		text := padRight(" "+m.items[index].label, width-4)
 		if index == m.cursor {
