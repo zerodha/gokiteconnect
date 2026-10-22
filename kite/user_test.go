@@ -44,10 +44,21 @@ func (ts *TestSuite) TestGetUserSegmentMargins(t *testing.T) {
 	}
 }
 
+// newIsolatedClient returns a client that shares the suite's mocked HTTP
+// transport but not its state, for parallel tests that mutate the client.
+func (ts *TestSuite) newIsolatedClient() *Client {
+	kc := New("test_api_key")
+	kc.SetHTTPClient(ts.KiteConnect.httpClient.GetClient().client)
+	kc.SetBaseURI(ts.KiteConnect.baseURI)
+	kc.quotePacer = nil
+	return kc
+}
+
 func (ts *TestSuite) TestGenerateSessionSetsAccessToken(t *testing.T) {
 	t.Parallel()
 
-	session, err := ts.KiteConnect.GenerateSession("test_request_token", "test_api_secret")
+	kc := ts.newIsolatedClient()
+	session, err := kc.GenerateSession("test_request_token", "test_api_secret")
 	if err != nil {
 		t.Fatalf("Error while generating user session. Error: %v", err)
 	}
@@ -56,8 +67,8 @@ func (ts *TestSuite) TestGenerateSessionSetsAccessToken(t *testing.T) {
 		t.Fatal("Expected access token in generated session")
 	}
 
-	if ts.KiteConnect.accessToken != session.AccessToken {
-		t.Errorf("Expected client access token to be set to %q, got %q", session.AccessToken, ts.KiteConnect.accessToken)
+	if kc.accessToken != session.AccessToken {
+		t.Errorf("Expected client access token to be set to %q, got %q", session.AccessToken, kc.accessToken)
 	}
 
 	if session.UserSessionTokens.AccessToken != session.AccessToken {
@@ -68,7 +79,8 @@ func (ts *TestSuite) TestGenerateSessionSetsAccessToken(t *testing.T) {
 func (ts *TestSuite) TestRenewAccessTokenSetsAccessToken(t *testing.T) {
 	t.Parallel()
 
-	session, err := ts.KiteConnect.RenewAccessToken("test_refresh_token", "test_api_secret")
+	kc := ts.newIsolatedClient()
+	session, err := kc.RenewAccessToken("test_refresh_token", "test_api_secret")
 	if err != nil {
 		t.Fatalf("Error while renewing access token. Error: %v", err)
 	}
@@ -77,8 +89,8 @@ func (ts *TestSuite) TestRenewAccessTokenSetsAccessToken(t *testing.T) {
 		t.Fatal("Expected access token in renewed session")
 	}
 
-	if ts.KiteConnect.accessToken != session.AccessToken {
-		t.Errorf("Expected client access token to be set to %q, got %q", session.AccessToken, ts.KiteConnect.accessToken)
+	if kc.accessToken != session.AccessToken {
+		t.Errorf("Expected client access token to be set to %q, got %q", session.AccessToken, kc.accessToken)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -16,7 +17,9 @@ import (
 	"github.com/devshoe/gokiteconnect/config"
 	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
+	marketdata "github.com/devshoe/gokiteconnect/market-data-service"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/broker"
 	"github.com/devshoe/gokiteconnect/pkg/nse"
 )
 
@@ -143,6 +146,7 @@ type fakePlacer struct {
 
 type placedOrder struct {
 	userID string
+	mode   broker.Mode
 	params kite.OrderParams
 	// orderID is the order modified or cancelled; cancelled marks a
 	// cancellation.
@@ -150,33 +154,33 @@ type placedOrder struct {
 	cancelled bool
 }
 
-func (f *fakePlacer) modify(_ context.Context, userID string, order kite.Order, params kite.OrderParams) error {
+func (f *fakePlacer) modify(_ context.Context, userID string, mode broker.Mode, order kite.Order, params kite.OrderParams) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
-	f.orders = append(f.orders, placedOrder{userID: userID, params: params, orderID: order.OrderID})
+	f.orders = append(f.orders, placedOrder{userID: userID, mode: mode, params: params, orderID: order.OrderID})
 	return nil
 }
 
-func (f *fakePlacer) cancel(_ context.Context, userID string, order kite.Order) error {
+func (f *fakePlacer) cancel(_ context.Context, userID string, mode broker.Mode, order kite.Order) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
-	f.orders = append(f.orders, placedOrder{userID: userID, orderID: order.OrderID, cancelled: true})
+	f.orders = append(f.orders, placedOrder{userID: userID, mode: mode, orderID: order.OrderID, cancelled: true})
 	return nil
 }
 
-func (f *fakePlacer) place(_ context.Context, userID string, params kite.OrderParams) (string, error) {
+func (f *fakePlacer) place(_ context.Context, userID string, mode broker.Mode, params kite.OrderParams) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return "", f.err
 	}
-	f.orders = append(f.orders, placedOrder{userID: userID, params: params})
+	f.orders = append(f.orders, placedOrder{userID: userID, mode: mode, params: params})
 	return "2510120001", nil
 }
 
@@ -208,6 +212,15 @@ func (f *fakeQuotes) GetQuote(instruments ...string) (kite.Quote, error) {
 		if price, ok := f.prices[id]; ok {
 			quote := kite.QuoteData{LastPrice: price, OI: 1234567}
 			quote.OHLC.Close = price / 1.02
+			// Tradable instruments have five levels a tick apart; indices
+			// have no depth.
+			if !strings.Contains(id, "NIFTY 50") {
+				for level := range quote.Depth.Buy {
+					quote.Depth.Buy[level] = models.DepthItem{Price: price - 0.05*float64(level+1), Quantity: uint32(100 * (level + 1)), Orders: uint32(level + 1)}
+					quote.Depth.Sell[level] = models.DepthItem{Price: price + 0.05*float64(level+1), Quantity: uint32(50 * (level + 1)), Orders: uint32(level + 2)}
+				}
+				quote.BuyQuantity, quote.SellQuantity = 3000, 1000
+			}
 			quotes[id] = quote
 		}
 	}
@@ -277,10 +290,24 @@ func (f *fakeListStore) byName(name string) models.List {
 	return models.List{}
 }
 
-func (f *fakeListStore) GetLists(context.Context, string) ([]models.List, error) {
+// GetLists filters by creator and gives smart lists their parent's items,
+// as the SQLite store does.
+func (f *fakeListStore) GetLists(_ context.Context, createdBy string) ([]models.List, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]models.List(nil), f.lists...), nil
+	var lists []models.List
+	for _, list := range f.lists {
+		if createdBy != "" && list.CreatedBy != createdBy {
+			continue
+		}
+		for _, parent := range f.lists {
+			if list.IsSmart() && parent.ID == list.ParentID {
+				list.Items = parent.Items
+			}
+		}
+		lists = append(lists, list)
+	}
+	return lists, nil
 }
 
 func (f *fakeListStore) CreateList(_ context.Context, list models.List) (models.List, error) {
@@ -352,6 +379,9 @@ func (f *fakeListStore) update(id string, change func(*models.List)) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i := range f.lists {
+		if f.lists[i].ID == id && f.lists[i].IsSmart() {
+			return models.ErrSmartList
+		}
 		if f.lists[i].ID == id {
 			list := f.lists[i]
 			list.Items = append([]models.ListItem(nil), list.Items...)
@@ -426,7 +456,7 @@ func explorerDeps(t *testing.T, store *fakeCatalog, quotes *fakeQuotes, lists li
 		modify:       placer.modify,
 		cancel:       placer.cancel,
 		strikeEvery:  -1,
-		loadPortfolio: func(context.Context, credentials.Credentials) portfolio {
+		loadPortfolio: func(context.Context, credentials.Credentials, broker.Mode) portfolio {
 			return portfolio{loadedAt: time.Now(), loggedIn: true}
 		},
 	}
@@ -450,7 +480,7 @@ func TestAppMovesBetweenUsersPortfolioAndInstruments(t *testing.T) {
 	deps := explorerDeps(t, store, nil, nil, &fakePlacer{})
 	var loadedMu sync.Mutex
 	var loaded []string
-	deps.loadPortfolio = func(_ context.Context, user credentials.Credentials) portfolio {
+	deps.loadPortfolio = func(_ context.Context, user credentials.Credentials, _ broker.Mode) portfolio {
 		loadedMu.Lock()
 		loaded = append(loaded, user.UserID)
 		loadedMu.Unlock()
@@ -487,8 +517,8 @@ func TestAppMovesBetweenUsersPortfolioAndInstruments(t *testing.T) {
 		t.Errorf("the failed section is not reported:\n%s", h.screen())
 	}
 
-	// O on a position offers to close it.
-	h.press("o")
+	// + on a position offers to close it.
+	h.press("+")
 	m, ok := h.a.overlay.(*menu)
 	if !ok {
 		t.Fatalf("O opened %T", h.a.overlay)
@@ -505,11 +535,16 @@ func TestAppMovesBetweenUsersPortfolioAndInstruments(t *testing.T) {
 	h.press("i")
 	h.waitFor("the explorer", func() bool { return h.a.screen == screenInstruments && h.a.explorer.catalog != nil && h.idle() })
 	h.waitFor("underlyings", h.shows("RELIANCE"))
+	// Q no longer goes back; Esc does.
 	h.press("q")
-	if h.a.screen != screenPortfolio {
-		t.Fatalf("Q went to screen %d, want the portfolio", h.a.screen)
+	if h.a.screen != screenInstruments {
+		t.Fatalf("Q left the explorer for screen %d", h.a.screen)
 	}
-	h.press("q")
+	h.press("esc")
+	if h.a.screen != screenPortfolio {
+		t.Fatalf("Esc went to screen %d, want the portfolio", h.a.screen)
+	}
+	h.press("esc")
 	if h.a.screen != screenUsers {
 		t.Fatalf("Q went to screen %d, want users", h.a.screen)
 	}
@@ -534,6 +569,9 @@ func TestExplorerSearchChainAndPrices(t *testing.T) {
 	openExplorer(h)
 	e := h.a.explorer
 	h.waitFor("prices", h.shows("25040.00"))
+	if screen := h.screen(); !strings.Contains(screen, "EXCH") || !regexp.MustCompile(`NSE +│ NIFTY 50 +│ +25040\.00 │ +\+2\.00% `).MatchString(ansi.Strip(screen)) {
+		t.Fatalf("results do not show the exchange:\n%s", screen)
+	}
 
 	// Typing searches after the debounce.
 	h.press("/")
@@ -542,22 +580,44 @@ func TestExplorerSearchChainAndPrices(t *testing.T) {
 		t.Fatal("/ did not focus the search")
 	}
 	h.waitFor("search results", func() bool { return !e.underlyings && len(e.resultItems) == 1 })
-	h.press("esc", "u")
+	// Clearing the search brings the underlyings back.
+	h.press("backspace", "backspace", "backspace", "esc")
 	h.waitFor("underlyings again", func() bool { return e.underlyings && len(e.resultItems) == 2 })
 
-	// Enter opens NIFTY's chain with the at-the-money strike selected.
-	h.press("enter")
+	// O opens NIFTY's chain with the at-the-money strike selected.
+	h.press("o")
 	h.waitFor("the chain", func() bool { return e.mode == viewChain && h.idle() })
 	strikeAt := func() string {
 		selected, _ := e.chainGrid.selected()
-		return selected.cells[3].text
+		return selected.cells[chainStrike].text
 	}
 	h.waitFor("the ATM strike", func() bool { return strikeAt() == formatStrike(25000) })
 	if e.chainGrid.group != 0 {
 		t.Errorf("selected side = %d, want calls", e.chainGrid.group)
 	}
-	if !strings.Contains(h.screen(), "CALL BE%") {
-		t.Errorf("breakevens are not percentages by default")
+	// Beside each contract's price, CHG shows its change since the previous
+	// close and the percentage.
+	call, put := chainCells[0], chainCells[1]
+	h.waitFor("chain prices", func() bool { selected, _ := e.chainGrid.selected(); return selected.cells[call.ltp].text != "—" })
+	if selected, _ := e.chainGrid.selected(); !regexp.MustCompile(`^\+\d+\.\d\d \+2\.00%$`).MatchString(selected.cells[call.change].text) ||
+		selected.cells[call.ltp].text != "110.00" || selected.cells[put.ltp].text != "110.00" ||
+		!regexp.MustCompile(`^\+\d+\.\d\d \+\d+\.\d\d%$`).MatchString(selected.cells[put.change].text) {
+		t.Errorf("chain prices = %q %q and %q %q, want LTP and +change +percent", selected.cells[call.ltp].text, selected.cells[call.change].text,
+			selected.cells[put.ltp].text, selected.cells[put.change].text)
+	}
+	// One band names each side, over plain column titles.
+	if screen := ansi.Strip(h.screen()); !regexp.MustCompile(`CALLS ◂ +▸ PUTS`).MatchString(screen) ||
+		!regexp.MustCompile(`OI +POP +BE% +CHG +LTP +STRIKE +LTP +CHG +BE% +POP +OI`).MatchString(screen) {
+		t.Errorf("no CALLS/PUTS bands over percentage breakevens:\n%s", screen)
+	}
+	// POP is the model's chance a bought contract pays, from its implied
+	// volatility.
+	h.waitFor("POP", func() bool {
+		selected, _ := e.chainGrid.selected()
+		return strings.HasSuffix(selected.cells[call.pop].text, "%") && strings.HasSuffix(selected.cells[put.pop].text, "%")
+	})
+	if !strings.Contains(h.screen(), "Implied vol") {
+		t.Errorf("no POP column or model section:\n%s", h.screen())
 	}
 
 	// The status bar shows the margin per lot once fetched.
@@ -581,12 +641,58 @@ func TestExplorerSearchChainAndPrices(t *testing.T) {
 	}
 
 	h.press("%")
-	if e.breakevenPercent || !strings.Contains(h.screen(), "CALL BE ") {
+	if e.breakevenPercent || !regexp.MustCompile(`POP +BE +CHG +LTP`).MatchString(ansi.Strip(h.screen())) {
 		t.Errorf("%% did not switch breakevens to prices")
 	}
 
-	// Filters narrow the chain to puts.
-	h.press("f", "right", "right", "tab", "tab", "tab", "enter")
+	// Filters narrow the chain by price, hiding contracts priced outside
+	// the range and strikes with none left.
+	shown := func() (legs int, prices []float64) {
+		for _, r := range e.chainGrid.rows {
+			for _, ref := range r.refs {
+				if option, ok := ref.(models.Instrument); ok {
+					legs++
+					prices = append(prices, e.quotes[string(option.ID)].LastPrice)
+				}
+			}
+		}
+		return legs, prices
+	}
+	h.waitFor("chain prices", func() bool { _, prices := shown(); return !slices.Contains(prices, 0) })
+	all, _ := shown()
+	h.press("f", "tab", "tab", "tab")
+	h.typeText("105")
+	h.press("tab")
+	h.typeText("200")
+	h.press("tab", "tab", "tab", "enter")
+	if _, open := h.a.overlay.(*filterOverlay); open {
+		t.Fatalf("filters did not apply:\n%s", h.screen())
+	}
+	legs, prices := shown()
+	if legs == 0 || legs >= all {
+		t.Errorf("LTP filter shows %d of %d contracts", legs, all)
+	}
+	for _, price := range prices {
+		if price < 105 || price > 200 {
+			t.Errorf("LTP filter shows a contract at %g", price)
+		}
+	}
+	h.press("f", "tab", "tab", "tab", "tab", "tab")
+	h.typeText("1")
+	h.press("tab")
+	h.typeText("0.5")
+	h.press("tab", "enter")
+	if form, open := h.a.overlay.(*filterOverlay); !open || !strings.Contains(ansi.Strip(form.form.message), "minimum BE % exceeds maximum BE %") {
+		t.Fatalf("a backwards BE range was accepted:\n%s", h.screen())
+	}
+	h.press("esc")
+
+	// Reset clears every filter; then the side narrows the chain to puts.
+	h.press("f", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "right", "enter")
+	if e.chain.filter.minLTP != nil || e.chain.filter.maxLTP != nil {
+		t.Fatalf("reset kept the LTP filter: %+v", e.chain.filter)
+	}
+	h.press("f", "right", "right", "tab", "tab", "tab", "tab", "tab", "tab", "tab", "enter")
 	if _, open := h.a.overlay.(*filterOverlay); open {
 		t.Fatalf("filters did not apply:\n%s", h.screen())
 	}
@@ -600,13 +706,60 @@ func TestExplorerSearchChainAndPrices(t *testing.T) {
 		t.Errorf("expiry picker chose %d", e.chain.filter.expiryNumber)
 	}
 
-	h.press("q")
+	h.press("esc")
 	if e.mode != viewDashboard || !e.underlyings {
-		t.Errorf("Q returned to mode %d", e.mode)
+		t.Errorf("Esc returned to mode %d", e.mode)
 	}
 }
 
-func TestListsAndNSEMasterList(t *testing.T) {
+func TestListsViewShowsOnlyTheUsersLists(t *testing.T) {
+	store, _ := niftyMarket()
+	lists := &fakeListStore{lists: []models.List{
+		{ID: "admin-banks", CreatedBy: models.AdminUser, Name: "BANKS", Items: []models.ListItem{{InstrumentID: "NSE:RELIANCE"}}},
+		{ID: "other-user", CreatedBy: "ZZ9999", Name: "THEIRS"},
+	}}
+	h := newHarness(t, explorerDeps(t, store, nil, lists, &fakePlacer{}))
+	openExplorer(h)
+	e := h.a.explorer
+	h.waitFor("the default watchlist", func() bool { return e.watching && h.idle() })
+
+	// A offers only the user's own editable watchlists: the smart default
+	// can't take items, so a new watchlist it is.
+	h.press("a")
+	h.waitFor("the list picker", func() bool { _, ok := h.a.overlay.(*menu); return ok })
+	if picker := h.a.overlay.(*menu); len(picker.items) != 1 {
+		t.Fatalf("picker offers %d items, want only + New watchlist", len(picker.items))
+	}
+	h.press("enter")
+	h.typeText("Watch")
+	h.press("enter")
+	h.waitFor("the new watchlist", func() bool { return len(lists.byName("Watch").Items) == 1 && h.idle() })
+	if owner := lists.byName("Watch").CreatedBy; owner != "AB1234" {
+		t.Errorf("Watch belongs to %s", owner)
+	}
+
+	// L shows the user's lists, not ADMIN's or another user's.
+	h.press("l")
+	h.waitFor("lists", func() bool { return e.mode == viewLists && h.idle() })
+	var names []string
+	for _, r := range e.listsGrid.rows {
+		list := r.ref.(models.List)
+		if list.CreatedBy != "AB1234" {
+			t.Errorf("lists view shows %s's %s", list.CreatedBy, list.Name)
+		}
+		names = append(names, list.Name)
+	}
+	if !slices.Contains(names, "Watch") || !slices.Contains(names, marketdata.DefaultSyncListName) {
+		t.Errorf("lists view shows %v", names)
+	}
+
+	// D deletes the selected list after confirmation.
+	e.listsGrid.selectWhere(func(r row) bool { return r.ref.(models.List).Name == "Watch" })
+	h.press("d", "left", "enter")
+	h.waitFor("the deletion", func() bool { return lists.byName("Watch").ID == "" && h.idle() })
+}
+
+func TestAdminListsDownloadRefreshAndDelete(t *testing.T) {
 	store, _ := niftyMarket()
 	lists := &fakeListStore{}
 	deps := explorerDeps(t, store, nil, lists, &fakePlacer{})
@@ -615,53 +768,114 @@ func TestListsAndNSEMasterList(t *testing.T) {
 		constituents: map[string][]models.InstrumentID{"nifty50": {"NSE:RELIANCE", "NSE:INFY"}},
 	}
 	h := newHarness(t, deps)
-	openExplorer(h)
-	e := h.a.explorer
+	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
 
-	h.press("l")
-	h.waitFor("lists", func() bool { return e.mode == viewLists && h.idle() })
-	h.press("n")
-	h.typeText("Watch")
+	// H opens Admin on Historical Data; ] moves along the sub tabs.
+	h.press("h")
+	h.waitFor("Admin", func() bool { return h.a.screen == screenHistory && h.idle() })
+	if screen := h.screen(); !strings.Contains(screen, "Admin") || !strings.Contains(screen, "Historical Data") || !strings.Contains(screen, "Admin Lists") {
+		t.Fatalf("Admin's tabs are missing:\n%s", screen)
+	}
+	ad := h.a.admin
+	h.press("]")
+	h.waitFor("Instruments", func() bool { return ad.tab == adminInstruments && h.idle() })
+	h.press("]")
+	h.waitFor("ADMIN's lists", func() bool { return ad.tab == adminLists && len(ad.listsGrid.rows) == 3 && h.idle() })
+	h.waitFor("the index row", h.shows("not downloaded"))
+	if !strings.Contains(h.screen(), "Nifty 50") || !strings.Contains(h.screen(), marketdata.DefaultSyncListName) {
+		t.Fatalf("Admin Lists:\n%s", h.screen())
+	}
+
+	// Enter downloads the selected index; A downloads every one.
+	ad.listsGrid.selectWhere(func(r row) bool { return r.ref.(adminListRow).name == "NIFTY50" })
 	h.press("enter")
-	h.waitFor("the new list", func() bool { return len(e.listData) == 1 && h.idle() })
-
-	// A adds the selected instrument to a list from the picker.
-	h.press("q")
-	h.waitFor("the dashboard", func() bool { return e.mode == viewDashboard })
-	h.press("down", "a")
-	h.waitFor("the list picker", func() bool { _, ok := h.a.overlay.(*menu); return ok })
-	h.press("down", "enter")
-	h.waitFor("the item", func() bool { return len(lists.byName("Watch").Items) == 1 && h.idle() })
-	if got := lists.byName("Watch").Items[0].InstrumentID; got != "NSE:RELIANCE" {
-		t.Errorf("added %s", got)
-	}
-	if !strings.Contains(ansi.Strip(e.status), "Added NSE:RELIANCE to Watch") {
-		t.Errorf("status = %q", ansi.Strip(e.status))
+	h.waitFor("the download", func() bool { return len(lists.byName("NIFTY50").Items) == 2 && h.idle() })
+	h.press("a", "left", "enter")
+	h.waitFor("the FO list", func() bool { return len(lists.byName("FO_LIST").Items) == 2 && h.idle() })
+	if !strings.Contains(ansi.Strip(ad.listsStatus), "Saved 2") {
+		t.Errorf("status = %q", ansi.Strip(ad.listsStatus))
 	}
 
-	// M lists the indices; Enter downloads one, A every one.
-	h.press("l")
-	h.waitFor("lists", func() bool { return e.mode == viewLists && h.idle() })
-	h.waitFor("items", h.shows("NSE:RELIANCE"))
-	h.press("m")
-	h.waitFor("the master list", func() bool { _, ok := h.a.overlay.(*masterOverlay); return ok })
-	h.press("down", "enter")
-	h.waitFor("the download", func() bool { return len(lists.byName("NIFTY50").Items) == 2 })
-	h.waitFor("the master list again", func() bool { _, ok := h.a.overlay.(*masterOverlay); return ok })
-	h.press("a")
-	h.waitFor("the FO list", func() bool { return len(lists.byName("FO_LIST").Items) == 2 })
-	h.waitFor("the master list again", func() bool { _, ok := h.a.overlay.(*masterOverlay); return ok })
-	h.press("esc")
-
-	// R refreshes the selected index list.
-	h.waitFor("lists", func() bool { return len(e.listData) == 3 })
-	e.listsGrid.selectWhere(func(r row) bool { return r.ref.(models.List).Name == "NIFTY50" })
-	h.press("r")
-	h.waitFor("the refresh", func() bool { return h.idle() && strings.Contains(ansi.Strip(e.status), "Saved 1") })
-
-	// D deletes the selected list after confirmation.
+	// D deletes the selected list after confirmation; the index stays
+	// listed, not downloaded.
+	ad.listsGrid.selectWhere(func(r row) bool { return r.ref.(adminListRow).name == "NIFTY50" })
 	h.press("d", "left", "enter")
-	h.waitFor("the deletion", func() bool { return len(e.listData) == 2 && h.idle() })
+	h.waitFor("the deletion", func() bool { return lists.byName("NIFTY50").ID == "" && h.idle() })
+	if selected, _ := ad.listsGrid.selectedRef().(adminListRow); selected.name != "NIFTY50" || selected.list != nil {
+		t.Errorf("selected %+v after deleting", selected)
+	}
+
+	// Esc goes back to where Admin was opened from.
+	h.press("esc")
+	if h.a.screen != screenUsers {
+		t.Errorf("Esc went to screen %d", h.a.screen)
+	}
+}
+
+// fakeFundamentals serves a fixed summary, and counts its refreshes.
+type fakeFundamentals struct {
+	mu        sync.Mutex
+	summary   fundamentalsSummary
+	refreshes int
+}
+
+func (f *fakeFundamentals) Summary(context.Context) (fundamentalsSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.summary, nil
+}
+
+func (f *fakeFundamentals) Refresh(_ context.Context, progress func(page, pages int)) (fundamentalsSummary, error) {
+	progress(1, 1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshes++
+	f.summary = fundamentalsSummary{count: 3274, indexCount: 497, refreshedAt: time.Now()}
+	return f.summary, nil
+}
+
+func TestAdminInstrumentsSummaryAndRefresh(t *testing.T) {
+	store, _ := niftyMarket()
+	deps := explorerDeps(t, store, nil, &fakeListStore{}, &fakePlacer{})
+	fundamentals := &fakeFundamentals{summary: fundamentalsSummary{count: 3000, indexCount: 490, refreshedAt: time.Now().Add(-40 * 24 * time.Hour)}}
+	deps.fundamentals = fundamentals
+	h := newHarness(t, deps)
+	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
+	h.press("h")
+	h.waitFor("Admin", func() bool { return h.a.screen == screenHistory && h.idle() })
+	h.press("]")
+	h.waitFor("the summary", func() bool {
+		return h.a.admin.tab == adminInstruments && len(h.a.admin.summaryGrid.rows) > 0 && h.idle()
+	})
+	screen := ansi.Strip(h.screen())
+	if !strings.Contains(screen, "Instrument catalog") || !regexp.MustCompile(`F&O underlyings +2`).MatchString(screen) {
+		t.Fatalf("summary:\n%s", screen)
+	}
+	// The refresh time is an instant, shown on the exchange's clock.
+	h.a.admin.summary.lastRefreshed = time.Date(2026, 10, 21, 18, 37, 0, 0, time.UTC)
+	if screen := ansi.Strip(h.screen()); !strings.Contains(screen, "22 Oct 2026 00:07") {
+		t.Fatalf("refresh time not in IST:\n%s", screen)
+	}
+
+	h.press("r")
+	h.waitFor("the refresh", func() bool {
+		return h.idle() && strings.Contains(ansi.Strip(h.a.admin.summaryStatus), "Catalog refreshed from Kite")
+	})
+	if store.refreshCalls != 1 {
+		t.Errorf("refreshed %d times", store.refreshCalls)
+	}
+
+	// Fundamentals over a month old ask for a refresh, which F makes.
+	if screen := ansi.Strip(h.screen()); !regexp.MustCompile(`Fundamentals +3,000 instruments · 490 in the Nifty 500 · read .* 40d ago, press F to refresh`).MatchString(screen) {
+		t.Fatalf("stale fundamentals:\n%s", screen)
+	}
+	h.press("f")
+	h.waitFor("the fundamentals refresh", func() bool {
+		return h.idle() && strings.Contains(ansi.Strip(h.a.admin.summaryStatus), "Fundamentals refreshed")
+	})
+	if screen := ansi.Strip(h.screen()); fundamentals.refreshes != 1 || !regexp.MustCompile(`Fundamentals +3,274 instruments · 497 in the Nifty 500 · read .* just now`).MatchString(screen) {
+		t.Fatalf("after %d refreshes:\n%s", fundamentals.refreshes, screen)
+	}
 }
 
 func TestOrderMenuStrikePickerAndForm(t *testing.T) {
@@ -672,7 +886,7 @@ func TestOrderMenuStrikePickerAndForm(t *testing.T) {
 	h.waitFor("prices", h.shows("25040.00"))
 
 	// NIFTY is an index: options only, no raw orders.
-	h.press("o")
+	h.press("+")
 	m, ok := h.a.overlay.(*menu)
 	if !ok {
 		t.Fatalf("O opened %T", h.a.overlay)
@@ -721,14 +935,14 @@ func TestOrderMenuStrikePickerAndForm(t *testing.T) {
 	h.press("down", "down", "enter")
 	h.waitFor("the order", func() bool { return len(placer.placed()) == 1 && h.idle() })
 	order := placer.placed()[0]
-	if order.userID != "AB1234" || order.params.OrderType != kite.OrderTypeLimit || order.params.Price != 12.5 ||
+	if order.userID != "AB1234" || order.mode != broker.Paper || order.params.OrderType != kite.OrderTypeLimit || order.params.Price != 12.5 ||
 		order.params.Quantity != 75 || order.params.Tradingsymbol != "NIFTYW125000CE" || order.params.Product != kite.ProductNRML {
 		t.Errorf("placed %+v", order)
 	}
 
 	// A rejected order keeps the form open with the reason.
 	placer.fail(errors.New("insufficient funds"))
-	h.press("down", "o", "s")
+	h.press("down", "+", "s")
 	form, ok = h.a.overlay.(*orderForm)
 	if !ok {
 		t.Fatalf("s opened %T", h.a.overlay)
@@ -774,9 +988,9 @@ func TestRendersInSmallTerminals(t *testing.T) {
 	h := newHarness(t, explorerDeps(t, store, quotes, &fakeListStore{}, &fakePlacer{}))
 	openExplorer(h)
 	h.waitFor("prices", h.shows("25040.00"))
-	h.press("enter")
+	h.press("o")
 	h.waitFor("the chain", func() bool { return h.a.explorer.mode == viewChain && h.idle() })
-	h.press("o", "p")
+	h.press("+", "p")
 	h.waitFor("strikes", func() bool { p, ok := h.a.overlay.(*strikePicker); return ok && !p.loading })
 	for _, size := range [][2]int{{160, 50}, {100, 30}, {80, 24}, {60, 16}, {30, 10}} {
 		h.dispatch(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
@@ -793,7 +1007,7 @@ func TestPortfolioOrdersAndRawPayload(t *testing.T) {
 	store, _ := niftyMarket()
 	deps := explorerDeps(t, store, nil, nil, &fakePlacer{})
 	morning := time.Date(2026, 10, 13, 9, 20, 0, 0, time.Local)
-	deps.loadPortfolio = func(context.Context, credentials.Credentials) portfolio {
+	deps.loadPortfolio = func(context.Context, credentials.Credentials, broker.Mode) portfolio {
 		return portfolio{
 			orders: kite.Orders{
 				{OrderID: "1001", ExchangeOrderID: "EX1001", Status: "COMPLETE", Exchange: "NSE", TradingSymbol: "INFY", TransactionType: "BUY", OrderType: "MARKET", Product: "CNC", Quantity: 10, FilledQuantity: 10, AveragePrice: 1500, OrderTimestamp: models.Time{Time: morning}},
@@ -875,7 +1089,7 @@ func TestMarginModifyAndCancelOrders(t *testing.T) {
 	open := kite.Order{OrderID: "2001", Variety: "regular", Status: "OPEN", Exchange: "NFO", TradingSymbol: "NIFTY26OCT25000PE", TransactionType: "BUY",
 		OrderType: "LIMIT", Product: "NRML", Validity: "DAY", Quantity: 75, PendingQuantity: 75, Price: 110.5, OrderTimestamp: models.Time{Time: time.Now()}}
 	done := kite.Order{OrderID: "2002", Status: "COMPLETE", Exchange: "NSE", TradingSymbol: "INFY", TransactionType: "BUY", OrderType: "MARKET", Product: "CNC", Quantity: 1, FilledQuantity: 1}
-	deps.loadPortfolio = func(context.Context, credentials.Credentials) portfolio {
+	deps.loadPortfolio = func(context.Context, credentials.Credentials, broker.Mode) portfolio {
 		return portfolio{
 			orders:  kite.Orders{open, done},
 			margins: kite.AllMargins{Equity: kite.Margins{Net: 500000, Used: kite.UsedMargins{Debits: 140000}}},
@@ -922,7 +1136,7 @@ func TestMarginModifyAndCancelOrders(t *testing.T) {
 	h.press("down", "enter")
 	h.waitFor("the modification", func() bool { return len(placer.placed()) == 1 && h.a.overlay == nil })
 	got := placer.placed()[0]
-	if got.orderID != "2001" || got.userID != "AB1234" || got.params.Quantity != 150 || got.params.Price != 110.6 || got.params.OrderType != "LIMIT" || got.params.Tradingsymbol != "" {
+	if got.orderID != "2001" || got.userID != "AB1234" || got.mode != broker.Paper || got.params.Quantity != 150 || got.params.Price != 110.6 || got.params.OrderType != "LIMIT" || got.params.Tradingsymbol != "" {
 		t.Errorf("modified %+v", got)
 	}
 	h.waitFor("the reload", func() bool { return !h.a.portfolio.loading })
@@ -937,7 +1151,7 @@ func TestMarginModifyAndCancelOrders(t *testing.T) {
 	}
 	h.press("x", "y")
 	h.waitFor("the cancellation", func() bool { return len(placer.placed()) == 2 })
-	if got := placer.placed()[1]; !got.cancelled || got.orderID != "2001" {
+	if got := placer.placed()[1]; !got.cancelled || got.orderID != "2001" || got.mode != broker.Paper {
 		t.Errorf("cancelled %+v", got)
 	}
 	h.waitFor("the reload", func() bool { return !h.a.portfolio.loading })
@@ -968,24 +1182,28 @@ func TestOrderFormSteppers(t *testing.T) {
 	}
 }
 
-func TestSettingsDialog(t *testing.T) {
+func TestSettingsTab(t *testing.T) {
 	store, _ := niftyMarket()
 	deps := explorerDeps(t, store, nil, nil, &fakePlacer{})
 	h := newHarness(t, deps)
+	shift := func(code rune) { h.dispatch(tea.KeyPressMsg{Code: code, Mod: tea.ModShift}) }
 	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
 
-	// s opens settings; S stays sudo on the users screen.
-	h.press("S")
-	if !h.a.users.sudo || h.a.overlay != nil {
-		t.Fatalf("S: sudo %v, overlay %T", h.a.users.sudo, h.a.overlay)
+	// s no longer opens settings; Settings is the tab after Admin.
+	h.press("s")
+	if h.a.screen != screenUsers || h.a.settings != nil {
+		t.Fatalf("s: screen %v, settings %v", h.a.screen, h.a.settings != nil)
 	}
-	h.press("S", "s")
-	s, ok := h.a.overlay.(*settingsForm)
-	if !ok {
-		t.Fatalf("s opened %T", h.a.overlay)
+	if bar := ansi.Strip(h.a.tabBar(160)); !regexp.MustCompile(`Admin +Settings`).MatchString(bar) {
+		t.Fatalf("tab bar: %s", bar)
 	}
+	shift(tea.KeyLeft)
+	if h.a.screen != screenSettings || h.a.settings == nil {
+		t.Fatalf("Shift+← from Users: screen %v", h.a.screen)
+	}
+	s := h.a.settings
 	screen := h.screen()
-	for _, want := range []string{"Settings", "Base Path", "~/tradebot", "Where local files are stored", "Default User", "CC0006", "Price Mode", "quote", "NATS URL"} {
+	for _, want := range []string{"Settings", "Base Path", "~/tradebot", "Where local files are stored", "Default User", "CC0006", "Price Mode", "quote", "NATS URL", "SETTINGS"} {
 		if !strings.Contains(screen, want) {
 			t.Errorf("settings lack %q:\n%s", want, screen)
 		}
@@ -1003,45 +1221,60 @@ func TestSettingsDialog(t *testing.T) {
 		t.Fatalf("focused %q", got)
 	}
 	h.waitFor("the default user's help", h.shows("The account whose portfolio"))
-	if screen := h.screen(); strings.Contains(screen, "Where local files are stored") {
-		t.Errorf("the base path's help stayed:\n%s", screen)
-	}
 	for range len("CC0006") {
 		h.press("backspace")
 	}
-	h.typeText("ab1234")
+	// Letters are typed into the field, not taken as shortcuts.
+	h.typeText("wh1234")
+	if h.a.screen != screenSettings || s.form.current().value() != "wh1234" {
+		t.Fatalf("typing: screen %v, value %q", h.a.screen, s.form.current().value())
+	}
+	// Unsaved changes survive switching tabs.
+	shift(tea.KeyRight)
+	shift(tea.KeyLeft)
+	if h.a.screen != screenSettings || h.a.settings != s || !strings.Contains(h.screen(), "unsaved changes") {
+		t.Fatalf("switching tabs lost the edits")
+	}
 	h.press("down", "right")
 	h.waitFor("the ticker note", h.shows("Needs ticker-server running"))
-	// Enter on a field saves once something changed.
+	// Enter on a field saves once something changed, staying on the tab.
 	h.press("enter")
-	if h.a.overlay != nil {
-		t.Fatalf("Save left %T open: %s", h.a.overlay, ansi.Strip(s.message))
-	}
 	saved, err := config.ReadSettings(deps.settingsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := saved.Get("TRADEBOT_LOCAL_STORAGE_ROOT") + "|" + saved.Get("TRADEBOT_DEFAULT_USER_ID") + "|" + saved.Get("TRADEBOT_PRICE_MODE"); got != "~/tradebot|AB1234|ticker" {
+	if got := saved.Get("TRADEBOT_LOCAL_STORAGE_ROOT") + "|" + saved.Get("TRADEBOT_DEFAULT_USER_ID") + "|" + saved.Get("TRADEBOT_PRICE_MODE"); got != "~/tradebot|WH1234|ticker" {
 		t.Errorf("saved %s", got)
 	}
 	h.waitFor("the saved notice", h.shows("Settings saved"))
+	s = h.a.settings
+	if h.a.screen != screenSettings || s.edited() || s.form.current().label != "Price Mode" {
+		t.Fatalf("after saving: screen %v, edited %v", h.a.screen, s.edited())
+	}
 
-	// Enter with nothing changed moves on instead of saving.
-	h.press("s")
-	s = h.a.overlay.(*settingsForm)
-	h.press("enter")
-	if h.a.overlay == nil || s.form.current().label != "Default User" {
-		t.Fatalf("Enter without changes: overlay %T", h.a.overlay)
+	// Esc reverts unsaved changes, then goes back.
+	h.press("up")
+	for range len("WH1234") {
+		h.press("backspace")
+	}
+	h.press("esc")
+	s = h.a.settings
+	if h.a.screen != screenSettings || s.edited() || s.form.field("Default User").value() != "WH1234" {
+		t.Fatalf("Esc with changes: screen %v, default user %q", h.a.screen, s.form.field("Default User").value())
+	}
+	h.press("esc")
+	if h.a.screen != screenUsers {
+		t.Fatalf("Esc without changes went to %v", h.a.screen)
 	}
 
 	// An emptied field takes its default again.
-	for range len("AB1234") {
+	shift(tea.KeyLeft)
+	s = h.a.settings
+	s.form.focusField("Default User")
+	for range len("WH1234") {
 		h.press("backspace")
 	}
 	pressSave(h, s)
-	if h.a.overlay != nil {
-		t.Fatalf("Save left %T open", h.a.overlay)
-	}
 	if saved, err = config.ReadSettings(deps.settingsPath); err != nil {
 		t.Fatal(err)
 	}
@@ -1101,7 +1334,7 @@ func TestGroupExitAndCharges(t *testing.T) {
 		{OrderID: "1001", Status: "COMPLETE", Exchange: "NSE", TradingSymbol: "INFY", TransactionType: "BUY", OrderType: "MARKET", Product: "CNC", Quantity: 10, FilledQuantity: 10, AveragePrice: 1500},
 		{OrderID: "1002", Status: "REJECTED", Exchange: "NFO", TradingSymbol: "NIFTY26OCT25000PE", TransactionType: "SELL", OrderType: "LIMIT", Product: "NRML", Quantity: 75, Price: 120},
 	}
-	deps.loadPortfolio = func(context.Context, credentials.Credentials) portfolio {
+	deps.loadPortfolio = func(context.Context, credentials.Credentials, broker.Mode) portfolio {
 		data := portfolio{
 			positions: []kite.Position{
 				{Tradingsymbol: "NIFTY26OCTFUT", Exchange: "NFO", Product: "NRML", Quantity: 75, LastPrice: 25000},
@@ -1127,9 +1360,9 @@ func TestGroupExitAndCharges(t *testing.T) {
 	// bought for delivery at 1,500 cost 17.81.
 	h.waitFor("the day's charges", h.shows("charges ₹17.81"))
 
-	// O on a position's order form estimates its charges.
+	// + on a position's order form estimates its charges.
 	p := h.a.portfolio
-	h.press("down", "o", "b")
+	h.press("down", "+", "b")
 	if _, ok := h.a.overlay.(*orderForm); !ok {
 		t.Fatalf("o b opened %T", h.a.overlay)
 	}
@@ -1170,4 +1403,114 @@ func TestGroupExitAndCharges(t *testing.T) {
 	if second.TransactionType != "SELL" || second.Tradingsymbol != "NIFTY26OCTFUT" || second.Quantity != 75 {
 		t.Errorf("second exit = %+v", second)
 	}
+}
+
+func TestInstrumentSidebarShowsMarketDepth(t *testing.T) {
+	store, quotes := niftyMarket()
+	h := newHarness(t, explorerDeps(t, store, quotes, &fakeListStore{}, &fakePlacer{}))
+	openExplorer(h)
+	h.waitFor("prices", h.shows("25040.00"))
+
+	// NIFTY 50 is an index, without depth.
+	if strings.Contains(h.screen(), "Depth") {
+		t.Errorf("an index shows depth:\n%s", h.screen())
+	}
+	h.press("down")
+	h.waitFor("RELIANCE's depth", h.shows("Depth"))
+	screen := ansi.Strip(h.screen())
+	for _, want := range []*regexp.Regexp{
+		regexp.MustCompile(`ORD +QTY +BID ASK +QTY +ORD`),
+		regexp.MustCompile(`1 +100 +1399\.95 1400\.05 +50 +2`),
+		regexp.MustCompile(`5 +500 +1399\.75 1400\.25 +250 +6`),
+		regexp.MustCompile(`3000 bid · 75% +25% · 1000 offered`),
+	} {
+		if !want.MatchString(screen) {
+			t.Errorf("no %s in the sidebar:\n%s", want, screen)
+		}
+	}
+	// The sidebar is live data only; M shows the catalog metadata.
+	if strings.Contains(screen, "Identity") || !strings.Contains(screen, "M metadata") {
+		t.Errorf("the sidebar shows metadata:\n%s", screen)
+	}
+	h.press("m")
+	if o, ok := h.a.overlay.(*textOverlay); !ok || !strings.Contains(o.text, "Identity") || !strings.Contains(ansi.Strip(o.text), "Lot size       1") {
+		t.Fatalf("M opened %#v", h.a.overlay)
+	}
+	h.press("m")
+	if h.a.overlay != nil {
+		t.Errorf("M again left %T open", h.a.overlay)
+	}
+}
+
+func TestExplorerSortsTheInstrumentList(t *testing.T) {
+	store, quotes := niftyMarket()
+	h := newHarness(t, explorerDeps(t, store, quotes, nil, &fakePlacer{}))
+	openExplorer(h)
+	h.waitFor("prices", h.shows("1400.00"))
+	first := func() models.InstrumentID {
+		instrument, _ := h.a.explorer.results.rows[0].ref.(models.Instrument)
+		return instrument.ID
+	}
+	selected := func() models.InstrumentID {
+		instrument, _ := h.a.explorer.selectedInstrument()
+		return instrument.ID
+	}
+	h.waitFor("a settled list", h.idle)
+	listFirst := first()
+	if selected() != "NSE:NIFTY 50" {
+		h.press("down")
+	}
+	if selected() != "NSE:NIFTY 50" {
+		t.Fatalf("selected %s", selected())
+	}
+
+	// LTP ascending puts RELIANCE first and descending NIFTY, with the
+	// selection following NIFTY.
+	h.press("S")
+	h.waitFor("the sort menu", h.shows("Sort by"))
+	h.press("down", "down", "down", "enter")
+	h.waitFor("the sorted header", h.shows("LTP ▲"))
+	if first() != "NSE:RELIANCE" || selected() != "NSE:NIFTY 50" {
+		t.Fatalf("ascending LTP: first %s, selected %s", first(), selected())
+	}
+
+	// Picking LTP again reverses it.
+	h.press("S", "enter")
+	h.waitFor("the reversed header", h.shows("LTP ▼"))
+	if first() != "NSE:NIFTY 50" || selected() != "NSE:NIFTY 50" {
+		t.Fatalf("descending LTP: first %s, selected %s", first(), selected())
+	}
+
+	// List order restores the catalog's order and the plain header.
+	h.press("S", "up", "up", "up", "enter")
+	h.waitFor("the plain header", func() bool { return !strings.Contains(h.screen(), "LTP ▼") })
+	if first() != listFirst {
+		t.Fatalf("list order starts with %s, want %s", first(), listFirst)
+	}
+}
+
+func TestUsersOpensKiteWeb(t *testing.T) {
+	store, _ := niftyMarket()
+	deps := explorerDeps(t, store, nil, nil, &fakePlacer{})
+	opened := make(chan string, 1)
+	deps.openWeb = func(_ context.Context, user credentials.Credentials) error {
+		opened <- user.UserID
+		return nil
+	}
+	h := newHarness(t, deps)
+	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
+
+	h.press("b")
+	h.waitFor("Kite web", h.shows("Kite web opened for AB1234"))
+	if got := <-opened; got != "AB1234" {
+		t.Fatalf("opened Kite web for %q, want AB1234", got)
+	}
+	if !h.idle() {
+		t.Fatal("busy overlay still open")
+	}
+
+	deps.openWeb = nil
+	h.a.deps.openWeb = nil
+	h.press("b")
+	h.waitFor("unavailable notice", h.shows("Kite web is not available"))
 }

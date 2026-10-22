@@ -356,7 +356,7 @@ func newPayloadOverlay(order kite.Order) *payloadOverlay {
 
 func (o *payloadOverlay) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
-	case "esc", "q", "Q", "enter":
+	case "esc", "enter":
 		a.closeOverlay()
 	case "up", "k", "K":
 		o.offset = max(o.offset-1, 0)

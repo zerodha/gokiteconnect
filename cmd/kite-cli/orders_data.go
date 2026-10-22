@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/broker"
 )
 
 // orderTag marks orders placed from kite-cli in the order book.
@@ -35,9 +35,12 @@ type orderTicket struct {
 	// closing marks an order that exits a position or holding.
 	closing bool
 	// modify is the open order the form changes, placed by userID; its
-	// account, side and product are fixed.
+	// account, side and product are fixed. Otherwise userID is the account
+	// the form starts on, when set.
 	modify *kite.Order
 	userID string
+	// item is the basket order the form changes; its account is fixed.
+	item *basketItemRef
 	// price and trigger prefill the price fields.
 	price, trigger float64
 }
@@ -71,58 +74,45 @@ func newOrderTicket(instrument models.Instrument, side string, ltp float64) orde
 	}
 }
 
-// orderPlacer places a regular order with userID's session and returns its
-// order ID.
-type orderPlacer func(ctx context.Context, userID string, params kite.OrderParams) (string, error)
+// orderPlacer places a regular order in userID's account in mode and
+// returns its order ID.
+type orderPlacer func(ctx context.Context, userID string, mode broker.Mode, params kite.OrderParams) (string, error)
 
-// kiteOrderPlacer places orders with the user's stored session, logging in
-// first only when it has expired.
-func kiteOrderPlacer(manager *credentials.UserManager) orderPlacer {
-	return func(ctx context.Context, userID string, params kite.OrderParams) (string, error) {
-		user, _, err := manager.RefreshUserSessionIfRequired(ctx, userID)
+// orderModifier changes an open order of userID's to params' quantity,
+// type, price and trigger.
+type orderModifier func(ctx context.Context, userID string, mode broker.Mode, order kite.Order, params kite.OrderParams) error
+
+// orderCanceller cancels an open order of userID's.
+type orderCanceller func(ctx context.Context, userID string, mode broker.Mode, order kite.Order) error
+
+// accountOrderPlacer places orders in the account accounts opens: the paper
+// account, or the user's stored Kite session, logging in first only when it
+// has expired.
+func accountOrderPlacer(accounts broker.Accounts) orderPlacer {
+	return func(ctx context.Context, userID string, mode broker.Mode, params kite.OrderParams) (string, error) {
+		account, err := accounts.Open(ctx, userID, mode)
 		if err != nil {
 			return "", err
 		}
-		client := user.KiteClient()
-		client.SetAppName("kite-cli")
-		response, err := client.PlaceOrder(kite.VarietyRegular, params)
+		response, err := account.PlaceOrder(kite.VarietyRegular, params)
 		return response.OrderID, err
 	}
 }
 
-// orderModifier changes an open order of userID's to params' quantity,
-// type, price and trigger.
-type orderModifier func(ctx context.Context, userID string, order kite.Order, params kite.OrderParams) error
-
-// orderCanceller cancels an open order of userID's.
-type orderCanceller func(ctx context.Context, userID string, order kite.Order) error
-
-// kiteOrderClient is userID's client, logging in first only when the stored
-// session has expired.
-func kiteOrderClient(ctx context.Context, manager *credentials.UserManager, userID string) (*kite.Client, error) {
-	user, _, err := manager.RefreshUserSessionIfRequired(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	client := user.KiteClient()
-	client.SetAppName("kite-cli")
-	return client, nil
-}
-
-func kiteOrderModifier(manager *credentials.UserManager) orderModifier {
-	return func(ctx context.Context, userID string, order kite.Order, params kite.OrderParams) error {
-		client, err := kiteOrderClient(ctx, manager, userID)
+func accountOrderModifier(accounts broker.Accounts) orderModifier {
+	return func(ctx context.Context, userID string, mode broker.Mode, order kite.Order, params kite.OrderParams) error {
+		account, err := accounts.Open(ctx, userID, mode)
 		if err != nil {
 			return err
 		}
-		_, err = client.ModifyOrder(orderVariety(order), order.OrderID, params)
+		_, err = account.ModifyOrder(orderVariety(order), order.OrderID, params)
 		return err
 	}
 }
 
-func kiteOrderCanceller(manager *credentials.UserManager) orderCanceller {
-	return func(ctx context.Context, userID string, order kite.Order) error {
-		client, err := kiteOrderClient(ctx, manager, userID)
+func accountOrderCanceller(accounts broker.Accounts) orderCanceller {
+	return func(ctx context.Context, userID string, mode broker.Mode, order kite.Order) error {
+		account, err := accounts.Open(ctx, userID, mode)
 		if err != nil {
 			return err
 		}
@@ -130,7 +120,7 @@ func kiteOrderCanceller(manager *credentials.UserManager) orderCanceller {
 		if order.ParentOrderID != "" {
 			parent = &order.ParentOrderID
 		}
-		_, err = client.CancelOrder(orderVariety(order), order.OrderID, parent)
+		_, err = account.CancelOrder(orderVariety(order), order.OrderID, parent)
 		return err
 	}
 }
@@ -158,6 +148,74 @@ func modifyParams(params kite.OrderParams) kite.OrderParams {
 		TriggerPrice: params.TriggerPrice,
 		Validity:     params.Validity,
 	}
+}
+
+// marginLeg is params as Kite's margin calculator takes it.
+func marginLeg(params kite.OrderParams) kite.OrderMarginParam {
+	return kite.OrderMarginParam{Exchange: params.Exchange, Tradingsymbol: params.Tradingsymbol, TransactionType: params.TransactionType,
+		Variety: kite.VarietyRegular, Product: params.Product, OrderType: params.OrderType, Quantity: float64(params.Quantity),
+		Price: params.Price, TriggerPrice: params.TriggerPrice}
+}
+
+// Price hints flag a price or trigger against the last price.
+const (
+	hintImmediate    = "! Immediate Execution !"
+	hintTriggerAbove = "! Trigger must be > LTP !"
+	hintTriggerBelow = "! Trigger must be < LTP !"
+	hintPriceAtLeast = "! Price must be ≥ trigger !"
+	hintPriceAtMost  = "! Price must be ≤ trigger !"
+)
+
+// priceHints warns about the price and trigger of a side's order of
+// orderType against ltp: a limit that crosses the last price fills at once,
+// a stop-loss buy triggers above the last price and a sell below it, and a
+// stop-loss limit is past its trigger. Unset values and an unknown ltp
+// draw no hint.
+func priceHints(side, orderType string, price, trigger, ltp float64) (priceHint, triggerHint string) {
+	buy := side == kite.TransactionTypeBuy
+	switch orderType {
+	case kite.OrderTypeLimit:
+		if ltp > 0 && price > 0 && ((buy && price > ltp) || (!buy && price < ltp)) {
+			priceHint = hintImmediate
+		}
+	case kite.OrderTypeSL, kite.OrderTypeSLM:
+		switch {
+		case ltp <= 0 || trigger <= 0:
+		case buy && trigger <= ltp:
+			triggerHint = hintTriggerAbove
+		case !buy && trigger >= ltp:
+			triggerHint = hintTriggerBelow
+		}
+		if orderType == kite.OrderTypeSL && price > 0 && trigger > 0 {
+			switch {
+			case buy && price < trigger:
+				priceHint = hintPriceAtLeast
+			case !buy && price > trigger:
+				priceHint = hintPriceAtMost
+			}
+		}
+	}
+	return priceHint, triggerHint
+}
+
+// stopLossError is why Kite would reject params' stop-loss prices against
+// ltp, or nil.
+func stopLossError(params kite.OrderParams, ltp float64) error {
+	priceHint, triggerHint := priceHints(params.TransactionType, params.OrderType, params.Price, params.TriggerPrice, ltp)
+	side := strings.ToLower(params.TransactionType)
+	switch triggerHint {
+	case hintTriggerAbove:
+		return fmt.Errorf("a stop-loss %s's trigger must be above the LTP, %s", side, formatAmount(ltp))
+	case hintTriggerBelow:
+		return fmt.Errorf("a stop-loss %s's trigger must be below the LTP, %s", side, formatAmount(ltp))
+	}
+	switch priceHint {
+	case hintPriceAtLeast:
+		return errors.New("a stop-loss buy's price must be at least its trigger")
+	case hintPriceAtMost:
+		return errors.New("a stop-loss sell's price must be at most its trigger")
+	}
+	return nil
 }
 
 // stepPrice moves price by steps ticks, snapped to the tick; an unset

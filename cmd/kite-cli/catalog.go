@@ -23,6 +23,7 @@ type catalog interface {
 	Refresh(context.Context) error
 	LastRefreshedAt(context.Context) (time.Time, error)
 	Get(context.Context, models.InstrumentID) (models.Instrument, error)
+	List(context.Context, ...string) ([]models.Instrument, error)
 	ListFO(context.Context, ...string) ([]models.Instrument, error)
 	Search(context.Context, string, int) ([]models.Instrument, error)
 	GetFutures(context.Context, models.FuturesFilter) ([]models.Instrument, error)
@@ -80,6 +81,7 @@ type dashboardSnapshot struct {
 	query      string
 	results    []models.Instrument
 	selectedID models.InstrumentID
+	watching   bool
 }
 
 type expiryChoice struct {
@@ -134,6 +136,32 @@ type chainFilter struct {
 	minStrike    *float64
 	maxStrike    *float64
 	side         optionSide
+	// The price filters need quotes, so they hide contracts as prices
+	// arrive; a contract without a price yet is shown. The breakeven range
+	// is how far the breakeven is from spot, in percent either way.
+	minLTP       *float64
+	maxLTP       *float64
+	minBreakeven *float64
+	maxBreakeven *float64
+}
+
+// hidesByPrice reports whether the price filters hide a contract quoted at
+// premium, with the underlying at spot.
+func (f chainFilter) hidesByPrice(option models.Instrument, premium, spot float64) bool {
+	if premium <= 0 {
+		return false
+	}
+	if outside(premium, f.minLTP, f.maxLTP) {
+		return true
+	}
+	if spot <= 0 || (f.minBreakeven == nil && f.maxBreakeven == nil) {
+		return false
+	}
+	return outside(math.Abs(breakeven(option, premium)-spot)/spot*100, f.minBreakeven, f.maxBreakeven)
+}
+
+func outside(value float64, minimum, maximum *float64) bool {
+	return (minimum != nil && value < *minimum) || (maximum != nil && value > *maximum)
 }
 
 type chainRow struct {
@@ -237,28 +265,33 @@ func drilldownUnderlying(instrument models.Instrument) (models.InstrumentID, boo
 }
 
 func parseStrikeRange(minimum, maximum string) (*float64, *float64, error) {
-	min, err := parseOptionalStrike("minimum", minimum)
+	return parseRange("strike", minimum, maximum)
+}
+
+// parseRange reads an optional minimum and maximum of the noun.
+func parseRange(noun, minimum, maximum string) (*float64, *float64, error) {
+	min, err := parseOptionalNumber("minimum "+noun, minimum)
 	if err != nil {
 		return nil, nil, err
 	}
-	max, err := parseOptionalStrike("maximum", maximum)
+	max, err := parseOptionalNumber("maximum "+noun, maximum)
 	if err != nil {
 		return nil, nil, err
 	}
 	if min != nil && max != nil && *min > *max {
-		return nil, nil, fmt.Errorf("minimum strike exceeds maximum strike")
+		return nil, nil, fmt.Errorf("minimum %s exceeds maximum %s", noun, noun)
 	}
 	return min, max, nil
 }
 
-func parseOptionalStrike(label, value string) (*float64, error) {
+func parseOptionalNumber(label, value string) (*float64, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, nil
 	}
 	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 {
-		return nil, fmt.Errorf("%s strike must be a non-negative number", label)
+		return nil, fmt.Errorf("%s must be a non-negative number", label)
 	}
 	return &parsed, nil
 }
@@ -289,16 +322,6 @@ const (
 	viewLists
 )
 
-type refreshedView struct {
-	lastRefreshed   time.Time
-	underlyingCount int
-	query           string
-	underlyings     bool
-	results         []models.Instrument
-	selectedID      models.InstrumentID
-	chain           *chainData
-}
-
 func loadChainData(ctx context.Context, catalog catalog, underlying models.InstrumentID) (chainData, error) {
 	futures, err := catalog.GetFutures(ctx, models.FuturesFilter{UnderlyingID: underlying})
 	if err != nil {
@@ -321,52 +344,6 @@ func loadChainData(ctx context.Context, catalog catalog, underlying models.Instr
 	}, nil
 }
 
-// reloadAfterRefresh refreshes the whole catalog and reloads what the
-// explorer shows: the chain, or the search results or underlyings.
-func reloadAfterRefresh(
-	ctx context.Context,
-	catalog catalog,
-	mode viewMode,
-	query string,
-	selectedID models.InstrumentID,
-	underlying models.InstrumentID,
-	filter chainFilter,
-) (refreshedView, error) {
-	if err := catalog.Refresh(ctx); err != nil {
-		return refreshedView{}, err
-	}
-	lastRefreshed, err := catalog.LastRefreshedAt(ctx)
-	if err != nil {
-		return refreshedView{}, err
-	}
-	underlyings, err := catalog.ListFO(ctx)
-	if err != nil {
-		return refreshedView{}, err
-	}
-	view := refreshedView{
-		lastRefreshed:   lastRefreshed,
-		underlyingCount: len(underlyings),
-		query:           query,
-		underlyings:     query == "",
-		selectedID:      selectedID,
-	}
-	if mode == viewChain {
-		data, err := loadChainData(ctx, catalog, underlying)
-		if err != nil {
-			return refreshedView{}, err
-		}
-		data.filter = preserveChainFilter(data, filter)
-		view.chain = &data
-		return view, nil
-	}
-	if query == "" {
-		view.results = underlyings
-	} else {
-		view.results, err = catalog.Search(ctx, query, searchLimit)
-	}
-	return view, err
-}
-
 // preserveChainFilter keeps the previous filter on reloaded chain data,
 // falling back to the nearest expiry when the previous one is gone.
 func preserveChainFilter(data chainData, previous chainFilter) chainFilter {
@@ -380,6 +357,8 @@ func preserveChainFilter(data chainData, previous chainFilter) chainFilter {
 	filter.minStrike = previous.minStrike
 	filter.maxStrike = previous.maxStrike
 	filter.side = previous.side
+	filter.minLTP, filter.maxLTP = previous.minLTP, previous.maxLTP
+	filter.minBreakeven, filter.maxBreakeven = previous.minBreakeven, previous.maxBreakeven
 	return filter
 }
 

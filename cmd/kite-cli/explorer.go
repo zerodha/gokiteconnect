@@ -1,10 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +16,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
-	"github.com/devshoe/gokiteconnect/pkg/nse"
+	"github.com/devshoe/gokiteconnect/pkg/bsm"
 )
 
 // explorerScreen explores the instrument catalog: F&O underlyings and
@@ -48,10 +50,20 @@ type explorerScreen struct {
 	// breakevenPercent shows breakevens as the move from spot.
 	breakevenPercent bool
 
-	listData      []models.List
-	listsGrid     grid
-	itemsGrid     grid
-	masterIndices []nse.NSEIndexMetadata
+	// watchlists are watchUser's lists; watching marks the instrument
+	// table showing watchlists[watchIndex]. watchGen drops a watchlist
+	// lookup a newer one replaced.
+	watchUser  string
+	watchlists []models.List
+	watchIndex int
+	watching   bool
+	watchGen   int
+	// watchNote replaces the status when the next watchlist shows.
+	watchNote string
+
+	listData  []models.List
+	listsGrid grid
+	itemsGrid grid
 
 	// Prices come from the data user's REST quotes.
 	quoteSource quoteSource
@@ -63,8 +75,11 @@ type explorerScreen struct {
 	quotes        map[string]kite.QuoteData
 	quotesAt      time.Time
 	quoteInFlight bool
-	quoteAgain    bool
-	connecting    bool
+	// resultSort orders the instrument list; its zero value keeps the
+	// search's or watchlist's own order.
+	resultSort resultSort
+	quoteAgain bool
+	connecting bool
 
 	// Margins are per lot, cached by contract and fetched once a contract
 	// stays selected for marginDelay.
@@ -87,10 +102,9 @@ func newExplorerScreen() *explorerScreen {
 		breakevenPercent: true,
 		status:           statusInfo("Opening catalog…"),
 		results: grid{columns: []column{
-			{title: "SYMBOL", width: 22}, right("LTP", 10), right("CHG%", 8), {title: "TYPE", width: 5},
-			{title: "EXPIRY", width: 11}, right("STRIKE", 9), right("OPT", 5), right("FUT", 4), right("LOT", 6),
-			right("TOKEN", 10), {title: "NAME", width: 10, flex: 1},
-		}},
+			{title: "EXCH", width: 6}, {title: "NAME", width: 26}, right("LTP", 10), right("CHG%", 8),
+			right("STRIKE", 9), {title: "EXPIRY", width: 11, flex: 1},
+		}, lines: true},
 		futures: grid{columns: []column{
 			{title: "SYMBOL", width: 22}, {title: "EXPIRY", width: 11}, right("LTP", 10), right("CHG%", 8),
 			right("LOT", 6), right("TOKEN", 10), {title: "DISPLAY NAME", width: 10, flex: 1},
@@ -108,19 +122,36 @@ func newExplorerScreen() *explorerScreen {
 	return e
 }
 
+// chainLeg is where one side's cells sit in a chain row. The call's run
+// OI, POP, BE, CHG, LTP towards the strike; the put's LTP, CHG, BE, POP,
+// OI away from it.
+type chainLeg struct{ oi, pop, be, change, ltp int }
+
+const chainStrike = 5
+
+var chainCells = [2]chainLeg{{oi: 0, pop: 1, be: 2, change: 3, ltp: 4}, {ltp: 6, change: 7, be: 8, pop: 9, oi: 10}}
+
 func (e *explorerScreen) setChainColumns() {
 	be := "BE"
 	if e.breakevenPercent {
 		be = "BE%"
 	}
 	e.chainGrid.columns = []column{
-		{title: "CALL OI", width: 10, flex: 1, align: alignRight, group: 0},
-		{title: "CALL " + be, width: 9, align: alignRight, group: 0},
-		{title: "CALL LTP", width: 9, align: alignRight, group: 0},
+		{title: "OI", width: 8, flex: 1, align: alignRight, group: 0},
+		{title: "POP", width: 6, align: alignRight, group: 0},
+		{title: be, width: 8, align: alignRight, group: 0},
+		{title: "CHG", width: 14, align: alignRight, group: 0},
+		{title: "LTP", width: 8, align: alignRight, group: 0},
 		{title: "STRIKE", width: 10, align: alignCenter, group: -1},
-		{title: "PUT LTP", width: 9, group: 1},
-		{title: "PUT " + be, width: 9, group: 1},
-		{title: "PUT OI", width: 10, flex: 1, group: 1},
+		{title: "LTP", width: 8, group: 1},
+		{title: "CHG", width: 14, group: 1},
+		{title: be, width: 8, group: 1},
+		{title: "POP", width: 6, group: 1},
+		{title: "OI", width: 8, flex: 1, group: 1},
+	}
+	e.chainGrid.bands = []cell{
+		textCell("CALLS ◂", styleGreen.Bold(true)),
+		textCell("▸ PUTS", styleRed.Bold(true)),
 	}
 }
 
@@ -156,6 +187,11 @@ func (e *explorerScreen) modeName() string {
 		return "OPTION CHAIN · " + string(e.chain.underlying)
 	case e.mode == viewLists:
 		return "LISTS"
+	case e.watching:
+		if list, ok := e.currentWatchlist(); ok {
+			return "WATCHLIST · " + list.Name
+		}
+		return "WATCHLIST"
 	case !e.underlyings:
 		return "SEARCH RESULTS"
 	}
@@ -177,10 +213,6 @@ type (
 	}
 	chainLoadedMsg struct {
 		data chainData
-		err  error
-	}
-	catalogRefreshedMsg struct {
-		view refreshedView
 		err  error
 	}
 	quotesConnectedMsg struct {
@@ -242,7 +274,7 @@ func (a *app) handleExplorer(msg tea.Msg) (tea.Cmd, bool) {
 		e.underlyingCount = len(msg.initial.underlyings)
 		cmd := a.setResults(msg.initial.underlyings, true)
 		e.status = styleGreen.Bold(true).Render("READY") + statusInfo(fmt.Sprintf(" · %d F&O underlyings", len(msg.initial.underlyings)))
-		return cmd, true
+		return tea.Batch(cmd, a.loadWatchlists("")), true
 	case searchFireMsg:
 		if msg.generation != e.searchGen {
 			return nil, true
@@ -279,26 +311,6 @@ func (a *app) handleExplorer(msg tea.Msg) (tea.Cmd, bool) {
 		e.focus = 1
 		e.chainGrid.cursor, e.chainGrid.offset, e.chainGrid.group = 0, 0, 0
 		return a.renderChain(), true
-	case catalogRefreshedMsg:
-		a.closeOverlay()
-		if msg.err != nil {
-			a.showError(msg.err)
-			return nil, true
-		}
-		view := msg.view
-		e.lastRefreshed = view.lastRefreshed
-		e.underlyingCount = view.underlyingCount
-		var cmd tea.Cmd
-		if view.chain != nil {
-			e.chain = view.chain
-			cmd = a.renderChain()
-		} else {
-			e.search.SetValue(view.query)
-			cmd = a.setResults(view.results, view.underlyings)
-			e.selectResult(view.selectedID)
-		}
-		e.status = statusOK("Catalog refreshed from Kite.")
-		return cmd, true
 	case quotesConnectedMsg:
 		e.connecting = false
 		e.quoteSource, e.quoteLabel, e.quoteErr = msg.source, msg.label, msg.err
@@ -308,7 +320,7 @@ func (a *app) handleExplorer(msg tea.Msg) (tea.Cmd, bool) {
 		case msg.source != nil && errors.As(msg.err, &unavailable):
 			// Price mode ticker without a running ticker: quotes instead.
 			e.quoteErr, e.tickerDown = nil, true
-			e.status = statusErr("Ticker unavailable, using quotes:", unavailable.err.Error()+" · R retries")
+			e.status = statusErr("Ticker unavailable, using quotes:", unavailable.err.Error()+" · reopen Watchlists to retry")
 		case msg.err != nil:
 			e.status = statusErr("Prices off:", msg.err.Error())
 			return nil, true
@@ -370,8 +382,10 @@ func (a *app) setResults(values []models.Instrument, underlyings bool) tea.Cmd {
 	e.focus = 0
 	e.chain = nil
 	e.underlyings = underlyings
+	e.watching = false
 	e.resultItems = append(e.resultItems[:0], values...)
-	e.results.cursor, e.results.offset = 0, 0
+	// A new list starts at the top, not on the old selection.
+	e.results.rows, e.results.cursor, e.results.offset = nil, 0, 0
 	e.renderResults()
 	return a.refreshQuotes()
 }
@@ -394,13 +408,23 @@ func (e *explorerScreen) priceCells(id models.InstrumentID) (cell, cell) {
 }
 
 func (e *explorerScreen) renderResults() {
-	if e.underlyings {
-		e.results.empty = styleMuted.Render("No F&O underlyings in the catalog · press C to refresh it")
-	} else {
+	switch {
+	case e.watching:
+		e.results.empty = styleMuted.Render("This watchlist is empty · search with / and press A to add an instrument")
+	case e.underlyings:
+		e.results.empty = styleMuted.Render("No F&O underlyings in the catalog")
+	default:
 		e.results.empty = styleYellow.Render("No instruments found") + styleMuted.Render(" · try a symbol, company name, token, underlying, or contract description")
 	}
+	selected, hadSelection := e.results.selected()
+	for index := range e.results.columns {
+		e.results.columns[index].title = resultTitles[index]
+		if e.resultSort.column == index+1 {
+			e.results.columns[index].title += e.resultSort.arrow()
+		}
+	}
 	rows := make([]row, 0, len(e.resultItems))
-	for _, instrument := range e.resultItems {
+	for _, instrument := range e.sortedResults() {
 		ltp, change := e.priceCells(instrument.ID)
 		strike := ""
 		if instrument.Strike > 0 {
@@ -411,19 +435,122 @@ func (e *explorerScreen) renderResults() {
 			expiry = formatExpiry(instrument.Expiry)
 		}
 		rows = append(rows, row{ref: instrument, cells: []cell{
-			textCell(instrument.TradingSymbol, styleCyan),
+			textCell(instrument.Exchange, styleMuted),
+			textCell(fallback(instrument.DisplayName, instrument.TradingSymbol), styleCyan),
 			ltp, change,
-			textCell(instrument.InstrumentType, instrumentTypeStyle(instrument.InstrumentType)),
-			textCell(expiry, styleMuted),
 			textCell(strike, styleYellow),
-			textCell(strconv.Itoa(instrument.OptionsCount), styleGreen),
-			textCell(strconv.Itoa(instrument.FuturesCount), styleYellow),
-			textCell(strconv.Itoa(instrument.LotSize), styleBlue),
-			textCell(strconv.FormatInt(instrument.InstrumentToken, 10), styleKey.UnsetBold()),
-			textCell(instrument.DisplayName, styleText),
+			textCell(expiry, styleMuted),
 		}})
 	}
 	e.results.setRows(rows)
+	// Prices reorder a sorted list, so the selection follows its instrument.
+	if instrument, ok := selected.ref.(models.Instrument); hadSelection && ok {
+		e.selectResult(instrument.ID)
+	}
+}
+
+// resultTitles are the instrument list's column titles; resultSort.column
+// is one past the index of the sorted one.
+var resultTitles = []string{"EXCH", "NAME", "LTP", "CHG%", "STRIKE", "EXPIRY"}
+
+type resultSort struct {
+	column     int
+	descending bool
+}
+
+func (s resultSort) arrow() string {
+	if s.descending {
+		return " ▼"
+	}
+	return " ▲"
+}
+
+// sortedResults is the instrument list in the chosen order. Instruments
+// without a value for the column, such as an unpriced LTP, go last either
+// way, and ties keep the list's own order.
+func (e *explorerScreen) sortedResults() []models.Instrument {
+	if e.resultSort.column == 0 {
+		return e.resultItems
+	}
+	sorted := append([]models.Instrument(nil), e.resultItems...)
+	value := func(instrument models.Instrument) (float64, bool) {
+		quote, ok := e.quotes[string(instrument.ID)]
+		switch e.resultSort.column {
+		case 3:
+			return quote.LastPrice, ok && quote.LastPrice > 0
+		case 4:
+			if !ok || quote.LastPrice <= 0 || quote.OHLC.Close <= 0 {
+				return 0, false
+			}
+			return (quote.LastPrice - quote.OHLC.Close) / quote.OHLC.Close, true
+		case 5:
+			return instrument.Strike, instrument.Strike > 0
+		case 6:
+			if instrument.Expiry == nil {
+				return 0, false
+			}
+			return float64(instrument.Expiry.Unix()), true
+		}
+		return 0, false
+	}
+	slices.SortStableFunc(sorted, func(left, right models.Instrument) int {
+		var order int
+		switch e.resultSort.column {
+		case 1:
+			order = strings.Compare(left.Exchange, right.Exchange)
+		case 2:
+			order = strings.Compare(
+				strings.ToUpper(fallback(left.DisplayName, left.TradingSymbol)),
+				strings.ToUpper(fallback(right.DisplayName, right.TradingSymbol)))
+		default:
+			leftValue, leftOK := value(left)
+			rightValue, rightOK := value(right)
+			if leftOK != rightOK {
+				if leftOK {
+					return -1
+				}
+				return 1
+			}
+			order = cmp.Compare(leftValue, rightValue)
+		}
+		if e.resultSort.descending {
+			return -order
+		}
+		return order
+	})
+	return sorted
+}
+
+// openSortMenu picks the instrument list's sort column. Picking the sorted
+// column again reverses it.
+func (a *app) openSortMenu() {
+	e := a.explorer
+	picker := &menu{title: "Sort by", width: 30, footer: "Pick the sorted column again to reverse it"}
+	picker.items = append(picker.items, menuItem{label: styleText.Render("List order"), run: func(a *app) tea.Cmd {
+		return a.setResultSort(resultSort{})
+	}})
+	for index, title := range resultTitles {
+		column := index + 1
+		label := styleText.Render(title)
+		if e.resultSort.column == column {
+			label += styleYellow.Render(e.resultSort.arrow())
+			picker.cursor = column
+		}
+		picker.items = append(picker.items, menuItem{label: label, run: func(a *app) tea.Cmd {
+			next := resultSort{column: column}
+			if current := a.explorer.resultSort; current.column == column {
+				next.descending = !current.descending
+			}
+			return a.setResultSort(next)
+		}})
+	}
+	a.overlay = picker
+}
+
+func (a *app) setResultSort(sort resultSort) tea.Cmd {
+	a.explorer.resultSort = sort
+	a.explorer.renderResults()
+	return a.explorerSelectionChanged()
 }
 
 // searchChanged debounces a search for the typed text.
@@ -449,6 +576,15 @@ func (a *app) runSearch() tea.Cmd {
 	e := a.explorer
 	catalog, generation := e.catalog, e.searchGen
 	query := strings.TrimSpace(e.search.Value())
+	if query == "" && len(e.watchlists) > 0 {
+		return a.showWatchlist(e.watchIndex, "")
+	}
+	return a.searchTask(catalog, generation, query)
+}
+
+// searchTask searches the catalog for query, or lists the F&O underlyings
+// when it is empty.
+func (a *app) searchTask(catalog catalog, generation int, query string) tea.Cmd {
 	return a.task(func(ctx context.Context) tea.Msg {
 		done := searchDoneMsg{generation: generation, query: query, underlyings: query == ""}
 		if done.underlyings {
@@ -458,18 +594,6 @@ func (a *app) runSearch() tea.Cmd {
 		}
 		return done
 	})
-}
-
-func (a *app) showUnderlyings() tea.Cmd {
-	e := a.explorer
-	if e.catalog == nil {
-		return nil
-	}
-	e.chain = nil
-	e.search.SetValue("")
-	e.searchGen++
-	e.status = statusInfo("Loading F&O underlyings…")
-	return a.runSearch()
 }
 
 func (a *app) focusSearch() {
@@ -486,6 +610,12 @@ func (a *app) backToDashboard() tea.Cmd {
 	e.chain = nil
 	e.search.SetValue(e.snapshot.query)
 	cmd := a.setResults(e.snapshot.results, strings.TrimSpace(e.snapshot.query) == "")
+	if e.snapshot.watching && len(e.watchlists) > 0 {
+		e.watching = true
+		e.renderResults()
+		// The lists view may have changed the watchlists: read it again.
+		cmd = tea.Batch(cmd, a.showWatchlist(e.watchIndex, e.snapshot.selectedID))
+	}
 	e.selectResult(e.snapshot.selectedID)
 	e.status = statusInfo("Returned to instrument results.")
 	return cmd
@@ -493,8 +623,9 @@ func (a *app) backToDashboard() tea.Cmd {
 
 func (e *explorerScreen) takeSnapshot() {
 	e.snapshot = dashboardSnapshot{
-		query:   e.search.Value(),
-		results: append([]models.Instrument(nil), e.resultItems...),
+		query:    e.search.Value(),
+		results:  append([]models.Instrument(nil), e.resultItems...),
+		watching: e.watching,
 	}
 	if selected, ok := e.results.selectedRef().(models.Instrument); ok {
 		e.snapshot.selectedID = selected.ID
@@ -578,43 +709,58 @@ func (e *explorerScreen) fillChain() {
 	}
 	rows := make([]row, 0, len(chainRows))
 	atmRow := -1
-	for index, candidate := range chainRows {
-		cells := make([]cell, 7)
+	now := time.Now()
+	for _, candidate := range chainRows {
+		cells := make([]cell, len(e.chainGrid.columns))
 		refs := make([]any, 2)
 		for side, leg := range []*models.Instrument{candidate.call, candidate.put} {
-			// The call's cells run OI, BE, LTP towards the strike; the put's
-			// LTP, BE, OI away from it.
-			ltpAt, beAt, oiAt := 2, 1, 0
+			at := chainCells[side]
 			ltpStyle, barColor := styleGreen, colorCallBar
 			if side == 1 {
-				ltpAt, beAt, oiAt = 4, 5, 6
 				ltpStyle, barColor = styleRed, colorPutBar
 			}
-			if leg == nil {
-				for _, at := range []int{ltpAt, beAt, oiAt} {
-					cells[at] = textCell("—", styleNoTrade)
+			quote, quoted := kite.QuoteData{}, false
+			if leg != nil {
+				quote, quoted = e.quotes[string(leg.ID)]
+			}
+			if leg == nil || data.filter.hidesByPrice(*leg, quote.LastPrice, spot) {
+				for _, index := range []int{at.ltp, at.change, at.be, at.pop, at.oi} {
+					cells[index] = textCell("—", styleNoTrade)
 				}
 				continue
 			}
 			refs[side] = *leg
-			cells[ltpAt], cells[beAt], cells[oiAt] = textCell("—", ltpStyle), textCell("—", styleBlue), textCell("—", styleMuted)
-			if quote, ok := e.quotes[string(leg.ID)]; ok {
-				cells[ltpAt].text = formatPrice(quote.LastPrice)
-				cells[oiAt] = cell{text: formatCount(quote.OI), style: styleText, barColor: barColor, barRight: side == 0}
+			cells[at.ltp], cells[at.change], cells[at.be] = textCell("—", ltpStyle), textCell("—", styleMuted), textCell("—", styleBlue)
+			cells[at.pop], cells[at.oi] = textCell("—", styleMuted), textCell("—", styleMuted)
+			if quoted {
+				// The price and its change are coloured by direction.
+				change, direction := formatMove(quote)
+				cells[at.ltp] = textCell(formatPrice(quote.LastPrice), signStyle(direction))
+				if change != "" {
+					cells[at.change] = textCell(change, signStyle(direction))
+				}
+				cells[at.oi] = cell{text: formatCount(quote.OI), style: styleText, barColor: barColor, barRight: side == 0}
 				if largest > 0 {
-					cells[oiAt].bar = quote.OI / largest
+					cells[at.oi].bar = quote.OI / largest
 				}
 				if quote.LastPrice > 0 {
-					cells[beAt].text = formatBreakeven(breakeven(*leg, quote.LastPrice), spot, e.breakevenPercent)
+					cells[at.be].text = formatBreakeven(breakeven(*leg, quote.LastPrice), spot, e.breakevenPercent)
+					if pop, ok := probabilityOfProfit(*leg, quote.LastPrice, spot, now); ok {
+						cells[at.pop] = textCell(formatProbability(pop), styleYellow)
+					}
 				}
 			}
+		}
+		// A strike whose contracts are all hidden is dropped.
+		if refs[0] == nil && refs[1] == nil {
+			continue
 		}
 		strikeStyle := styleYellow
 		if candidate.strike == atm {
 			strikeStyle = styleATM
-			atmRow = index
+			atmRow = len(rows)
 		}
-		cells[3] = textCell(formatStrike(candidate.strike), strikeStyle)
+		cells[chainStrike] = textCell(formatStrike(candidate.strike), strikeStyle)
 		rows = append(rows, row{cells: cells, refs: refs})
 	}
 	e.chainGrid.setRows(rows)
@@ -634,8 +780,8 @@ func (e *explorerScreen) chainTitle() string {
 	data := e.chain
 	title := string(data.underlying)
 	if quote, ok := e.quotes[string(data.underlying)]; ok {
-		change, direction := formatChange(quote)
-		title += " " + formatPrice(quote.LastPrice) + " " + signStyle(direction).Render(change)
+		text, direction := formatPriceChange(quote)
+		title += " " + signStyle(direction).Render(text)
 	}
 	return title + styleMuted.Render(fmt.Sprintf(" · %s · %s", data.expiry().date.Format("02 Jan 2006"), data.filter.side))
 }
@@ -697,6 +843,11 @@ func (a *app) openFilters() {
 	f.addSelect("Contracts", []string{optionSideBoth.String(), optionSideCalls.String(), optionSidePuts.String()}, int(filter.side))
 	f.addInput("Minimum strike", optionalFloat(filter.minStrike), decimalNumber, false)
 	f.addInput("Maximum strike", optionalFloat(filter.maxStrike), decimalNumber, false)
+	f.addInput("Minimum LTP", optionalFloat(filter.minLTP), decimalNumber, false)
+	f.addInput("Maximum LTP", optionalFloat(filter.maxLTP), decimalNumber, false)
+	f.addInput("Minimum BE %", optionalFloat(filter.minBreakeven), decimalNumber, false)
+	f.addInput("Maximum BE %", optionalFloat(filter.maxBreakeven), decimalNumber, false)
+	f.message = styleMuted.Render("BE % is the breakeven's distance from spot either way.")
 	f.focusFirst()
 	a.overlay = &filterOverlay{form: f}
 }
@@ -717,15 +868,25 @@ func (o *filterOverlay) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	e := a.explorer
 	switch pressed {
 	case 0:
-		minStrike, maxStrike, err := parseStrikeRange(o.form.field("Minimum strike").value(), o.form.field("Maximum strike").value())
-		if err != nil {
-			o.form.message = styleRed.Render(err.Error())
-			return nil
+		filter := e.chain.filter
+		var err error
+		for _, r := range []struct {
+			noun     string
+			min, max **float64
+		}{
+			{"strike", &filter.minStrike, &filter.maxStrike},
+			{"LTP", &filter.minLTP, &filter.maxLTP},
+			{"BE %", &filter.minBreakeven, &filter.maxBreakeven},
+		} {
+			if *r.min, *r.max, err = parseRange(r.noun, o.form.field("Minimum "+r.noun).value(), o.form.field("Maximum "+r.noun).value()); err != nil {
+				o.form.message = styleRed.Render(err.Error())
+				return nil
+			}
 		}
-		e.chain.filter.minStrike, e.chain.filter.maxStrike = minStrike, maxStrike
-		e.chain.filter.side = optionSide(o.form.field("Contracts").index)
+		filter.side = optionSide(o.form.field("Contracts").index)
+		e.chain.filter = filter
 	case 1:
-		e.chain.filter.minStrike, e.chain.filter.maxStrike, e.chain.filter.side = nil, nil, optionSideBoth
+		e.chain.filter = chainFilter{expiryNumber: e.chain.filter.expiryNumber, side: optionSideBoth}
 	case 2:
 		a.closeOverlay()
 		return nil
@@ -751,34 +912,6 @@ func (a *app) toggleBreakevenFormat() tea.Cmd {
 	e.setChainColumns()
 	e.fillChain()
 	return nil
-}
-
-// refreshCatalog downloads the whole catalog again and reloads the view; in
-// lists it refreshes the selected list instead.
-func (a *app) refreshCatalog() tea.Cmd {
-	e := a.explorer
-	if e.catalog == nil {
-		return nil
-	}
-	if e.mode == viewLists {
-		return a.refreshSelectedList()
-	}
-	e.searchGen++
-	catalog, mode := e.catalog, e.mode
-	query := strings.TrimSpace(e.search.Value())
-	var selectedID models.InstrumentID
-	if selected, ok := e.results.selectedRef().(models.Instrument); ok {
-		selectedID = selected.ID
-	}
-	var underlying models.InstrumentID
-	var filter chainFilter
-	if e.chain != nil {
-		underlying, filter = e.chain.underlying, e.chain.filter
-	}
-	return tea.Batch(a.busy("Refreshing the complete Kite instrument catalog…"), a.task(func(ctx context.Context) tea.Msg {
-		view, err := reloadAfterRefresh(ctx, catalog, mode, query, selectedID, underlying, filter)
-		return catalogRefreshedMsg{view: view, err: err}
-	}))
 }
 
 // selectedInstrument is the dashboard's or the chain's selected instrument.
@@ -826,13 +959,17 @@ func (a *app) explorerKey(msg tea.KeyPressMsg) tea.Cmd {
 		return cmd
 	}
 	if e.catalog == nil {
-		if key == "esc" || key == "q" || key == "Q" {
+		if key == "esc" {
 			a.leaveInstruments()
 		}
 		return nil
 	}
-	if key == "esc" || key == "q" || key == "Q" {
+	if key == "esc" {
 		if e.mode == viewDashboard {
+			if !e.watching && len(e.watchlists) > 0 {
+				e.search.SetValue("")
+				return a.showWatchlist(e.watchIndex, "")
+			}
 			a.leaveInstruments()
 			return nil
 		}
@@ -847,10 +984,20 @@ func (a *app) explorerKey(msg tea.KeyPressMsg) tea.Cmd {
 		return a.explorerSelectionChanged()
 	}
 	switch key {
-	case "[":
-		return a.cycleExpiry(-1)
-	case "]":
-		return a.cycleExpiry(1)
+	case "[", "]":
+		step := 1
+		if key == "[" {
+			step = -1
+		}
+		if e.mode == viewDashboard {
+			return a.cycleWatchlist(step)
+		}
+		return a.cycleExpiry(step)
+	case "d", "D":
+		if e.mode == viewDashboard {
+			return a.removeFromWatchlist()
+		}
+		return nil
 	case "%":
 		return a.toggleBreakevenFormat()
 	case "/":
@@ -862,37 +1009,43 @@ func (a *app) explorerKey(msg tea.KeyPressMsg) tea.Cmd {
 			return a.explorerSelectionChanged()
 		}
 		return nil
-	case "enter":
-		switch e.mode {
-		case viewDashboard:
+	case "o", "O":
+		if e.mode == viewDashboard {
 			if instrument, ok := e.selectedInstrument(); ok {
 				return a.openChain(instrument)
 			}
-		case viewChain:
+		}
+		return nil
+	case "S":
+		if e.mode == viewDashboard {
+			a.openSortMenu()
+		}
+		return nil
+	case "+":
+		return a.orderSelected()
+	case "enter":
+		if e.mode == viewChain {
 			return a.orderSelected()
 		}
 		return nil
 	}
 	switch strings.ToLower(key) {
-	case "u":
-		return a.showUnderlyings()
+	case "b":
+		return a.openBaskets()
 	case "l":
 		return a.openLists()
 	case "a":
 		return a.addSelectedToList()
+	case "n":
+		if e.mode == viewDashboard {
+			return a.newWatchlist()
+		}
 	case "e":
 		a.openExpiryPicker()
 	case "f":
 		a.openFilters()
-	case "r":
-		return a.reloadQuotes()
-	case "c":
-		return a.refreshCatalog()
-	case "o":
-		return a.orderSelected()
-	case "h":
-		id, _ := e.selectedInstrumentID()
-		return a.openHistory(id)
+	case "m":
+		a.showMetadata()
 	}
 	return nil
 }
@@ -1128,6 +1281,14 @@ func (a *app) quoteHeader() string {
 
 // instrumentDetail describes an instrument and, with prices on, its quote.
 func (e *explorerScreen) instrumentDetail(instrument models.Instrument) string {
+	text := newDetailText(string(instrument.ID), instrument.DisplayName)
+	e.marketDetail(text, instrument)
+	text.line("\n" + styleFaint.Render("M metadata"))
+	return text.String()
+}
+
+// instrumentMetadata is the catalog's record of the instrument, shown by M.
+func instrumentMetadata(instrument models.Instrument) string {
 	expiryNumber := "—"
 	if instrument.ExpiryNumber != nil {
 		expiryNumber = strconv.Itoa(*instrument.ExpiryNumber)
@@ -1160,34 +1321,102 @@ func (e *explorerScreen) instrumentDetail(instrument models.Instrument) string {
 	text.plain("Listed", yes(instrument.UnderlyingIsListed))
 	text.plain("Options", strconv.Itoa(instrument.OptionsCount))
 	text.plain("Futures", strconv.Itoa(instrument.FuturesCount))
+	return text.String()
+}
+
+// showMetadata opens the selected instrument's metadata.
+func (a *app) showMetadata() {
+	instrument, ok := a.explorer.selectedInstrument()
+	if !ok {
+		a.explorer.status = statusWarn("Select an instrument to see its metadata")
+		return
+	}
+	a.overlay = &textOverlay{title: "Metadata", text: instrumentMetadata(instrument), close: "m"}
+}
+
+// marketDetail adds the instrument's quote, market depth and, for an
+// option, its model values.
+func (e *explorerScreen) marketDetail(text *detailText, instrument models.Instrument) {
 	if e.quoteSource == nil {
-		return text.String()
+		return
 	}
 	quote, ok := e.quotes[string(instrument.ID)]
 	if !ok {
 		text.section("Market")
-		text.line(styleFaint.Render("No quote yet · R to refresh"))
-		return text.String()
+		text.line(styleFaint.Render("No quote yet"))
+		return
 	}
 	change, direction := formatChange(quote)
-	bid, ask := "—", "—"
-	if level := quote.Depth.Buy[0]; level.Price > 0 {
-		bid = fmt.Sprintf("%s × %d", formatPrice(level.Price), level.Quantity)
-	}
-	if level := quote.Depth.Sell[0]; level.Price > 0 {
-		ask = fmt.Sprintf("%s × %d", formatPrice(level.Price), level.Quantity)
-	}
-	text.section("Market " + styleFaint.Render(e.quotesAt.Format("15:04:05")))
+	text.section("Market")
 	text.field("LTP", styleBold.Render(formatPrice(quote.LastPrice))+" "+signStyle(direction).Render(change))
 	text.plain("Open / High", formatPrice(quote.OHLC.Open)+" / "+formatPrice(quote.OHLC.High))
 	text.plain("Low / Prev", formatPrice(quote.OHLC.Low)+" / "+formatPrice(quote.OHLC.Close))
 	text.plain("Volume", formatCount(float64(quote.Volume)))
-	text.field("Bid", styleGreen.Render(bid))
-	text.field("Ask", styleRed.Render(ask))
 	if quote.OI > 0 {
 		text.plain("OI", formatCount(quote.OI))
 	}
-	return text.String()
+	depthDetail(text, quote)
+	if params, ok := optionParams(instrument, e.underlyingPrice(instrument), time.Now()); ok && quote.LastPrice > 0 {
+		text.section("Model " + styleFaint.Render(fmt.Sprintf("BSM · r %.1f%%", riskFreeRate*100)))
+		if volatility, err := bsm.ImpliedVolatility(params, quote.LastPrice); err == nil {
+			pop, _ := bsm.ProbabilityOfProfit(params, quote.LastPrice)
+			text.plain("Implied vol", formatProbability(volatility))
+			text.field("POP", styleYellow.Render(formatProbability(pop)))
+		} else {
+			text.line(styleFaint.Render("No volatility fits this price"))
+		}
+	}
+}
+
+// detailWidth is the explorer's details pane. depthWidth is its text: each
+// depth side is orders, quantity and price in 21 cells, wide enough for a
+// six-digit price, bids on the left and asks on the right.
+const (
+	detailWidth = 47
+	depthWidth  = detailWidth - 4
+)
+
+// depthDetail adds the five-level market depth, best prices at the top,
+// with the total quantity bid and offered under it as a bar. Instruments
+// without depth, such as indices, get none.
+func depthDetail(text *detailText, quote kite.QuoteData) {
+	depth := quote.Depth
+	if depth.Buy[0].Price <= 0 && depth.Sell[0].Price <= 0 {
+		return
+	}
+	level := func(item models.DepthItem) (orders, quantity, price string) {
+		if item.Price <= 0 {
+			return "", "", "—"
+		}
+		return formatCount(float64(item.Orders)), formatCount(float64(item.Quantity)), formatPrice(item.Price)
+	}
+	text.section("Depth")
+	text.line(styleMuted.Render(fmt.Sprintf("%3s %7s %9s %-9s %7s %3s", "ORD", "QTY", "BID", "ASK", "QTY", "ORD")))
+	for index := range depth.Buy {
+		bidOrders, bidQuantity, bid := level(depth.Buy[index])
+		askOrders, askQuantity, ask := level(depth.Sell[index])
+		text.line(styleMuted.Render(fmt.Sprintf("%3s ", bidOrders)) + styleText.Render(fmt.Sprintf("%7s ", bidQuantity)) +
+			styleGreen.Render(fmt.Sprintf("%9s", bid)) + " " + styleRed.Render(fmt.Sprintf("%-9s", ask)) +
+			styleText.Render(fmt.Sprintf(" %7s", askQuantity)) + styleMuted.Render(fmt.Sprintf(" %3s", askOrders)))
+	}
+	buy, sell := float64(quote.BuyQuantity), float64(quote.SellQuantity)
+	if buy+sell <= 0 {
+		return
+	}
+	bids := int(math.Round(buy / (buy + sell) * depthWidth))
+	text.line(lipgloss.NewStyle().Foreground(colorCallBar).Render(strings.Repeat("━", bids)) +
+		lipgloss.NewStyle().Foreground(colorPutBar).Render(strings.Repeat("━", depthWidth-bids)))
+	totals := fmt.Sprintf("%s bid · %.0f%%", formatCount(buy), buy/(buy+sell)*100)
+	offered := fmt.Sprintf("%.0f%% · %s offered", sell/(buy+sell)*100, formatCount(sell))
+	text.line(styleGreen.Render(totals) + strings.Repeat(" ", max(depthWidth-lipgloss.Width(totals)-lipgloss.Width(offered), 1)) + styleRed.Render(offered))
+}
+
+// underlyingPrice is the last price of an option's underlying, or 0.
+func (e *explorerScreen) underlyingPrice(option models.Instrument) float64 {
+	if option.UnderlyingID == nil {
+		return 0
+	}
+	return e.quotes[string(*option.UnderlyingID)].LastPrice
 }
 
 func (a *app) explorerHelp() string {
@@ -1196,11 +1425,17 @@ func (a *app) explorerHelp() string {
 	case e.searchFocused:
 		return help("type", "to search", "Enter/↓", "results", "Esc", "table", "^C", "quit")
 	case e.mode == viewChain:
-		return help("←→", "call/put", "Tab", "futures", "E", "expiry", "[ ]", "cycle", "F", "filters", "%", "BE", "O", "order", "A", "add to list", "H", "history", "R", "prices", "C", "catalog", "Q", "back")
+		return help("←→", "call/put", "Tab", "futures", "E", "expiry", "[ ]", "cycle", "F", "filters", "%", "BE", "+", "order", "B", "basket", "A", "add to list", "M", "metadata", "Esc", "back")
 	case e.mode == viewLists:
-		return help("N", "new", "E", "rename", "A", "add instrument", "D", "delete", "R", "refresh NSE list", "M", "NSE master list", "O", "order", "H", "history", "Tab", "items", "Q", "back")
+		return help("N", "new watchlist", "E", "rename", "A", "add instrument", "D", "delete", "+", "order", "Tab", "items", "Esc", "back")
 	}
-	return help("/", "search", "Enter", "chain", "U", "underlyings", "L", "lists", "A", "add to list", "O", "order", "H", "history", "R", "prices", "C", "catalog", "s", "settings", "Q", "back")
+	if e.watching {
+		return help("[ ]", "watchlist", "N", "new", "D", "remove", "L", "lists", "/", "search", "O", "chain", "⇧S", "sort", "A", "add to list", "+", "order", "B", "baskets", "M", "metadata", "Esc", "back")
+	}
+	if len(e.watchlists) > 0 {
+		return help("Esc", "watchlist", "[ ]", "watchlist", "N", "new", "/", "search", "O", "chain", "⇧S", "sort", "L", "lists", "A", "add to list", "+", "order", "B", "baskets", "M", "metadata")
+	}
+	return help("/", "search", "O", "chain", "⇧S", "sort", "L", "lists", "A", "add to list", "+", "order", "B", "baskets", "M", "metadata", "Esc", "back")
 }
 
 func (a *app) explorerView(w, h int) string {
@@ -1213,9 +1448,9 @@ func (a *app) explorerView(w, h int) string {
 	searchPanel := panel("Search", searchInfo, " "+e.search.View(), w, 3, e.searchFocused)
 	rest := h - 3
 	if e.catalog == nil {
-		return searchPanel + "\n" + textPanel("Instruments", "", styleMuted.Render("Opening the instrument catalog…"), w, rest, false)
+		return searchPanel + "\n" + textPanel("Watchlists", "", styleMuted.Render("Opening the instrument catalog…"), w, rest, false)
 	}
-	detailW := 43
+	detailW := detailWidth
 	if w < 100 || e.mode == viewLists {
 		detailW = 0
 	}
@@ -1248,6 +1483,9 @@ func (a *app) explorerView(w, h int) string {
 			title = "Search results"
 		}
 		info := styleMuted.Render(fmt.Sprintf("%d rows · %d underlyings · catalog %s", len(e.resultItems), e.underlyingCount, refreshed))
+		if list, ok := e.currentWatchlist(); ok && e.watching {
+			title, info = list.Name, styleMuted.Render(e.watchlistInfo())
+		}
 		focused := !e.searchFocused
 		left = panel(title, info, e.results.view(leftW-2, rest-2, focused), leftW, rest, focused)
 	}
@@ -1257,7 +1495,7 @@ func (a *app) explorerView(w, h int) string {
 	detail := styleFaint.Render("Select an instrument to inspect its normalized metadata.")
 	if instrument, ok := e.selectedInstrument(); ok {
 		detail = e.instrumentDetail(instrument)
-	} else if e.mode == viewDashboard && len(e.resultItems) == 0 {
+	} else if e.mode == viewDashboard && len(e.resultItems) == 0 && !e.watching {
 		detail = styleYellow.Bold(true).Render("No instruments found") + "\n\n" + styleMuted.Render("Try a symbol, company name, token, underlying, or contract description.")
 	}
 	return searchPanel + "\n" + joinColumns(left, textPanel("Instrument", "", detail, detailW, rest, false))

@@ -45,11 +45,23 @@ func TestLoadUsesTradebotHomeDefaults(t *testing.T) {
 	if got.CandlesPath != filepath.Join(wantRoot, "market-data", "historical_data.duckdb") {
 		t.Fatalf("unexpected candles database path: got %q", got.CandlesPath)
 	}
+	if got.PortfolioDir != filepath.Join(wantRoot, "portfolio") {
+		t.Fatalf("unexpected portfolio directory: got %q", got.PortfolioDir)
+	}
+	if got.FundamentalsPath != filepath.Join(wantRoot, "fundamentals.sqlite3") {
+		t.Fatalf("unexpected fundamentals path: got %q", got.FundamentalsPath)
+	}
+	if got.BrowserDir != filepath.Join(wantRoot, "browser") {
+		t.Fatalf("unexpected browser directory: got %q", got.BrowserDir)
+	}
 	if got.TickerUserID != "" || got.DataUserID != "" {
 		t.Fatalf("unexpected user IDs: ticker %q, data %q", got.TickerUserID, got.DataUserID)
 	}
 	if got.DefaultUserID != "CC0006" || got.PriceMode != PriceModeQuote {
 		t.Fatalf("default user %q, price mode %q", got.DefaultUserID, got.PriceMode)
+	}
+	if got.AccountMode != AccountModePaper || got.PaperCapital != 1_000_000 || got.PaperSlippageBPS != 0 {
+		t.Fatalf("account mode %q, paper capital %v, slippage %v", got.AccountMode, got.PaperCapital, got.PaperSlippageBPS)
 	}
 	if got.SettingsPath != filepath.Join(home, "tradebot", "settings.json") {
 		t.Fatalf("settings path = %q", got.SettingsPath)
@@ -67,6 +79,9 @@ func TestLoadReadsSettingsAndJoinsOffsets(t *testing.T) {
 		"TRADEBOT_DEFAULT_USER_ID":         "AB1234",
 		"TRADEBOT_PRICE_MODE":              "Ticker",
 		"TRADEBOT_NATS_URL":                "nats://127.0.0.1:4222",
+		"TRADEBOT_ACCOUNT_MODE":            "LIVE",
+		"TRADEBOT_PAPER_CAPITAL":           "250000",
+		"TRADEBOT_PAPER_SLIPPAGE_BPS":      "5",
 	})
 
 	got, err := Load()
@@ -89,6 +104,9 @@ func TestLoadReadsSettingsAndJoinsOffsets(t *testing.T) {
 	if got.TickerUserID != "CC0006" || got.DataUserID != "DA0001" || got.DefaultUserID != "AB1234" || got.PriceMode != PriceModeTicker {
 		t.Fatalf("ticker %q, data %q, default %q, price mode %q", got.TickerUserID, got.DataUserID, got.DefaultUserID, got.PriceMode)
 	}
+	if got.AccountMode != AccountModeLive || got.PaperCapital != 250000 || got.PaperSlippageBPS != 5 {
+		t.Fatalf("account mode %q, paper capital %v, slippage %v", got.AccountMode, got.PaperCapital, got.PaperSlippageBPS)
+	}
 	if url := got.Settings.Get("TRADEBOT_NATS_URL"); url != "nats://127.0.0.1:4222" {
 		t.Fatalf("NATS URL = %q", url)
 	}
@@ -102,6 +120,9 @@ func TestLoadRejectsBadSettings(t *testing.T) {
 		"absolute credentials path": {"TRADEBOT_CREDENTIALS_SQLITE_PATH": "/var/credentials.sqlite3"},
 		"instruments off the root":  {"TRADEBOT_INSTRUMENTS_DUCKDB_PATH": "../instruments.duckdb"},
 		"unknown price mode":        {"TRADEBOT_PRICE_MODE": "smoke-signals"},
+		"unknown account mode":      {"TRADEBOT_ACCOUNT_MODE": "demo"},
+		"no paper capital":          {"TRADEBOT_PAPER_CAPITAL": "0"},
+		"negative slippage":         {"TRADEBOT_PAPER_SLIPPAGE_BPS": "-1"},
 	} {
 		writeHomeSettings(t, values)
 		if _, err := Load(); err == nil {

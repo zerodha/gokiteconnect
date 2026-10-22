@@ -25,6 +25,12 @@ type Client struct {
 	httpClient  HTTPClient
 	instruments *InstrumentCatalog
 	quotePacer  *requestPacer
+
+	// The web session ScreenerClient signs requests with.
+	screenerUserID      string
+	screenerEncToken    string
+	screenerKFSession   string
+	screenerPublicToken string
 }
 
 const (

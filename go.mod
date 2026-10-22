@@ -8,6 +8,8 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/PuerkitoBio/goquery v1.13.0
 	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/chromedp/cdproto v0.158.4
+	github.com/chromedp/chromedp v0.21.0
 	github.com/duckdb/duckdb-go/v2 v2.5.4
 	github.com/gdamore/tcell/v2 v2.8.1
 	github.com/gocarina/gocsv v0.0.0-20180809181117-b8c38cb1ba36
@@ -44,6 +46,7 @@ require (
 	github.com/duckdb/duckdb-go/arrowmapping v0.0.27 // indirect
 	github.com/duckdb/duckdb-go/mapping v0.0.27 // indirect
 	github.com/gdamore/encoding v1.0.1 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.9.23+incompatible // indirect

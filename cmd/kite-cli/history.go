@@ -91,12 +91,9 @@ const (
 // holds of each instrument, and syncs them one at a time: syncs share the
 // data user's rate limit and the candles database.
 type historyScreen struct {
-	started bool
-	status  string
-	list    models.List
-	// extra are instruments opened from the explorer that aren't in the
-	// list.
-	extra        []models.InstrumentID
+	started      bool
+	status       string
+	list         models.List
 	availability map[models.InstrumentID]map[models.CandleInterval]models.CandleAvailability
 	grid         grid
 
@@ -128,16 +125,14 @@ func newHistoryScreen() *historyScreen {
 		availability: make(map[models.InstrumentID]map[models.CandleInterval]models.CandleAvailability),
 		results:      make(map[models.InstrumentID]string),
 		grid: grid{columns: []column{
-			{title: "INSTRUMENT", width: 24}, {title: "1m FROM", width: 15}, {title: "1m TO", width: 15},
+			{title: "INSTRUMENT", width: 21}, {title: "1m FROM", width: 15}, {title: "1m TO", width: 15},
 			{title: "1d FROM", width: 9}, {title: "1d TO", width: 9}, {title: "SYNC", width: 12, flex: 1},
-		}, empty: styleMuted.Render("Loading the default sync list…")},
+		}, lines: true, empty: styleMuted.Render("Loading the default sync list…")},
 	}
 }
 
 type (
 	historyLoadedMsg struct {
-		// focus is the instrument to select once the list loads.
-		focus        models.InstrumentID
 		list         models.List
 		rebuilt      bool
 		availability []models.CandleAvailability
@@ -164,52 +159,21 @@ type (
 	}
 )
 
-// openHistory shows the history screen, loading the default sync list the
-// first time. A non-empty focus selects that instrument, adding it to the
-// screen when the list doesn't have it.
-func (a *app) openHistory(focus models.InstrumentID) tea.Cmd {
-	hs := a.history
-	if a.screen != screenHistory {
-		a.historyBack = a.screen
-	}
-	a.show(screenHistory)
-	if focus != "" && !slices.Contains(hs.ids(), focus) {
-		hs.extra = append([]models.InstrumentID{focus}, hs.extra...)
-	}
-	if !hs.started {
-		hs.started = true
-		return a.loadHistory(false, focus)
-	}
-	if focus == "" {
-		return nil
-	}
-	a.renderHistory(focus)
-	return tea.Batch(a.historyDetail(), a.refreshAvailability([]models.InstrumentID{focus}))
-}
-
-// ids are the screen's instruments in order: the extra ones, then the
-// list's.
+// ids are the screen's instruments, the list's in order.
 func (hs *historyScreen) ids() []models.InstrumentID {
-	ids := append([]models.InstrumentID(nil), hs.extra...)
-	for _, id := range hs.list.InstrumentIDs() {
-		if !slices.Contains(hs.extra, id) {
-			ids = append(ids, id)
-		}
-	}
-	return ids
+	return hs.list.InstrumentIDs()
 }
 
 // loadHistory reads the default sync list, building it when it isn't
 // stored or rebuild is set, and what the candles database holds of it.
-func (a *app) loadHistory(rebuild bool, focus models.InstrumentID) tea.Cmd {
+func (a *app) loadHistory(rebuild bool) tea.Cmd {
 	open, db := a.deps.openCatalog, a.deps.candles
-	extra := append([]models.InstrumentID(nil), a.history.extra...)
 	message := "Loading the default sync list…"
 	if rebuild {
 		message = "Rebuilding the default sync list from the catalog…"
 	}
 	return tea.Batch(a.busy(message), a.task(func(ctx context.Context) tea.Msg {
-		msg := historyLoadedMsg{focus: focus}
+		var msg historyLoadedMsg
 		catalog, lists, err := open(ctx)
 		if err != nil {
 			msg.err = err
@@ -236,7 +200,7 @@ func (a *app) loadHistory(rebuild bool, focus models.InstrumentID) tea.Cmd {
 			}
 		}
 		if db != nil {
-			msg.availability, msg.availErr = db.Availability(ctx, append(extra, msg.list.InstrumentIDs()...))
+			msg.availability, msg.availErr = db.Availability(ctx, msg.list.InstrumentIDs())
 		}
 		return msg
 	}))
@@ -274,11 +238,7 @@ func (a *app) handleHistory(msg tea.Msg) (tea.Cmd, bool) {
 		if msg.availErr != nil {
 			hs.status = statusErr("Could not read the candles database:", msg.availErr.Error())
 		}
-		focus := msg.focus
-		if focus == "" {
-			focus = hs.detailID
-		}
-		a.renderHistory(focus)
+		a.renderHistory(hs.detailID)
 		return a.historyDetail(), true
 	case historyAvailabilityMsg:
 		if msg.err != nil {
@@ -334,9 +294,6 @@ func (a *app) renderHistory(focus models.InstrumentID) {
 	rows := make([]row, 0, len(ids))
 	for _, id := range ids {
 		name := styleCyan.Render(string(id))
-		if slices.Contains(hs.extra, id) {
-			name += styleFaint.Render(" · not in list")
-		}
 		minute := hs.availability[id][models.CandleInterval1m]
 		daily := hs.availability[id][models.CandleInterval1d]
 		rows = append(rows, row{ref: id, cells: []cell{
@@ -378,7 +335,7 @@ func (hs *historyScreen) syncCell(id models.InstrumentID) cell {
 func (a *app) historyKey(msg tea.KeyPressMsg) tea.Cmd {
 	hs := a.history
 	key := msg.String()
-	if key == "esc" || key == "q" || key == "Q" {
+	if key == "esc" {
 		a.show(a.historyBack)
 		return nil
 	}
@@ -387,7 +344,7 @@ func (a *app) historyKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch strings.ToLower(key) {
 	case "r":
-		return a.loadHistory(true, "")
+		return a.loadHistory(true)
 	case "s":
 		return a.syncSelectedHistory()
 	case "a":
@@ -655,17 +612,6 @@ func syncedCellText(results []marketdata.SyncResult) string {
 	return "✔ +" + formatCount(float64(total))
 }
 
-func (a *app) historyHelp() string {
-	return help("↑↓", "select", "s", "sync 1m + 1d", "A", "sync all", "X", "stop", "R", "rebuild list", "I", "instruments", "Q", "back", "^C", "quit")
-}
-
-func (a *app) historyModeName() string {
-	if a.history.syncing != "" {
-		return "HISTORY · SYNCING"
-	}
-	return "HISTORY"
-}
-
 func (a *app) historyView(w, h int) string {
 	hs := a.history
 	detailW := 60
@@ -728,17 +674,4 @@ func candleTable(title string, rows []candles.Candle, layout string) string {
 			styleFaint.Render(fmt.Sprintf(" %7s", formatCount(float64(c.Volume)))))
 	}
 	return strings.Join(out, "\n")
-}
-
-// selectedInstrumentID is the explorer's selected search result, chain
-// contract, future or list item.
-func (e *explorerScreen) selectedInstrumentID() (models.InstrumentID, bool) {
-	if instrument, ok := e.selectedInstrument(); ok {
-		return instrument.ID, true
-	}
-	if e.mode == viewLists && e.focus == 1 {
-		id, ok := e.itemsGrid.selectedRef().(models.InstrumentID)
-		return id, ok
-	}
-	return "", false
 }

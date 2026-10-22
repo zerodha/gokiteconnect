@@ -192,7 +192,7 @@ func TestLatestTickWinsAndReplaysAfterQuietInterval(t *testing.T) {
 	now := base
 	bus := newFakeBus()
 	bus.connected.Store(false)
-	p, _ := New(Config{UserID: "U1", ReplayInterval: time.Second}, &fakeSessions{}, &fakeSocketFactory{}, bus, discardLogger())
+	p, _ := New(Config{UserID: "U1"}, &fakeSessions{}, &fakeSocketFactory{}, bus, discardLogger())
 	p.now = func() time.Time { return now }
 	p.socketGeneration = 1
 	p.desired["NSE:INFY"] = 123
@@ -205,17 +205,42 @@ func TestLatestTickWinsAndReplaysAfterQuietInterval(t *testing.T) {
 	}
 	bus.connected.Store(true)
 	p.publishDirtyTicks()
-	if len(bus.published) != 1 || bus.published[0].LastPrice != 101 {
+	if len(bus.published) != 1 || bus.published[0].LastPrice != 101 || bus.published[0].ID != "NSE:INFY" || bus.published[0].BroadcastType != BroadcastNew {
 		t.Fatalf("published=%+v", bus.published)
 	}
-	now = base.Add(time.Second)
+	// Nothing is repeated before 3s without a new tick.
+	now = base.Add(2900 * time.Millisecond)
 	p.markReplays()
 	p.publishDirtyTicks()
-	if len(bus.published) != 2 || bus.published[1].LastPrice != 101 {
+	if len(bus.published) != 1 {
+		t.Fatalf("repeated before 3s=%+v", bus.published)
+	}
+	now = base.Add(3 * time.Second)
+	p.markReplays()
+	p.publishDirtyTicks()
+	if len(bus.published) != 2 || bus.published[1].LastPrice != 101 || bus.published[1].ID != "NSE:INFY" || bus.published[1].BroadcastType != BroadcastRepeat {
 		t.Fatalf("replayed=%+v", bus.published)
 	}
+	// Then every 3s until a new tick arrives, which is NEW again.
+	now = base.Add(5 * time.Second)
+	p.markReplays()
+	p.publishDirtyTicks()
+	if len(bus.published) != 2 {
+		t.Fatalf("repeated again within 3s=%+v", bus.published)
+	}
+	now = base.Add(6 * time.Second)
+	p.markReplays()
+	p.publishDirtyTicks()
+	if len(bus.published) != 3 || bus.published[2].BroadcastType != BroadcastRepeat {
+		t.Fatalf("second repeat=%+v", bus.published)
+	}
+	p.socketTick(1, models.Tick{InstrumentToken: 123, LastPrice: 102})
+	p.publishDirtyTicks()
+	if len(bus.published) != 4 || bus.published[3].LastPrice != 102 || bus.published[3].BroadcastType != BroadcastNew {
+		t.Fatalf("new tick after repeats=%+v", bus.published)
+	}
 	realAt, publishedAt := p.Activity("NSE:INFY")
-	if !realAt.Equal(base) || !publishedAt.Equal(now) {
+	if !realAt.Equal(now) || !publishedAt.Equal(now) {
 		t.Fatalf("activity real=%s published=%s", realAt, publishedAt)
 	}
 }

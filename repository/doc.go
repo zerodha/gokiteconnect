@@ -1,5 +1,5 @@
 // Package repository provides storage for the Kite instrument catalog,
-// instrument lists and candles.
+// instrument lists, candles and users' portfolios.
 //
 // NewInstrumentsDuckDBRepository opens a persistent kite.InstrumentRepository. Its database
 // path must be new or point to a catalog previously created by NewInstrumentsDuckDBRepository.
@@ -14,4 +14,11 @@
 // 1m and other candles (pkg/candles.Candle) in its historical_data table and
 // builds longer intervals from them. Given a Postgres URI, it also reads live
 // candles from that database's live_data table.
+//
+// NewPortfolioSQLiteRepository opens one user's portfolio database, which
+// records every state their orders were seen in (RecordOrderUpdates,
+// OrderUpdates, LatestOrderUpdate, OpenOrders) and snapshots of their
+// account as Kite returned it (SaveSnapshot, LatestSnapshot, Snapshots).
+// NewPortfolioSQLiteDirectory keeps one such database per user in a
+// directory, as <USER>.db.
 package repository

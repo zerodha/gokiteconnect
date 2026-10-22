@@ -15,6 +15,7 @@ import (
 	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/broker"
 	"github.com/nats-io/nats.go"
 )
 
@@ -494,8 +495,8 @@ func (c *tickerConnector) close() {
 // tickerPortfolioLoader prices portfolios from the ticker while it runs,
 // noting why when it doesn't.
 func tickerPortfolioLoader(load portfolioLoader, connector *tickerConnector, every time.Duration) portfolioLoader {
-	return func(ctx context.Context, creds credentials.Credentials) portfolio {
-		result := load(ctx, creds)
+	return func(ctx context.Context, creds credentials.Credentials, mode broker.Mode) portfolio {
+		result := load(ctx, creds, mode)
 		if result.prices == nil {
 			return result
 		}

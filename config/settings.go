@@ -17,6 +17,12 @@ const (
 	PriceModeTicker = "ticker"
 )
 
+// Account modes: orders go to a paper account, or to Kite.
+const (
+	AccountModePaper = "paper"
+	AccountModeLive  = "live"
+)
+
 // SettingSpec describes a known setting: its key, its label and help, its
 // default, whether the settings dialog shows it, and the values it may take
 // (any, when Options is empty).
@@ -33,19 +39,31 @@ type SettingSpec struct {
 // settings dialog list them.
 var SettingSpecs = []SettingSpec{
 	{Key: "TRADEBOT_LOCAL_STORAGE_ROOT", DisplayName: "Base Path", Default: "~/tradebot",
-		Help: "Where local files are stored: the credentials, instrument and candle databases."},
+		Help: "Where local files are stored: the credentials, instrument, fundamentals, candle and portfolio databases."},
 	{Key: "TRADEBOT_CREDENTIALS_SQLITE_PATH", DisplayName: "Credentials Database", Default: "credentials.sqlite3", Hidden: true,
 		Help: "The credentials database, relative to the base path."},
 	{Key: "TRADEBOT_INSTRUMENTS_DUCKDB_PATH", DisplayName: "Instruments Database", Default: "instruments.duckdb", Hidden: true,
 		Help: "The instruments database, relative to the base path."},
 	{Key: "TRADEBOT_LISTS_SQLITE_PATH", DisplayName: "Lists Database", Default: "lists.sqlite3", Hidden: true,
-		Help: "The instrument lists database, relative to the base path."},
+		Help: "The instrument lists and order baskets database, relative to the base path."},
+	{Key: "TRADEBOT_FUNDAMENTALS_SQLITE_PATH", DisplayName: "Fundamentals Database", Default: "fundamentals.sqlite3", Hidden: true,
+		Help: "The instrument fundamentals database, read from Kite's screener, relative to the base path."},
 	{Key: "TRADEBOT_CANDLES_DUCKDB_PATH", DisplayName: "Candles Database", Default: "market-data/historical_data.duckdb", Hidden: true,
 		Help: "The candles database, relative to the base path."},
+	{Key: "TRADEBOT_PORTFOLIO_SQLITE_DIR", DisplayName: "Portfolio Databases", Default: "portfolio", Hidden: true,
+		Help: "The directory of per-user databases (<USER>.db), each with the user's live order record and paper account, relative to the base path."},
+	{Key: "TRADEBOT_BROWSER_PROFILES_DIR", DisplayName: "Browser Profiles", Default: "browser", Hidden: true,
+		Help: "The directory of the per-user Chrome profiles kite-cli opens Kite web in, relative to the base path."},
 	{Key: "TRADEBOT_DEFAULT_USER_ID", DisplayName: "Default User", Default: "CC0006",
 		Help: "The account whose portfolio kite-cli opens at start."},
 	{Key: "TRADEBOT_PRICE_MODE", DisplayName: "Price Mode", Default: PriceModeQuote, Options: []string{PriceModeQuote, PriceModeTicker},
 		Help: "quote polls prices; ticker streams them."},
+	{Key: "TRADEBOT_ACCOUNT_MODE", DisplayName: "Account Mode", Default: AccountModePaper, Options: []string{AccountModePaper, AccountModeLive},
+		Help: "paper trades each user's paper account, priced from the data user; live sends orders to Kite. P toggles it in kite-cli."},
+	{Key: "TRADEBOT_PAPER_CAPITAL", DisplayName: "Paper Capital", Default: "1000000", Hidden: true,
+		Help: "The cash a new paper account opens with, in rupees."},
+	{Key: "TRADEBOT_PAPER_SLIPPAGE_BPS", DisplayName: "Paper Slippage", Default: "0", Hidden: true,
+		Help: "Basis points market and stop-market paper fills give up against the price they match at."},
 	{Key: "TRADEBOT_DATA_USER_ID", DisplayName: "Data User",
 		Help: "The API user whose session fetches market quotes. Empty picks one with a data subscription."},
 	{Key: "TRADEBOT_TICKER_USER_ID", DisplayName: "Ticker User",

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/broker"
 )
 
 // orderAction is one entry of the order menu, run by its key.
@@ -115,24 +117,53 @@ const (
 
 // orderForm is the buy and sell form.
 type orderForm struct {
-	form    *form
-	ticket  orderTicket
-	users   []string
+	form   *form
+	ticket orderTicket
+	users  []string
+	// mode is the account the order goes to.
+	mode    broker.Mode
 	placing bool
 	// summary shows the order as it will be placed, or why it cannot be.
 	summary string
 	// charges estimates what the order costs.
 	charges string
+	// margin is what the order blocks, fetched for marginFor; marginSeq
+	// counts the orders it was asked for, so only the last one is fetched.
+	margin    string
+	marginFor kite.OrderMarginParam
+	marginSeq int
 }
+
+type (
+	// orderMarginDueMsg fetches the margin of leg once the form has rested
+	// on it.
+	orderMarginDueMsg struct {
+		form *orderForm
+		seq  int
+	}
+	orderMarginMsg struct {
+		form    *orderForm
+		leg     kite.OrderMarginParam
+		margins kite.BasketMargins
+		err     error
+	}
+)
 
 type orderDoneMsg struct {
 	form    *orderForm
 	userID  string
+	mode    broker.Mode
 	orderID string
 	params  kite.OrderParams
 	// modified reports a change to an open order rather than a new one.
 	modified bool
 	err      error
+}
+
+// portfolioMode is the account the shown portfolio is of: its orders and
+// positions are changed there.
+func (a *app) portfolioMode() broker.Mode {
+	return cmp.Or(a.portfolio.data.mode, a.mode)
 }
 
 // openOrder opens the order form for ticket, placing for the active user by
@@ -156,8 +187,12 @@ func (a *app) openOrder(ticket orderTicket) tea.Cmd {
 		// Keep a position's own product, such as MTF, to close it.
 		products = append(products, ticket.product)
 	}
-	o := &orderForm{ticket: ticket}
-	account, active := 0, a.activeUser()
+	o := &orderForm{ticket: ticket, mode: a.mode}
+	if ticket.modify != nil || ticket.closing {
+		// Open orders and positions are the portfolio's account's.
+		o.mode = a.portfolioMode()
+	}
+	account, active := 0, cmp.Or(ticket.userID, a.activeUser())
 	if ticket.modify != nil {
 		// An order is modified with the session that placed it.
 		active = ticket.userID
@@ -187,11 +222,16 @@ func (a *app) openOrder(ticket orderTicket) tea.Cmd {
 	if ticket.trigger > 0 {
 		trigger = strconv.FormatFloat(ticket.trigger, 'f', -1, 64)
 	}
-	button := "Place"
-	if ticket.modify != nil {
-		button = "Modify"
+	// A new order can wait in the basket instead; a basket order is saved
+	// back to it.
+	buttons := []string{"Place", "Add to basket", "Cancel"}
+	switch {
+	case ticket.modify != nil:
+		buttons = []string{"Modify", "Cancel"}
+	case ticket.item != nil:
+		buttons = []string{"Save to basket", "Cancel"}
 	}
-	f := newForm(14, 14, button, "Cancel")
+	f := newForm(14, 14, buttons...)
 	f.addSelect(orderFieldAccount, labels, account)
 	f.addSelect(orderFieldSide, orderSides, max(slices.Index(orderSides, ticket.side), 0))
 	f.addInput(orderFieldQuantity, strconv.Itoa(ticket.quantity), wholeNumber, false)
@@ -199,6 +239,10 @@ func (a *app) openOrder(ticket orderTicket) tea.Cmd {
 	f.addInput(orderFieldPrice, price, decimalNumber, false)
 	f.addInput(orderFieldTrigger, trigger, decimalNumber, false)
 	f.addSelect(orderFieldProduct, products, max(slices.Index(products, ticket.product), 0))
+	if ticket.item != nil {
+		// A basket's orders are placed into its owner's account.
+		f.field(orderFieldAccount).disabled = true
+	}
 	if ticket.modify != nil {
 		// Kite changes only an order's quantity, type and prices.
 		f.field(orderFieldAccount).disabled = true
@@ -210,7 +254,26 @@ func (a *app) openOrder(ticket orderTicket) tea.Cmd {
 	// Start on the quantity, the field most orders change.
 	f.focusField(orderFieldQuantity)
 	a.overlay = o
-	return nil
+	return a.orderMargin(o)
+}
+
+// orderMargin asks for the margin of the form's order once it has rested
+// for marginDelay, so typing does not ask Kite at every keystroke, unless
+// it is already shown.
+func (a *app) orderMargin(o *orderForm) tea.Cmd {
+	_, params, err := o.order()
+	if err != nil || a.deps.basketMargins == nil {
+		o.margin, o.marginFor = "", kite.OrderMarginParam{}
+		return nil
+	}
+	leg := marginLeg(params)
+	if leg == o.marginFor {
+		return nil
+	}
+	o.marginSeq++
+	o.marginFor, o.margin = leg, styleFaint.Render("Margin …")
+	seq := o.marginSeq
+	return tea.Tick(marginDelay, func(time.Time) tea.Msg { return orderMarginDueMsg{form: o, seq: seq} })
 }
 
 // order reads the form into the account and the order to place.
@@ -228,6 +291,9 @@ func (o *orderForm) order() (string, kite.OrderParams, error) {
 		price:     f.field(orderFieldPrice).value(),
 		trigger:   f.field(orderFieldTrigger).value(),
 	})
+	if err == nil {
+		err = stopLossError(params, o.ticket.ltp)
+	}
 	return o.users[index], params, err
 }
 
@@ -239,12 +305,14 @@ func (o *orderForm) refresh() {
 	f.field(orderFieldPrice).disabled = !usesPrice(orderType)
 	f.field(orderFieldTrigger).disabled = !usesTrigger(orderType)
 	side := f.field(orderFieldSide).value()
-	if o.ticket.modify != nil {
+	switch {
+	case o.ticket.modify != nil:
 		f.buttons[0] = "Modify " + o.ticket.modify.OrderID
-	} else {
+	case o.ticket.item == nil:
 		f.buttons[0] = "Place " + side
 	}
 	f.syncFocus()
+	o.hint()
 
 	userID, params, err := o.order()
 	if err != nil {
@@ -279,53 +347,85 @@ func (o *orderForm) refresh() {
 		styleText.Render(fmt.Sprintf("%s %s · %s · ", lots, at, params.Product)) + styleYellow.Render(userID) + styleMuted.Render(value)
 }
 
+// hint flags the price and trigger against the last price.
+func (o *orderForm) hint() {
+	f := o.form
+	price, _ := strconv.ParseFloat(f.field(orderFieldPrice).value(), 64)
+	trigger, _ := strconv.ParseFloat(f.field(orderFieldTrigger).value(), 64)
+	priceHint, triggerHint := priceHints(f.field(orderFieldSide).value(), f.field(orderFieldType).value(), price, trigger, o.ticket.ltp)
+	f.field(orderFieldPrice).hint, f.field(orderFieldTrigger).hint = hintText(priceHint), hintText(triggerHint)
+}
+
+// hintText styles a price hint: a warning that the order fills at once, or
+// a value Kite rejects.
+func hintText(hint string) string {
+	switch hint {
+	case "":
+		return ""
+	case hintImmediate:
+		return styleYellow.Bold(true).Render(hint)
+	}
+	return styleRed.Bold(true).Render(hint)
+}
+
 func (o *orderForm) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	if o.placing {
 		return nil
 	}
 	if msg.String() == "esc" {
-		a.closeOverlay()
-		return nil
+		return o.close(a)
 	}
 	if o.step(msg.String()) {
 		o.refresh()
-		return nil
+		return a.orderMargin(o)
 	}
 	pressed, changed := o.form.update(msg)
 	if changed {
 		o.refresh()
 	}
-	switch pressed {
-	case 0:
-		if o.ticket.modify != nil {
-			return a.modifyOrder(o)
-		}
+	switch {
+	case pressed < 0 && changed:
+		return a.orderMargin(o)
+	case pressed < 0:
+	case pressed == 0 && o.ticket.modify != nil:
+		return a.modifyOrder(o)
+	case pressed == 0 && o.ticket.item != nil:
+		return a.saveBasketItem(o)
+	case pressed == 0:
 		return a.placeOrder(o)
-	case 1:
-		a.closeOverlay()
+	case pressed == 1 && len(o.form.buttons) == 3:
+		return a.pickBasket(o)
+	default:
+		return o.close(a)
 	}
 	return nil
 }
 
+// close leaves the form.
+func (o *orderForm) close(a *app) tea.Cmd {
+	a.closeOverlay()
+	return nil
+}
+
 // step handles the form's steppers: + and - change the quantity by a lot
-// from any field, and Left and Right move the price or trigger by a tick.
+// from any field, and Left and Right change it on the quantity and move
+// the price or trigger by a tick.
 func (o *orderForm) step(key string) bool {
 	f := o.form
 	switch key {
 	case "+", "=", "-", "_":
-		lot := max(o.ticket.instrument.LotSize, 1)
-		quantity := f.field(orderFieldQuantity)
-		current, _ := strconv.Atoi(quantity.value())
-		next := (current/lot + 1) * lot
-		if key == "-" || key == "_" {
-			next = max((current+lot-1)/lot*lot-lot, lot)
-		}
-		quantity.input.SetValue(strconv.Itoa(next))
-		quantity.input.CursorEnd()
+		o.stepLots(key == "+" || key == "=")
 		return true
 	case "left", "right":
 		current := f.current()
-		if current == nil || current.disabled || (current.label != orderFieldPrice && current.label != orderFieldTrigger) {
+		if current == nil || current.disabled {
+			return false
+		}
+		if current.label == orderFieldQuantity {
+			o.stepLots(key == "right")
+			return true
+		}
+		if current.label != orderFieldPrice && current.label != orderFieldTrigger {
 			return false
 		}
 		steps := 1
@@ -344,6 +444,20 @@ func (o *orderForm) step(key string) bool {
 	return false
 }
 
+// stepLots moves the quantity up or down to the next whole lot, never
+// below one.
+func (o *orderForm) stepLots(up bool) {
+	lot := max(o.ticket.instrument.LotSize, 1)
+	quantity := o.form.field(orderFieldQuantity)
+	current, _ := strconv.Atoi(quantity.value())
+	next := (current/lot + 1) * lot
+	if !up {
+		next = max((current+lot-1)/lot*lot-lot, lot)
+	}
+	quantity.input.SetValue(strconv.Itoa(next))
+	quantity.input.CursorEnd()
+}
+
 // placeOrder places the form's order. The form stays open with the error if
 // Kite rejects it, and closes once Kite accepts it.
 func (a *app) placeOrder(o *orderForm) tea.Cmd {
@@ -358,10 +472,10 @@ func (a *app) placeOrder(o *orderForm) tea.Cmd {
 	}
 	o.placing = true
 	o.summary = styleYellow.Render(fmt.Sprintf("Placing %s %d %s for %s…", params.TransactionType, params.Quantity, params.Tradingsymbol, userID))
-	place := a.deps.place
+	place, mode := a.deps.place, o.mode
 	return a.task(func(ctx context.Context) tea.Msg {
-		orderID, err := place(ctx, userID, params)
-		return orderDoneMsg{form: o, userID: userID, orderID: orderID, params: params, err: err}
+		orderID, err := place(ctx, userID, mode, params)
+		return orderDoneMsg{form: o, userID: userID, mode: mode, orderID: orderID, params: params, err: err}
 	})
 }
 
@@ -380,10 +494,10 @@ func (a *app) modifyOrder(o *orderForm) tea.Cmd {
 	o.placing = true
 	order := *o.ticket.modify
 	o.summary = styleYellow.Render(fmt.Sprintf("Modifying order %s…", order.OrderID))
-	modify, params := a.deps.modify, modifyParams(params)
+	modify, mode, params := a.deps.modify, o.mode, modifyParams(params)
 	return a.task(func(ctx context.Context) tea.Msg {
-		err := modify(ctx, userID, order, params)
-		return orderDoneMsg{form: o, userID: userID, orderID: order.OrderID, params: params, modified: true, err: err}
+		err := modify(ctx, userID, mode, order, params)
+		return orderDoneMsg{form: o, userID: userID, mode: mode, orderID: order.OrderID, params: params, modified: true, err: err}
 	})
 }
 
@@ -402,16 +516,19 @@ func (o *orderForm) view(_ *app, w, _ int) string {
 	switch {
 	case o.ticket.modify != nil:
 		title = "Modify order " + o.ticket.modify.OrderID
+	case o.ticket.item != nil:
+		title = "Basket order"
 	case o.ticket.closing:
 		title = "Close position"
 	}
-	charges := ""
-	if o.charges != "" {
-		charges = o.charges + "\n"
+	// The margin and charges share a row.
+	costs := ""
+	if cost := strings.Join(slices.DeleteFunc([]string{o.margin, o.charges}, func(part string) bool { return part == "" }), styleFaint.Render("  ·  ")); cost != "" {
+		costs = cost + "\n"
 	}
-	body := header + "\n\n" + o.form.view(width-4) + "\n\n" + o.summary + "\n" + charges +
-		styleFaint.Render("↑↓ field · ←→ option/tick · +/- lot · Enter next · Esc cancel")
-	return modal(title, "", body, width)
+	body := header + "\n\n" + o.form.view(width-4) + "\n\n" + o.summary + "\n" + costs +
+		styleFaint.Render("↑↓ field · ←→ option/lot/tick · +/- lot · Enter next · Esc cancel")
+	return modal(title, modePill(o.mode), body, width)
 }
 
 // strikePicker chooses an option to buy or sell: one expiry of an
@@ -515,13 +632,38 @@ func (a *app) handleOrders(msg tea.Msg) (tea.Cmd, bool) {
 			return a.orderChanged(msg.userID, statusOK(fmt.Sprintf("Order %s modified · %s %d at %s", msg.orderID,
 				msg.params.OrderType, msg.params.Quantity, priceOrMarket(msg.params.Price)))), true
 		}
-		return a.orderPlaced(msg.userID, msg.orderID, msg.params), true
+		return a.orderPlaced(msg.userID, msg.mode, msg.orderID, msg.params), true
+	case orderMarginDueMsg:
+		o := msg.form
+		if a.overlay != o || msg.seq != o.marginSeq || a.deps.basketMargins == nil {
+			return nil, true
+		}
+		margins, leg := a.deps.basketMargins, o.marginFor
+		return a.task(func(ctx context.Context) tea.Msg {
+			result, err := margins(ctx, []kite.OrderMarginParam{leg})
+			return orderMarginMsg{form: o, leg: leg, margins: result, err: err}
+		}), true
+	case orderMarginMsg:
+		o := msg.form
+		if msg.leg != o.marginFor {
+			return nil, true
+		}
+		if msg.err != nil {
+			o.margin = styleFaint.Render("Margin unavailable: " + quoteErrorText(msg.err))
+			return nil, true
+		}
+		o.margin = styleMuted.Render("Margin ") + styleYellow.Render("≈ ₹"+formatAmount(msg.margins.Final.Total))
+		return nil, true
 	case groupExitMsg:
 		if len(msg.failures) > 0 {
 			a.showError(fmt.Errorf("exit %s: %d of %d orders failed\n%s", msg.name, len(msg.failures), len(msg.failures)+len(msg.placed), strings.Join(msg.failures, "\n")))
 			return a.orderChanged(msg.userID, statusWarn(fmt.Sprintf("Exit %s: %d placed, %d failed", msg.name, len(msg.placed), len(msg.failures)))), true
 		}
-		return a.orderChanged(msg.userID, statusOK(fmt.Sprintf("Exit %s · %d orders placed · check their status in Kite", msg.name, len(msg.placed)))), true
+		check := " · check their status in Kite"
+		if msg.mode == broker.Paper {
+			check = " in the paper account"
+		}
+		return a.orderChanged(msg.userID, statusOK(fmt.Sprintf("Exit %s · %d orders placed%s", msg.name, len(msg.placed), check))), true
 	case orderCancelledMsg:
 		if msg.err != nil {
 			a.showError(fmt.Errorf("cancel order %s: %s", msg.order.OrderID, quoteErrorText(msg.err)))
@@ -779,10 +921,10 @@ func (p *strikePicker) cycleExpiry(a *app, delta int) tea.Cmd {
 }
 
 // update handles the picker's keys: Left, Right, [ and ] change expiry, R
-// refreshes prices, Enter orders the strike and Esc or Q goes back.
+// refreshes prices, Enter orders the strike and Esc goes back.
 func (p *strikePicker) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	switch key := msg.String(); key {
-	case "esc", "q", "Q":
+	case "esc":
 		a.closeOverlay()
 		return nil
 	case "left", "[":
@@ -895,14 +1037,14 @@ func (a *app) confirmCancel(userID string, order kite.Order) tea.Cmd {
 		pending = order.Quantity - order.FilledQuantity
 	}
 	what := fmt.Sprintf("%s %g %s · %s", order.TransactionType, pending, order.TradingSymbol, order.Status)
-	cancel := a.deps.cancel
-	m := &menu{title: "Cancel order " + order.OrderID, info: styleMuted.Render(userID), width: max(48, len(what)+8), keyFold: "YN",
+	cancel, mode := a.deps.cancel, a.portfolioMode()
+	m := &menu{title: "Cancel order " + order.OrderID, info: modePill(mode) + " " + styleMuted.Render(userID), width: max(48, len(what)+8), keyFold: "YN",
 		footer: "key or ↑↓ Enter · Esc keep"}
 	m.items = []menuItem{
 		{key: "Y", label: styleRed.Bold(true).Render("Y") + "  " + styleText.Render("Cancel ") + styleFaint.Render(what), run: func(a *app) tea.Cmd {
 			a.notify(statusInfo("Cancelling order " + order.OrderID + "…"))
 			return a.task(func(ctx context.Context) tea.Msg {
-				return orderCancelledMsg{userID: userID, order: order, err: cancel(ctx, userID, order)}
+				return orderCancelledMsg{userID: userID, order: order, err: cancel(ctx, userID, mode, order)}
 			})
 		}},
 		{key: "N", label: styleGreen.Bold(true).Render("N") + "  " + styleText.Render("Keep it"), run: func(*app) tea.Cmd { return nil }},
@@ -917,6 +1059,7 @@ func (a *app) confirmCancel(userID string, order kite.Order) tea.Cmd {
 // why the others failed.
 type groupExitMsg struct {
 	userID   string
+	mode     broker.Mode
 	name     string
 	placed   []string
 	failures []string
@@ -973,17 +1116,17 @@ func (a *app) confirmExitGroup(underlying models.InstrumentID) tea.Cmd {
 		legs = append(legs, style.Bold(true).Render(leg)+" "+styleText.Render(params.Tradingsymbol)+styleFaint.Render(" · "+params.Product))
 		width = max(width, len(leg)+len(params.Tradingsymbol)+len(params.Product)+12)
 	}
-	userID, place := p.user.UserID, a.deps.place
-	m := &menu{title: "Exit " + name, info: styleMuted.Render(userID), width: width, keyFold: "YN",
+	userID, mode, place := p.user.UserID, a.portfolioMode(), a.deps.place
+	m := &menu{title: "Exit " + name, info: modePill(mode) + " " + styleMuted.Render(userID), width: width, keyFold: "YN",
 		body:   strings.Join(legs, "\n") + "\n" + styleFaint.Render("All at market, buys first.") + exitCharges(charged, len(exits)),
 		footer: "key or ↑↓ Enter · Esc keep"}
 	m.items = []menuItem{
 		{key: "Y", label: styleRed.Bold(true).Render("Y") + "  " + styleText.Render(fmt.Sprintf("Exit all %d", len(exits))), run: func(a *app) tea.Cmd {
 			a.notify(statusInfo(fmt.Sprintf("Exiting %d positions in %s…", len(exits), name)))
 			return a.task(func(ctx context.Context) tea.Msg {
-				msg := groupExitMsg{userID: userID, name: name}
+				msg := groupExitMsg{userID: userID, mode: mode, name: name}
 				for _, params := range exits {
-					orderID, err := place(ctx, userID, params)
+					orderID, err := place(ctx, userID, mode, params)
 					if err != nil {
 						msg.failures = append(msg.failures, params.Tradingsymbol+": "+quoteErrorText(err))
 						continue

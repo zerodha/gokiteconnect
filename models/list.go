@@ -9,14 +9,21 @@ import (
 // external sources such as NSE indices.
 const AdminUser = "ADMIN"
 
+// ErrSmartList indicates an edit to the items of a smart list, which
+// follows its parent's items instead of keeping its own.
+var ErrSmartList = errors.New("lists: smart lists follow their parent and cannot be edited")
+
 // ErrAlreadyExists indicates that a list with the same name already exists
 // for the same user.
 var ErrAlreadyExists = errors.New("lists: already exists")
 
-// List is a named, user-owned set of instruments.
+// List is a named, user-owned set of instruments. A smart list has a
+// ParentID and no items of its own: it reads its parent's items, so it
+// changes whenever the parent does.
 type List struct {
 	ID            string
 	CreatedBy     string
+	ParentID      string
 	Number        int
 	Name          string
 	IsIndex       bool
@@ -32,6 +39,9 @@ type ListItem struct {
 	InstrumentID InstrumentID
 	CreatedAt    time.Time
 }
+
+// IsSmart reports whether the list follows a parent list.
+func (l List) IsSmart() bool { return l.ParentID != "" }
 
 // InstrumentIDs returns the list's instrument IDs in list order.
 func (l List) InstrumentIDs() []InstrumentID {

@@ -22,6 +22,9 @@ import (
 	"github.com/devshoe/gokiteconnect/credentials"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
 	"github.com/devshoe/gokiteconnect/kite"
+	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/paper"
+	"github.com/devshoe/gokiteconnect/pkg/broker"
 	"github.com/devshoe/gokiteconnect/pkg/nse"
 	instrumentstore "github.com/devshoe/gokiteconnect/repository"
 	_ "github.com/mattn/go-sqlite3"
@@ -42,14 +45,20 @@ func run() error {
 		return err
 	}
 	instrumentsFlag := flag.String("instruments-db", settings.InstrumentsPath, "DuckDB database used for the instrument catalog")
-	listsFlag := flag.String("lists-db", settings.ListsPath, "SQLite database used for instrument lists")
-	candlesFlag := flag.String("candles-db", settings.CandlesPath, "DuckDB candles database the history screen shows and syncs")
+	listsFlag := flag.String("lists-db", settings.ListsPath, "SQLite database used for instrument lists and order baskets")
+	fundamentalsFlag := flag.String("fundamentals-db", settings.FundamentalsPath, "SQLite database the screener's fundamentals are stored in")
+	candlesFlag := flag.String("candles-db", settings.CandlesPath, "DuckDB candles database the Data screen shows and syncs")
 	credentialsFlag := flag.String("credentials-db", settings.CredentialsPath, "SQLite database used for the credentials store")
 	dataUserFlag := flag.String("data-user", settings.DataUserID, "API user whose session fetches instrument prices; empty picks the first API user with a data subscription")
 	quotesEvery := flag.Duration("quotes-every", 5*time.Second, "how often visible prices (instruments and portfolio) refresh; 0 refreshes only on R")
 	userFlag := flag.String("user", settings.DefaultUserID, "user whose portfolio opens at start; empty starts on the users screen")
 	noQuotes := flag.Bool("no-quotes", false, "start the instruments explorer without prices")
+	modeFlag := flag.String("mode", settings.AccountMode, "account orders and portfolios start in: paper or live; P toggles it")
 	flag.Parse()
+	mode, err := broker.ParseMode(strings.ToLower(strings.TrimSpace(*modeFlag)))
+	if err != nil {
+		return err
+	}
 
 	instrumentsPath := strings.TrimSpace(*instrumentsFlag)
 	credentialsPath := strings.TrimSpace(*credentialsFlag)
@@ -92,26 +101,78 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The lists database also keeps the baskets, on one connection. Lists
+	// still in an older instruments database move here first.
+	lists, err := instrumentstore.NewListsSQLiteRepository(ctx, listsPath, instrumentsPath)
+	if err != nil {
+		return err
+	}
+	defer lists.Close()
+	baskets, err := lists.Baskets(ctx)
+	if err != nil {
+		return err
+	}
 	factory := func(ctx context.Context) (catalog, listStore, error) {
-		return openCatalog(ctx, "kite-cli", instrumentsPath, listsPath)
+		return openCatalog(ctx, "kite-cli", instrumentsPath, lists)
 	}
 
 	// The explorer, the strike picker and the positions' underlyings share
 	// one catalog, opened by whichever needs it first.
 	shared := &sharedCatalog{open: factory}
+	// Paper accounts trade on the data user's prices, candles and margin
+	// calculator, read on its stored session: kite-cli never logs it in.
+	dataUserID := strings.TrimSpace(*dataUserFlag)
+	book, err := paper.NewBook(paper.Config{
+		Dir:         settings.PortfolioDir,
+		Capital:     settings.PaperCapital,
+		SlippageBPS: settings.PaperSlippageBPS,
+		Data: func(ctx context.Context) (paper.Data, error) {
+			client, _, err := dataClient(ctx, credentialsPath, dataUserID)
+			if err != nil {
+				return nil, fmt.Errorf("paper market data: %w", err)
+			}
+			return client, nil
+		},
+		Instruments: func(ctx context.Context, id models.InstrumentID) (models.Instrument, error) {
+			catalog, _, err := shared.get(ctx)
+			if err != nil {
+				return models.Instrument{}, err
+			}
+			return catalog.Get(ctx, id)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	defer book.Close()
+	accounts := broker.Accounts{Live: broker.KiteSessions(manager, "kite-cli"), Paper: book.Open}
 	deps := appDeps{
 		manager:       manager,
 		credentialsDB: credentialsPath,
 		catalogPath:   instrumentsPath,
+		listsPath:     listsPath,
 		openCatalog:   shared.get,
 		indices:       nse.NewIndicesClient(),
-		loadPortfolio: kitePortfolioLoader(manager, catalogInstruments(shared.get)),
+		loadPortfolio: accountPortfolioLoader(accounts, catalogInstruments(shared.get)),
 		settingsPath:  settings.SettingsPath,
-		place:         kiteOrderPlacer(manager),
-		modify:        kiteOrderModifier(manager),
-		cancel:        kiteOrderCanceller(manager),
+		mode:          mode,
+		place:         accountOrderPlacer(accounts),
+		modify:        accountOrderModifier(accounts),
+		cancel:        accountOrderCanceller(accounts),
+		baskets:       baskets,
+		resetPaper:    book.Reset,
+		basketMargins: dataBasketMargins(credentialsPath, dataUserID),
+		openWeb:       kiteWebOpener(settings.BrowserDir),
 		defaultUser:   strings.TrimSpace(*userFlag),
 		every:         *quotesEvery,
+	}
+	if fundamentalsPath := strings.TrimSpace(*fundamentalsFlag); fundamentalsPath != "" {
+		if fundamentalsPath != ":memory:" {
+			if err := os.MkdirAll(filepath.Dir(fundamentalsPath), 0o700); err != nil {
+				return fmt.Errorf("create fundamentals directory: %w", err)
+			}
+		}
+		deps.fundamentals = localFundamentals{path: fundamentalsPath, credentialsPath: credentialsPath, dataUserID: strings.TrimSpace(*dataUserFlag)}
 	}
 	if !*noQuotes {
 		deps.loadQuotes = credentialsQuoteLoader(credentialsPath, strings.TrimSpace(*dataUserFlag))
@@ -178,34 +239,19 @@ func (shared *sharedCatalog) close() error {
 	return err
 }
 
-// catalogWithLists closes the lists database with the catalog.
-type catalogWithLists struct {
-	*kite.InstrumentCatalog
-	lists *instrumentstore.ListsSQLiteRepository
-}
-
-func (c catalogWithLists) Close() error {
-	return errors.Join(c.InstrumentCatalog.Close(), c.lists.Close())
-}
-
-// openCatalog opens the lists, migrating them out of an older instruments
-// database first, then the catalog, refreshing it when stale. The catalog
-// is read-only between refreshes, so other tools can read it meanwhile.
-func openCatalog(ctx context.Context, appName, instrumentsPath, listsPath string) (catalog, listStore, error) {
-	lists, err := instrumentstore.NewListsSQLiteRepository(ctx, listsPath, instrumentsPath)
-	if err != nil {
-		return nil, nil, err
-	}
+// openCatalog opens the catalog beside the open lists, refreshing it when
+// stale. The catalog is read-only between refreshes, so other tools can
+// read it meanwhile.
+func openCatalog(ctx context.Context, appName, instrumentsPath string, lists *instrumentstore.ListsSQLiteRepository) (catalog, listStore, error) {
 	repository, err := instrumentstore.NewInstrumentsDuckDBRepository(ctx, instrumentsPath)
 	if err != nil {
-		_ = lists.Close()
 		return nil, nil, err
 	}
 	client := kite.New("")
 	client.SetAppName(appName)
 	client.SetTimeout(kiteRequestTimeout)
 	client.SetInstrumentRepository(repository)
-	instruments := catalogWithLists{InstrumentCatalog: client.Instruments(), lists: lists}
+	instruments := client.Instruments()
 	if _, err := instruments.RefreshIfStale(ctx); err != nil {
 		_ = instruments.Close()
 		return nil, nil, err

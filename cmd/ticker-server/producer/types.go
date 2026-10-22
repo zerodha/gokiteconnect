@@ -38,9 +38,23 @@ type SessionProvider interface {
 	LoadSession(ctx context.Context, userID string, force bool) (Session, error)
 }
 
-// Tick is a broker tick annotated with its canonical instrument ID.
+// BroadcastType says whether a published tick is new from the socket or a
+// rebroadcast of the latest one.
+type BroadcastType string
+
+const (
+	// BroadcastNew is a tick as the socket sent it.
+	BroadcastNew BroadcastType = "NEW"
+	// BroadcastRepeat is the latest tick again, sent when an instrument has
+	// had no new tick for the replay interval.
+	BroadcastRepeat BroadcastType = "REPEAT"
+)
+
+// Tick is a broker tick annotated with its canonical instrument ID and
+// whether it is new or a repeat.
 type Tick struct {
-	ID string `json:"id"`
+	ID            string        `json:"id"`
+	BroadcastType BroadcastType `json:"broadcast_type"`
 	models.Tick
 }
 
@@ -146,5 +160,8 @@ func (s Status) Ready() bool {
 type Config struct {
 	UserID            string
 	TokenPollInterval time.Duration
-	ReplayInterval    time.Duration
+	// ReplayInterval is how long an instrument goes without a new tick
+	// before its latest tick is rebroadcast, and then how often; 3s when
+	// unset.
+	ReplayInterval time.Duration
 }

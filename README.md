@@ -65,6 +65,48 @@ func main() {
 }
 ```
 
+## Screener
+
+`ScreenerClient` queries Kite web's instrument screener. It filters, sorts and
+pages instruments using market and fundamental data, such as market cap, P/E,
+ROE, debt to equity, 52-week range, growth and sector.
+
+The screener signs in with the user's web session, not an API access token:
+the user ID, enctoken, `kf_session` and `public_token`. Set these with
+`SetScreenerSession`; `credentials.User.KiteClient()` sets them from the stored
+login.
+
+```go
+screener := user.KiteClient().ScreenerClient()
+page, err := screener.GetInstruments(ctx, kite.ScreenerRequest{
+	Query:   "market_cap>=10000 and pe<25",
+	OrderBy: "market_cap",
+	Order:   "desc",
+})
+all, err := screener.AllInstruments(ctx, kite.ScreenerRequest{Query: "roe>=15"}, 0)
+```
+
+- `GetInstruments` reads one page of up to 100 results (Kite caps the page size at 100).
+- `AllInstruments` follows the pages, stopping at an optional limit.
+- An incomplete or expired session matches `errors.Is(err, kite.ErrScreenerSession)`. An expired session usually shows up as an HTTP 401/403.
+- `ScreenerInstrument.Fundamentals()` keeps a result's company data as a `models.Fundamentals`.
+
+### Stored fundamentals
+
+`repository.FundamentalsSQLiteRepository` keeps the latest screener read in
+the `instrument_fundamentals` table of the Fundamentals Database, one row per
+instrument token. `Replace` swaps every row in one transaction and refuses an
+empty read; `Get`, `List` (optionally by index tag, such as `"Nifty 500"`),
+`Count` and `LastRefreshedAt` read it back.
+
+The screener covers about 3,300 NSE instruments, ETFs among them (which have
+no fundamentals), in roughly 33 pages; the Nifty 500 is 497 of them, as
+REITs aren't listed. Join on `instrument_token`, not the trading symbol: a
+stock in the BE series appears as, say, `HFCL-BE`. Market cap, PE, dividend
+yield and the 52-week range follow the price, so they are only as fresh as
+the last refresh; the rest change with quarterly results. A zero ratio means
+Kite has none or it is zero (banks have no debt to equity).
+
 ## Local instrument catalog
 
 `Client.Instruments()` exposes a normalized, searchable catalog built from the
@@ -142,8 +184,8 @@ and Lip Gloss:
 go run ./cmd/kite-cli
 ```
 
-The tab bar along the top switches between Users, Portfolio, Instruments and History,
-and the mouse works too: click a tab or a row to select it, click a selected
+The tab bar along the top switches between Users, Portfolio, Watchlists, Admin and Settings;
+Shift+←/→ cycle through them, and the mouse works too: click a tab or a row to select it, click a selected
 row again to open it, and scroll tables with the wheel. The previous
 tview-based console is kept as `cmd/kite-cli-old` with the same flags and
 keys.
@@ -165,6 +207,14 @@ shows the margin used out of the total (equity and commodity together, such as
 `₹1.4L/6.4L`) and how much is free. Only the focused table highlights its
 selected row.
 
+`B` on a user opens Kite web in Chrome, already signed in with the stored web
+session. First it checks the session with Kite, and it never logs in. Each
+user gets a Chrome profile of their own under Browser Profiles
+(`TRADEBOT_BROWSER_PROFILES_DIR`, `browser` under the base path). That Chrome
+stays open after kite-cli exits, and pressing `B` again adds a tab to it.
+Logging out in that browser ends the stored session for kite-cli and the
+ticker too.
+
 The Orders table, at the bottom, lists the day's orders, newest first. Each row shows the
 time, side, type, product, filled over ordered quantity, price, average fill
 price and a coloured status, and the panel title counts orders that are
@@ -174,7 +224,7 @@ an order, the details pane shows its status message, quantities, prices and
 timestamps. `Enter` swaps that pane for the raw Kite payload: every key in
 Kite's order, values coloured by type, scrolled with `J` and `K`. `Esc` goes
 back to the summary. On screens narrower than 110 columns there is no details
-pane, so `Enter` opens the payload in a dialog. `O` on an order opens the
+pane, so `Enter` opens the payload in a dialog. `+` on an order opens the
 order menu for its instrument. On an order Kite has not yet completed,
 cancelled or rejected, `M` modifies it: the order form opens with its
 quantity, type, price and trigger, and its account, side and product are
@@ -183,12 +233,12 @@ reloads afterwards. The Orders title also totals the estimated charges of the
 day's executed orders, and an executed order's details pane breaks its charges
 down into brokerage, STT, exchange charges, GST, stamp duty and SEBI fees.
 
-`X` (or `O`) on a group header exits every position in the group at market,
+`X` (or `+`) on a group header exits every position in the group at market,
 after a confirmation that lists the legs and their estimated charges and
 defaults to keeping them. Buys are placed first, so short legs are covered
 before their hedges are sold.
 
-`O` opens the order menu for the selected position or holding, or the
+`+` opens the order menu for the selected position or holding, or the
 selected instrument in the explorer (a search result, chain contract, future
 or list item):
 
@@ -210,21 +260,109 @@ quantity (one lot by default, in multiples of the lot size), order type
 product (NRML or MIS for derivatives, CNC or MIS otherwise). `Up` and `Down`
 (or `Tab`) move between fields, `Left` and `Right` change a drop-down's option,
 and fields the order type doesn't use are skipped. `+` and `-` change the
-quantity by one lot from any field. In the price and trigger fields, `Left` and
+quantity by one lot from any field, as `Left` and `Right` do in the quantity
+field. In the price and trigger fields, `Left` and
 `Right` move the price by the instrument's tick size, starting from the last
-price when the field is empty. It places a regular day
+price when the field is empty. Beside the price, a limit buy above the last
+price, or a limit sell below it, shows `! Immediate Execution !`. For SL and
+SL-M orders, a buy's trigger at or below the last price, or a sell's at or
+above it, is flagged in red, as is an SL buy's price below its trigger or an
+SL sell's above it. Kite rejects those, so the form won't place, save or
+add them to a basket, and the summary says why. It places a regular day
 order tagged `kite-cli`, with Kite's automatic market protection on market and
-SL-M orders, and shows Kite's reason when it is rejected. Below the summary it
-shows the order's estimated charges at its price (the last price for a market
-order). Nothing is sent until **Place** is pressed; `Escape` cancels.
+SL-M orders, and shows Kite's reason when it is rejected. Below the summary, one
+row shows the order's margin, from Kite's margin calculator once the form has
+rested on the order for a moment, and its estimated charges at its price (the
+last price for a market order). Nothing is sent until **Place** is pressed; `Escape` cancels.
+
+#### Baskets
+
+A basket is a named set of orders, placed together in one go: a spread, a
+hedge and its short, a set of exits. Baskets are each user's own and are kept
+in the Lists Database beside the watchlists (`lists.sqlite3`, or `-lists-db`).
+Each order in a basket is its parameters: exchange, symbol, side, quantity,
+order type, prices and product.
+
+**Add to basket** on the order form asks where the order goes, like Add to
+list does: `+ New basket…`, or one of the account's baskets. A new basket is
+a draft. It is named, but nothing is stored until `S` on the Baskets tab saves
+it, and it is lost when kite-cli quits unsaved. The status bar shows
+`UNSAVED n` while drafts exist. An order added to a saved basket is stored at
+once. `Esc` on the picker goes back to the order form.
+
+The Baskets tab (after Watchlists, or `B` on the Portfolio and Watchlists
+screens) lists the active user's baskets, drafts marked `*`, beside the
+selected basket's orders. Each order shows its LTP and value, and the basket
+shows its total value, the estimated charges and the margin with hedges netted
+(from the data user's margin calculator, without the account's positions).
+`N` starts an empty draft, `S` saves one, `E` renames a basket, and `D` deletes
+a basket (or discards a draft) after asking. `Tab` or `Enter` moves to the
+orders. There, `Enter` or `E` edits an order in the order form, with the
+account fixed, and `D` removes it. `O` asks, then places every order into the
+basket owner's account in the current mode (paper or live), buys first so
+hedges go in before the shorts they cover. The basket stays, and each order
+shows how its last run went: the order ID, or Kite's reason. `R` reloads
+the baskets and prices, and `P` switches paper and live.
+
+#### Paper trading
+
+kite-cli starts in paper mode (Account Mode, `TRADEBOT_ACCOUNT_MODE`, or
+`-mode paper|live`). Every user keeps the same ID and gets a paper account,
+created on first use with Paper Capital (`TRADEBOT_PAPER_CAPITAL`, ₹10 lakh)
+in cash. It is kept in the user's own database in Portfolio Databases,
+`<USER>.db`, in the `paper_` tables beside the live order record. A paper
+account from before that, in `<USER>_paper.db`, moves in the first time it is
+opened, and the old file is renamed `<USER>_paper.db.migrated`. Quit any
+older kite-cli first, so it isn't still writing there. `⇧Z` on the Portfolio
+screen in paper mode resets the account after asking: every paper order and
+fill is deleted, and it opens again with Paper Capital. Live accounts are never
+reset.
+
+`P` on the Users, Portfolio and Baskets screens, or `Ctrl+P` anywhere,
+switches between paper and live, and the status bar always shows the mode: a
+yellow `PAPER` or a red `LIVE` badge.
+Switching reloads the open portfolio from the other account. The order form,
+the cancel confirmation and the group exit show the badge of the account they
+send to; orders and positions are always changed in the account the portfolio
+was loaded from.
+
+A paper account is package `paper`'s broker. It never calls Kite's order
+endpoints. Prices, minute and day candles and the margin calculator come from
+the Data User's stored session, and kite-cli never logs that user in. Only
+orders and fills are stored. Positions, holdings and funds are worked out from
+the fills each time the account is read.
+
+- Orders are checked like Kite checks them: regular day or IOC orders only,
+  lot multiples, tick sizes, the circuit limits, SL trigger prices, CNC only
+  on cash and NRML only on derivatives, MIS blocked after 15:20, sellable
+  holdings, and margin. An order that fails a check is kept as `REJECTED`,
+  with Kite's message.
+- Market orders fill at once against the quote's depth, plus Paper Slippage
+  (`TRADEBOT_PAPER_SLIPPAGE_BPS`, 0). Limit orders fill when the price
+  reaches the limit, and stop orders trigger when it reaches the trigger.
+  Charges are estimated like the order form estimates them.
+- Margin comes from the data user's basket calculator, which nets hedges.
+  When it can't be reached, flat rates are used instead.
+- While the portfolio is shown, every `-quotes-every`, an account with open
+  orders or positions is matched against the live quote. A fill reloads the
+  portfolio and the status bar names the orders that changed.
+- Time the account was not read is caught up on its next read, from minute
+  candles. A limit fills at the limit, or at a candle's open when that was
+  better. An SL-M fills at the trigger, or at the open when that was worse.
+- At 15:20, open MIS orders are cancelled and MIS positions squared off. At
+  the close, other open orders are cancelled. Contracts settle in cash at
+  expiry: futures at the underlying's close, and options at their intrinsic
+  value. Delivery bought on one day is a holding the next.
+
+Settling a closed day needs its candles. If they can't be read, the
+portfolio shows the error rather than a guess.
 
 Charges are estimated locally by `kite.EstimateOrderCharges` (and
 `kite.CalculateCharges` for one order), from Zerodha's published rates for
 equity delivery, intraday, futures and options on NSE and BSE. They can drift
 from what the contract note says when rates change.
 
-`s` opens the settings dialog from any screen (on the users screen, `Shift+S`
-toggles sudo). It edits `~/tradebot/settings.json`, the only place the tools
+The Settings tab, after Admin, edits `~/tradebot/settings.json`, the only place the tools
 read configuration from (environment variables and `.env` are no longer
 read). The file is an object keyed by each setting's `TRADEBOT_*` name:
 
@@ -240,10 +378,13 @@ read). The file is an object keyed by each setting's `TRADEBOT_*` name:
 }
 ```
 
-The dialog labels each setting with its `display_name`; when that is empty,
+The tab labels each setting with its `display_name`; when that is empty,
 the label comes from the key, so `TRADEBOT_ABC_DEF` reads "Abc Def". It
 lists only `visible` settings and shows the focused one's `help` and
-default below the fields. An empty `value` means the `default`:
+default below the fields. `Enter` saves, `Esc` reverts unsaved changes (or
+goes back when there are none), and unsaved changes survive switching tabs.
+Saved settings apply the next time kite-cli starts. An empty `value` means
+the `default`:
 
 | Setting              | Key                                                | Default               | Visible |
 | -------------------- | -------------------------------------------------- | --------------------- | ------- |
@@ -251,9 +392,15 @@ default below the fields. An empty `value` means the `default`:
 | Credentials Database | `TRADEBOT_CREDENTIALS_SQLITE_PATH`                 | `credentials.sqlite3` | no      |
 | Instruments Database | `TRADEBOT_INSTRUMENTS_DUCKDB_PATH`                 | `instruments.duckdb`  | no      |
 | Lists Database       | `TRADEBOT_LISTS_SQLITE_PATH`                       | `lists.sqlite3`       | no      |
+| Fundamentals Database | `TRADEBOT_FUNDAMENTALS_SQLITE_PATH`               | `fundamentals.sqlite3` | no      |
 | Candles Database     | `TRADEBOT_CANDLES_DUCKDB_PATH`                     | `market-data/historical_data.duckdb` | no      |
+| Portfolio Databases  | `TRADEBOT_PORTFOLIO_SQLITE_DIR`                    | `portfolio`           | no      |
+| Browser Profiles     | `TRADEBOT_BROWSER_PROFILES_DIR`                    | `browser`             | no      |
 | Default User         | `TRADEBOT_DEFAULT_USER_ID`                         | `CC0006`              | yes     |
 | Price Mode           | `TRADEBOT_PRICE_MODE`                              | `quote`               | yes     |
+| Account Mode         | `TRADEBOT_ACCOUNT_MODE`                            | `paper`               | yes     |
+| Paper Capital        | `TRADEBOT_PAPER_CAPITAL`                           | `1000000`             | no      |
+| Paper Slippage       | `TRADEBOT_PAPER_SLIPPAGE_BPS`                      | `0`                   | no      |
 | Data User            | `TRADEBOT_DATA_USER_ID`                            |                       | yes     |
 | Ticker User          | `TRADEBOT_TICKER_USER_ID`                          |                       | yes     |
 | NATS URL             | `TRADEBOT_NATS_URL`                                |                       | yes     |
@@ -274,16 +421,75 @@ dropping IDs not shown for 30s, and redraws on ticks at most four times a
 second. Instruments without a tick from the last 30s, such as outside market
 hours, are priced from quotes. When ticker-server's health endpoint (on
 Ticker Port) or the WebSocket doesn't answer, kite-cli shows the error, marks
-the explorer's prices `ticker down` and polls quotes; `R` tries the ticker
-again. Saved settings apply the next time a tool starts.
+the explorer's prices `ticker down` and polls quotes; reopening Watchlists
+tries the ticker again, as it reconnects prices after any price error. Saved settings apply the next time a tool starts.
 The file always lives in `~/tradebot`, since Base Path is read from it.
 
-`I` opens the instruments explorer
-described below from either screen, `Q` goes back one screen, and `Ctrl+C`
-quits. The catalog is `-instruments-db` and the lists `-lists-db`; the price flags match
+`W` (or `I`) opens the Watchlists tab, the instruments explorer described
+below, from any screen; `Esc` goes back one screen everywhere, and `Ctrl+C` quits. The
+catalog is `-instruments-db` and the lists `-lists-db`; the price flags match
 `instruments-cli`.
 
-`H` opens the History screen, which shows what Candles Database
+With an empty search, the Watchlists tab shows the active user's watchlists
+(the open portfolio's user, else the one selected on Users), in the same table
+as search results. `[` and `]` switch between them, wrapping around, and the
+title shows the list's kind, its position and its row count. A user with no
+watchlists gets a smart copy of `ADMIN`'s `DEFAULT SYNC` as their first one,
+and again after deleting their last. `N` makes a new watchlist: from scratch,
+or from any `ADMIN` list, either as
+
+- **smart** (`S`): a pointer to the parent. It holds no items of its own and
+  shows whatever the parent holds, so it follows the parent's refreshes. It
+  can't be edited.
+- **clone** (`C`): a copy of the parent's items as they are now, which can be
+  edited and doesn't change when the parent does.
+
+The name starts as the parent's. `D` removes the selected instrument from a
+clone or a scratch watchlist. `L` opens the lists view, which shows only the
+user's own lists: `D` deletes the selected list after you confirm, `A` adds an
+instrument, `N` makes a watchlist as above and `E` renames one. `A` on a
+watchlist offers the same lists, those the user can edit. To watch an NSE
+index, make a smart or cloned watchlist from its `ADMIN` list, which Admin
+Lists downloads. `O` opens the selected instrument's option chain, and `+` its order menu.
+A search replaces the watchlist, and `Esc` brings it back.
+`Shift+S` sorts the list by any column; picking the sorted column again
+reverses it, and `List order` goes back to the watchlist's or search's own
+order. The header marks the sorted column with ▲ or ▼, instruments without
+a value (an unpriced LTP, say) go last, and the order stays as you switch
+watchlists or search.
+
+The details pane shows only live data: the quote, market depth and, for an
+option, the model values. `M` opens the selected instrument's metadata
+(identity, contract and underlying) in an overlay; `Esc` or `M` closes it.
+
+`H` opens the Admin screen from any screen but Watchlists. Its sub tabs,
+switched with `[` and `]` or a click, are Historical Data,
+Instruments and Admin Lists. `Esc` goes back to where Admin was opened from.
+
+**Instruments** summarises the instrument catalog: its file, when it was last
+refreshed, how many F&O underlyings it has, and its instruments counted by
+exchange and kind (EQ, INDEX, FUT, CE, PE and other). `R` downloads the
+complete catalog from Kite again.
+
+Its Fundamentals line shows how many instruments have stored fundamentals,
+how many of them are in the Nifty 500, and when they were read; it turns
+yellow after a month. `F` reads every instrument from Kite's screener again
+(about 33 requests) with the data user's stored web session, and replaces the
+stored fundamentals once every page is read. It never logs in: when the
+session has expired, refresh it on the Users screen (`F`) first.
+`-fundamentals-db` opens another fundamentals database.
+
+**Admin Lists** shows the lists `ADMIN` owns beside every NSE index on
+niftyindices.com, downloaded or not: `FO_LIST` (the F&O underlyings, built
+from the catalog), then each index, then `ADMIN`'s other lists such as
+`DEFAULT SYNC`. A pane on the right shows the selected list's items. `Enter`
+downloads the selected index again (or rebuilds `DEFAULT SYNC`), `A`
+downloads every index after asking, `R` fetches the index list from
+niftyindices.com again, and `D` deletes the selected list after you confirm.
+Deleting a list that smart watchlists follow turns them into clones of its
+last items.
+
+**Historical Data** shows what Candles Database
 (`-candles-db`) holds. It lists the default sync list, `DEFAULT SYNC`: the
 main NSE indices, `BSE:SENSEX` and `BSE:BANKEX`, then every NSE stock and
 index with futures or options. The list is built from the catalog the first
@@ -291,7 +497,7 @@ time and saved as an auto-generated list owned by `ADMIN`; `R` rebuilds it, for
 example after the F&O list changes. Each row shows the stored range of 1m and
 1d candles. A pane on the right shows the selected instrument's latest candles.
 
-`s` on the History screen syncs the selected instrument. It runs the standard
+`s` on Historical Data syncs the selected instrument. It runs the standard
 sync: 1m candles from 2015 and 1d candles from the earliest Kite has, both up
 to yesterday's close. Run it again to fetch only what's new. Syncs run one at a
 time in the background, using the Data User's stored session. Instruments
@@ -302,12 +508,22 @@ interval, the percentage done, the time of the last stored candle and how many
 candles it has stored. On the right, a counter shows which sync of the batch is
 running and how many have failed. The SYNC column marks each row as queued,
 syncing (with its percentage), done, failed or stopped. The candles database is opened only for each read or sync, so other
-tools can use it in between. Since `s` syncs here, open settings from another
-screen.
+tools can use it in between.
 
-In the explorer, `H` opens History on the selected instrument (a search
-result, chain contract, future or list item). If the instrument isn't in the
-list, it's added to the top of the screen for this session only.
+In kite-cli's option chain, the CHG column beside each leg's LTP shows its
+change since the previous close, as `+27.03 +10.07%`, both coloured by
+direction. Each leg also shows its POP, the probability of
+profit for a buyer: the chance the underlying ends past the breakeven at the
+15:30 close on expiry, under Black-Scholes-Merton with the volatility implied
+from the leg's last price and a 6.5% risk-free rate (`pkg/bsm`). The details
+pane shows the implied volatility with it. The details pane leads with the selected instrument's live
+data: its quote, then its five-level market depth (orders, quantity and price
+for bids on the left and asks on the right, best first) over a bar of the
+total quantity bid against offered, and the model values for an option. Indices
+have no depth. `F` filters by side, strike, LTP and
+BE %, the breakeven's distance from spot in either direction. The LTP and BE %
+filters hide a contract once its price arrives and drop strikes with nothing
+left; contracts not yet priced stay. `Reset` clears every filter.
 
 ### Instruments terminal explorer
 
@@ -320,7 +536,7 @@ go run ./cmd/instruments-cli
 The explorer uses `instruments.duckdb` under Base Path by default. Set
 Instruments Database in settings or pass `-db /path/to/catalog.duckdb` to use
 another catalog, and `-lists-db` for the lists database (Lists Database,
-`lists.sqlite3`). The public Kite instrument master does not require a
+`lists.sqlite3`, which also keeps the order baskets). The public Kite instrument master does not require a
 stored user session or API key. A missing or stale catalog is refreshed when the
 application opens.
 
@@ -386,6 +602,62 @@ instruments database at most once an hour, opening it only for the read. A proce
 that keeps the catalog open, like kite-cli, looks tokens up there instead. The
 source requests one Kite batch window at a time, 100ms apart, and stores each
 batch as it arrives.
+
+## Local portfolios (portfolio-service)
+
+`portfolio-service` (package `portfolio`) keeps a local record of each user's
+portfolio. Each user has their own SQLite database in the Portfolio Databases
+directory, for example `~/tradebot/portfolio/CC0006.db`, which also holds
+their paper account (the `paper_` tables). Like
+market-data-service, it's a library without a server:
+
+```go
+directory, err := repository.NewPortfolioSQLiteDirectory(cfg.PortfolioDir)
+if err != nil {
+	log.Fatal(err)
+}
+defer directory.Close()
+
+database, err := sql.Open("sqlite3", cfg.CredentialsPath)
+if err != nil {
+	log.Fatal(err)
+}
+users, err := credentialstore.NewUserSQLiteRepository(database)
+if err != nil {
+	log.Fatal(err)
+}
+svc := portfolio.New(portfolio.DirectoryStore(directory), portfolio.StoredSessions(users), nil)
+
+// Snapshot CC0006's profile, margins, holdings, positions, orders, trades and
+// MF holdings, and record the orders' states.
+result, err := svc.Sync(ctx, "CC0006")
+holdings, takenAt, err := portfolio.Latest[kite.Holdings](ctx, svc, "CC0006", models.SnapshotHoldings)
+```
+
+- **`Sync`** stores one snapshot (the Kite response as JSON) per type, for the types given, or for all of them when none are given.
+  - The orders it reads are also recorded as order updates.
+  - A type that fails is reported in `SyncResult.Errors`, and the rest are still stored.
+  - The profile is read first. If it belongs to another account, the sync stops before anything is stored.
+- **`RecordOrderUpdates`** stores order states, such as the ticker's order updates. It skips states it already has, so recording the same update twice is harmless.
+- **`LatestOrder`** returns an order's current state. That's its COMPLETE, CANCELLED or REJECTED update if it has one, even when a late OPEN arrived after it; otherwise it's the last update recorded.
+- **`RefreshOrder`** reads an order's history from Kite and records it first.
+- **`OrderHistory`**, **`OrderUpdates`** (filtered by order IDs, tags, statuses or only the latest) and **`OpenOrders`** read the recorded orders.
+- **`LatestSnapshot`**, **`Latest[T]`**, **`Snapshots`** and **`LastSynced`** read the snapshots.
+- **`Prune`** deletes old snapshots, keeping the last of each type.
+
+User IDs are upper-cased, and must be 1-32 letters, digits, `-` or `_`, so
+they're safe as file names. Refused requests match `errors.Is(err, portfolio.ErrInvalid)`.
+
+`StoredSessions` uses each user's stored session and never logs in. If a user's
+session has expired, their sync fails until kite-cli refreshes it.
+
+The storage is `repository.PortfolioSQLiteRepository`, one per user database:
+
+- `RecordOrderUpdates`, `OrderUpdates`, `OrderHistory`, `LatestOrderUpdate` and `OpenOrders` work on the `order_updates` table.
+- `SaveSnapshot`, `LatestSnapshot`, `Snapshots`, `LastSnapshotTimes` and `DeleteSnapshotsBefore` work on the `portfolio_snapshots` table.
+
+`repository.PortfolioSQLiteDirectory` opens each user's database the first time
+it's asked for, and keeps it open until `Close`.
 
 ## Kite ticker usage
 

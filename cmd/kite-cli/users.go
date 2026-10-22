@@ -161,7 +161,7 @@ func (s *usersScreen) detail() string {
 	return strings.Join(lines, "\n")
 }
 
-const usersAbout = "Enter opens the highlighted account's portfolio, E edits it and I opens the instruments. Click a row to select it; click it again to open it.\n\nREADY means a usable session token is stored. LOGIN NEEDED means the session should be refreshed with F."
+const usersAbout = "Enter opens the highlighted account's portfolio, E edits it and W opens the watchlists. Click a row to select it; click it again to open it.\n\nREADY means a usable session token is stored. LOGIN NEEDED means the session should be refreshed with F.\n\nB opens Kite web in Chrome, signed in with the stored session. Logging out there ends that session for kite-cli and the ticker too."
 
 func (a *app) usersView(w, h int) string {
 	s := a.users
@@ -232,6 +232,8 @@ func (a *app) usersKey(msg tea.KeyPressMsg) tea.Cmd {
 		a.confirmDeleteUser()
 	case "f":
 		return a.refreshSession()
+	case "b":
+		return a.openKiteWeb()
 	case "r":
 		return a.loadUsers("", "")
 	case "s":
@@ -241,7 +243,7 @@ func (a *app) usersKey(msg tea.KeyPressMsg) tea.Cmd {
 		} else {
 			s.status = statusInfo("Sudo disabled · sensitive credentials are hidden")
 		}
-	case "q", "esc":
+	case "esc":
 		if a.portfolio.user.UserID != "" {
 			a.show(screenPortfolio)
 		}
@@ -417,14 +419,9 @@ func (u *userForm) syncAPI() {
 	u.form.field(fieldAPISecret).hidden = hidden
 }
 
-func (u *userForm) typing() bool {
-	current := u.form.current()
-	return current != nil && current.kind == fieldInput
-}
-
 func (u *userForm) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	switch key := msg.String(); {
-	case key == "esc", (key == "q" || key == "Q") && !u.typing():
+	case key == "esc":
 		a.closeOverlay()
 		return nil
 	}
@@ -544,7 +541,7 @@ func (u *userForm) view(_ *app, w, _ int) string {
 func (a *app) openUserPicker() {
 	users := a.users.users
 	if len(users) == 0 {
-		a.notify(statusWarn("No users stored") + statusInfo(" · press Q to add one"))
+		a.notify(statusWarn("No users stored") + statusInfo(" · press A to add one"))
 		return
 	}
 	picker := &menu{title: "Switch user", info: styleFaint.Render("Enter opens · Esc cancels"), width: 56}

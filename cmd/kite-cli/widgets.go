@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"math"
 	"strings"
@@ -170,6 +171,11 @@ type grid struct {
 	group   int
 	// empty is shown, already styled, when there are no rows.
 	empty string
+	// lines draws a divider between columns.
+	lines bool
+	// bands, one per group, are labels drawn over each group's columns, on
+	// a line above the header, aligned like the group's first column.
+	bands []cell
 	// centerNext scrolls the cursor to the middle at the next render.
 	centerNext bool
 	// height is the number of rows the last render showed; x, y and starts
@@ -322,10 +328,11 @@ func (g *grid) wheel(button tea.MouseButton) {
 // click selects the row (and side) at a screen position, reporting whether
 // the position is on a row and whether that row was already selected.
 func (g *grid) click(x, y int) (hit, again bool) {
-	if y < g.y || y >= g.y+g.height || x < g.x || x >= g.x+g.w {
+	top := g.y + g.bandHeight()
+	if y < top || y >= top+g.height || x < g.x || x >= g.x+g.w {
 		return false, false
 	}
-	index := g.offset + y - g.y
+	index := g.offset + y - top
 	if index >= len(g.rows) || g.rows[index].skip {
 		return false, false
 	}
@@ -336,7 +343,8 @@ func (g *grid) click(x, y int) (hit, again bool) {
 				group = g.columns[column].group
 			}
 		}
-		if refs := g.rows[index].refs; group >= len(refs) || refs[group] == nil {
+		// A column of no side, such as the chain's strike, keeps the side.
+		if refs := g.rows[index].refs; group < 0 || group >= len(refs) || refs[group] == nil {
 			group = g.group
 		}
 	}
@@ -348,7 +356,7 @@ func (g *grid) click(x, y int) (hit, again bool) {
 
 func (g *grid) widths(w int) []int {
 	widths := make([]int, len(g.columns))
-	fixed, flex := 1+len(g.columns), 0
+	fixed, flex := 2+(len(g.columns)-1)*g.gapWidth(), 0
 	for index, column := range g.columns {
 		widths[index] = column.width
 		fixed += column.width
@@ -365,7 +373,7 @@ func (g *grid) widths(w int) []int {
 			continue
 		}
 		share := spare * column.flex / flex
-		widths[index] = max(column.width, share)
+		widths[index] = column.width + share
 		given += share
 		last = index
 	}
@@ -386,11 +394,14 @@ func (g *grid) view(w, h int, focused bool) string {
 	header := " "
 	for index, column := range g.columns {
 		g.starts = append(g.starts, position)
-		position += widths[index] + 1
-		header += styleHeader.Render(alignText(column.title, widths[index], column.align)) + " "
+		position += widths[index] + g.gapWidth()
+		header += styleHeader.Render(alignText(column.title, widths[index], column.align)) + g.divider(index, lipgloss.NewStyle())
 	}
 	lines := []string{header}
-	body := h - 1
+	if band := g.bandLine(widths); band != "" {
+		lines = []string{band, header}
+	}
+	body := h - len(lines)
 	g.height = body
 	g.w = w
 	if len(g.rows) == 0 {
@@ -414,6 +425,37 @@ func (g *grid) view(w, h int, focused bool) string {
 		lines = append(lines, g.renderRow(g.rows[index], widths, index == g.cursor, focused))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (g *grid) bandHeight() int {
+	if len(g.bands) == 0 {
+		return 0
+	}
+	return 1
+}
+
+// bandLine draws each group's band over the run of its columns, gaps
+// included, and leaves ungrouped columns blank.
+func (g *grid) bandLine(widths []int) string {
+	if len(g.bands) == 0 {
+		return ""
+	}
+	line := " "
+	for start := 0; start < len(g.columns); {
+		group, span, end := g.columns[start].group, 0, start
+		for end < len(g.columns) && g.columns[end].group == group {
+			span += widths[end] + g.gapWidth()
+			end++
+		}
+		text := strings.Repeat(" ", span)
+		if group >= 0 && group < len(g.bands) {
+			band := g.bands[group]
+			text = band.style.Render(alignText(band.text, span-g.gapWidth(), g.columns[start].align)) + strings.Repeat(" ", g.gapWidth())
+		}
+		line += text
+		start = end
+	}
+	return line
 }
 
 func (g *grid) renderRow(r row, widths []int, current, focused bool) string {
@@ -447,9 +489,26 @@ func (g *grid) renderRow(r row, widths []int, current, focused bool) string {
 			style = style.Background(selection).Bold(true)
 		}
 		line.WriteString(drawCell(c, style, widths[index], column.align))
-		line.WriteString(gap.Render(" "))
+		line.WriteString(g.divider(index, gap))
 	}
 	return line.String()
+}
+
+// divider is the gap after column index: a padded line between columns
+// when the grid has lines, otherwise a space.
+func (g *grid) divider(index int, gap lipgloss.Style) string {
+	if !g.lines || index == len(g.columns)-1 {
+		return gap.Render(" ")
+	}
+	return gap.Render(" ") + gap.Foreground(colorBorder).Render("│") + gap.Render(" ")
+}
+
+// gapWidth is the cells between two columns.
+func (g *grid) gapWidth() int {
+	if g.lines {
+		return 3
+	}
+	return 1
 }
 
 // drawCell aligns a cell's text in width cells, over its bar when it has
@@ -495,14 +554,16 @@ const (
 )
 
 type field struct {
-	kind     fieldKind
-	label    string
-	input    textinput.Model
-	numeric  numeric
-	options  []string
-	index    int
-	on       bool
-	note     string
+	kind    fieldKind
+	label   string
+	input   textinput.Model
+	numeric numeric
+	options []string
+	index   int
+	on      bool
+	note    string
+	// hint is shown after the value: a warning about it, say.
+	hint     string
 	hidden   bool
 	disabled bool
 }
@@ -805,6 +866,9 @@ func (f *form) view(width int) string {
 			}
 			continue
 		}
+		if current.hint != "" && !current.disabled {
+			value += "  " + current.hint
+		}
 		lines = append(lines, marker+label+" "+value)
 	}
 	lines = append(lines, "")
@@ -870,12 +934,14 @@ type menu struct {
 	body string
 	// keyFold matches item keys regardless of case for these keys.
 	keyFold string
+	// back is the dialog Esc returns to; nil closes the menu.
+	back overlay
 }
 
 func (m *menu) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	switch key := msg.String(); key {
-	case "esc", "q", "Q":
-		a.closeOverlay()
+	case "esc":
+		a.overlay = m.back
 		return nil
 	case "up", "k":
 		m.cursor = max(m.cursor-1, 0)
@@ -932,4 +998,40 @@ func (m *menu) view(_ *app, w, h int) string {
 		lines = append(lines, "", styleFaint.Render(m.footer))
 	}
 	return modal(m.title, m.info, strings.Join(lines, "\n"), width)
+}
+
+// textOverlay shows styled text in a scrolling dialog. Esc, or its close
+// key, closes it.
+type textOverlay struct {
+	title, text, close string
+	offset             int
+}
+
+func (o *textOverlay) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
+	switch key := strings.ToLower(msg.String()); key {
+	case "esc", "enter", o.close:
+		a.closeOverlay()
+	case "up", "k":
+		o.offset = max(o.offset-1, 0)
+	case "down", "j":
+		o.offset++
+	case "pgup":
+		o.offset = max(o.offset-10, 0)
+	case "pgdown":
+		o.offset += 10
+	}
+	return nil
+}
+
+func (o *textOverlay) view(_ *app, w, h int) string {
+	width := min(max(w-2, 30), 60)
+	height := max(h-8, 3)
+	lines := strings.Split(o.text, "\n")
+	o.offset = min(o.offset, max(len(lines)-height, 0))
+	end := min(o.offset+height, len(lines))
+	info := styleFaint.Render("Esc")
+	if len(lines) > height {
+		info = styleFaint.Render(fmt.Sprintf("%d–%d of %d · ↑↓ · Esc", o.offset+1, end, len(lines)))
+	}
+	return modal(o.title, info, strings.Join(lines[o.offset:end], "\n"), width)
 }

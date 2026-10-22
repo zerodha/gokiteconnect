@@ -167,45 +167,6 @@ func TestLoadChainDataAndPreserveFilter(t *testing.T) {
 	}
 }
 
-func TestReloadAfterRefreshRestoresCurrentView(t *testing.T) {
-	near := cliDate(2026, time.June, 25)
-	refreshedAt := time.Date(2026, time.September, 16, 9, 0, 0, 0, time.UTC)
-	searchResults := []models.Instrument{{ID: "NSE:INFY"}}
-	store := &fakeCatalog{
-		lastRefreshed: refreshedAt,
-		searchResults: searchResults,
-		underlyings:   []models.Instrument{{ID: "NSE:NIFTY 50"}, {ID: "BSE:SENSEX"}},
-	}
-
-	searchView, err := reloadAfterRefresh(context.Background(), store, viewDashboard, "infy", "NSE:INFY", "", chainFilter{})
-	if err != nil {
-		t.Fatalf("search refresh error = %v", err)
-	}
-	if store.refreshCalls != 1 || searchView.underlyingCount != 2 || searchView.query != "infy" || searchView.selectedID != "NSE:INFY" || !reflect.DeepEqual(searchView.results, searchResults) {
-		t.Fatalf("search refresh view = %#v, calls=%d", searchView, store.refreshCalls)
-	}
-
-	minimum := 19900.0
-	store.futures = []models.Instrument{future("NFO:NIFTYJUNFUT", 0, near)}
-	store.options = []models.Instrument{option("NFO:NIFTY20000CE", models.OptionTypeCall, 20000, 0, near)}
-	chainView, err := reloadAfterRefresh(context.Background(), store, viewChain, "nifty", "", "NSE:NIFTY 50", chainFilter{
-		expiryNumber: 0,
-		minStrike:    &minimum,
-		side:         optionSideCalls,
-	})
-	if err != nil {
-		t.Fatalf("chain refresh error = %v", err)
-	}
-	if chainView.chain == nil || chainView.chain.filter.minStrike == nil || *chainView.chain.filter.minStrike != minimum || chainView.chain.filter.side != optionSideCalls {
-		t.Fatalf("chain refresh view = %#v", chainView)
-	}
-
-	store.refreshErr = errors.New("refresh failed")
-	if _, err := reloadAfterRefresh(context.Background(), store, viewDashboard, "infy", "NSE:INFY", "", chainFilter{}); !errors.Is(err, store.refreshErr) {
-		t.Fatalf("refresh failure = %v", err)
-	}
-}
-
 type fakeCatalog struct {
 	lastRefreshed time.Time
 	underlyings   []models.Instrument
@@ -239,6 +200,10 @@ func (f *fakeCatalog) Get(_ context.Context, id models.InstrumentID) (models.Ins
 		}
 	}
 	return models.Instrument{}, models.ErrNotFound
+}
+
+func (f *fakeCatalog) List(context.Context, ...string) ([]models.Instrument, error) {
+	return append(append(append([]models.Instrument(nil), f.underlyings...), f.futures...), f.options...), nil
 }
 
 func (f *fakeCatalog) ListFO(context.Context, ...string) ([]models.Instrument, error) {

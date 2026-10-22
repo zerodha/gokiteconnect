@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/gocarina/gocsv"
 )
@@ -55,5 +56,25 @@ func TestCustomUnmarshalCSV(t *testing.T) {
 		if res[0].Date.IsZero() != j.isZero {
 			t.Errorf("Custom time CSV parsing failed. Expected: %v, Got: %v, Test string: %s", j.isZero, res[0].Date.IsZero(), j.input)
 		}
+	}
+}
+
+func TestTimeJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+	type sample struct {
+		Set   Time `json:"set"`
+		Unset Time `json:"unset"`
+	}
+	in := sample{Set: Time{Time: time.Date(2026, 10, 22, 9, 15, 3, 0, ExchangeLocation)}}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var out sample
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("Unmarshal(%s) error = %v", data, err)
+	}
+	if !out.Set.Equal(in.Set.Time) || !out.Unset.IsZero() {
+		t.Fatalf("round trip of %s = %#v", data, out)
 	}
 }

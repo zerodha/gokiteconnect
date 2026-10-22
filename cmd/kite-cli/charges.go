@@ -108,8 +108,7 @@ func orderCharges(userParams kite.OrderParams, ltp float64) string {
 	if err != nil {
 		return styleFaint.Render("Charges unavailable: " + err.Error())
 	}
-	sum := sumCharges(charges)
-	return styleMuted.Render("Charges ") + styleYellow.Render("≈ ₹"+formatAmount(sum.Total)) + "\n" + styleFaint.Render(chargesBreakdown(sum))
+	return styleMuted.Render("Charges ") + styleYellow.Render("≈ ₹"+formatAmount(sumCharges(charges).Total))
 }
 
 // readOrderCharges works out what the day's executed orders cost, by order

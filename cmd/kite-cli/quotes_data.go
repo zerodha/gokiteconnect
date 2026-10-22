@@ -14,6 +14,7 @@ import (
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/bsm"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -36,28 +37,38 @@ const quoteRequestTimeout = 10 * time.Second
 // An empty userID picks the first API user with a data subscription.
 func credentialsQuoteLoader(path, userID string) quoteLoader {
 	return func(ctx context.Context) (quoteSource, string, error) {
-		if _, err := os.Stat(path); err != nil {
-			return nil, "", fmt.Errorf("credentials database %s: %w", path, err)
-		}
-		database, err := sql.Open("sqlite3", path)
+		client, user, err := dataClient(ctx, path, userID)
 		if err != nil {
 			return nil, "", err
 		}
-		defer database.Close()
-		store, err := credentialstore.NewUserSQLiteRepository(database)
-		if err != nil {
-			return nil, "", err
-		}
-		user, err := dataUser(ctx, store, userID)
-		if err != nil {
-			return nil, "", err
-		}
-		client := kite.New(user.APIKey)
-		client.SetAppName("kite-cli")
-		client.SetTimeout(quoteRequestTimeout)
-		client.SetAccessToken(user.AccessToken)
-		return client, user.UserID, nil
+		return client, user, nil
 	}
+}
+
+// dataClient is the data user's client on their stored access token, which
+// credentialsQuoteLoader describes, and the user's ID.
+func dataClient(ctx context.Context, path, userID string) (*kite.Client, string, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, "", fmt.Errorf("credentials database %s: %w", path, err)
+	}
+	database, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return nil, "", err
+	}
+	defer database.Close()
+	store, err := credentialstore.NewUserSQLiteRepository(database)
+	if err != nil {
+		return nil, "", err
+	}
+	user, err := dataUser(ctx, store, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	client := kite.New(user.APIKey)
+	client.SetAppName("kite-cli")
+	client.SetTimeout(quoteRequestTimeout)
+	client.SetAccessToken(user.AccessToken)
+	return client, user.UserID, nil
 }
 
 func dataUser(ctx context.Context, store credentials.CredentialsRepository, userID string) (*credentials.Credentials, error) {
@@ -95,7 +106,7 @@ func dataUser(ctx context.Context, store credentials.CredentialsRepository, user
 func quoteErrorText(err error) string {
 	var kiteErr kite.Error
 	if errors.As(err, &kiteErr) && kiteErr.ErrorType == kite.TokenError {
-		return err.Error() + " · refresh the session on the users screen (F), then press R"
+		return err.Error() + " · refresh the session on the users screen (F), then reopen Watchlists"
 	}
 	return err.Error()
 }
@@ -110,8 +121,9 @@ type marginSource interface {
 // again. Margins follow the price, so they go stale with it.
 const marginTTL = time.Minute
 
-// marginDelay is how long a contract stays selected before its margin is
-// fetched, so scrolling through the chain does not request every row.
+// marginDelay is how long a contract stays selected, or an order form
+// unchanged, before its margin is fetched, so scrolling through the chain
+// or typing does not request every row or keystroke.
 const marginDelay = 300 * time.Millisecond
 
 // lotMargin is the margin Kite blocks for one lot of a contract.
@@ -153,6 +165,49 @@ func breakeven(option models.Instrument, premium float64) float64 {
 	return option.Strike + premium
 }
 
+// riskFreeRate is the annual rate the option model discounts at, about
+// the yield on short Indian treasury bills.
+const riskFreeRate = 0.065
+
+// optionParams are an option's model inputs with the underlying at spot.
+// Contracts expire at the 15:30 close on their expiry date; ok is false
+// for a contract that isn't an option, has expired or has no spot.
+func optionParams(option models.Instrument, spot float64, now time.Time) (bsm.Params, bool) {
+	kind := bsm.Call
+	switch option.InstrumentType {
+	case string(models.OptionTypeCall):
+	case string(models.OptionTypePut):
+		kind = bsm.Put
+	default:
+		return bsm.Params{}, false
+	}
+	if option.Expiry == nil || spot <= 0 || option.Strike <= 0 {
+		return bsm.Params{}, false
+	}
+	year, month, day := option.Expiry.Date()
+	closes := time.Date(year, month, day, 15, 30, 0, 0, models.ExchangeLocation)
+	years := closes.Sub(now).Hours() / (24 * 365)
+	if years <= 0 {
+		return bsm.Params{}, false
+	}
+	return bsm.Params{Kind: kind, Spot: spot, Strike: option.Strike, Years: years, Rate: riskFreeRate}, true
+}
+
+// probabilityOfProfit is the model's chance that buying the option at
+// premium pays at expiry, with the volatility implied from the premium.
+func probabilityOfProfit(option models.Instrument, premium, spot float64, now time.Time) (float64, bool) {
+	params, ok := optionParams(option, spot, now)
+	if !ok {
+		return 0, false
+	}
+	pop, err := bsm.ProbabilityOfProfit(params, premium)
+	return pop, err == nil
+}
+
+func formatProbability(value float64) string {
+	return fmt.Sprintf("%.1f%%", value*100)
+}
+
 // formatBreakeven shows a breakeven as a price or, in percent, as the move
 // from spot it needs. A percentage needs the underlying's price.
 func formatBreakeven(value, spot float64, percent bool) string {
@@ -184,6 +239,44 @@ func formatChange(quote kite.QuoteData) (string, int) {
 		return fmt.Sprintf("%.2f%%", change), -1
 	}
 	return "0.00%", 0
+}
+
+// formatPriceChange is ₹LTP (+27.03 +10.07%), the change since the
+// previous close, or ₹LTP alone without a previous close. Its direction
+// is 1 up, -1 down and 0 flat or unknown.
+func formatPriceChange(quote kite.QuoteData) (string, int) {
+	text := "₹" + formatPrice(quote.LastPrice)
+	previous := quote.OHLC.Close
+	if previous <= 0 || quote.LastPrice <= 0 {
+		return text, 0
+	}
+	change := quote.LastPrice - previous
+	percent := change / previous * 100
+	switch {
+	case change > 0:
+		return fmt.Sprintf("%s (+%.2f +%.2f%%)", text, change, percent), 1
+	case change < 0:
+		return fmt.Sprintf("%s (%.2f %.2f%%)", text, change, percent), -1
+	}
+	return text + " (0.00 0.00%)", 0
+}
+
+// formatMove is +27.03 +10.07%, the change since the previous close, or
+// empty without one; its direction is as formatPriceChange's.
+func formatMove(quote kite.QuoteData) (string, int) {
+	previous := quote.OHLC.Close
+	if previous <= 0 || quote.LastPrice <= 0 {
+		return "", 0
+	}
+	change := quote.LastPrice - previous
+	percent := change / previous * 100
+	switch {
+	case change > 0:
+		return fmt.Sprintf("+%.2f +%.2f%%", change, percent), 1
+	case change < 0:
+		return fmt.Sprintf("%.2f %.2f%%", change, percent), -1
+	}
+	return "0.00 0.00%", 0
 }
 
 func formatPrice(price float64) string {

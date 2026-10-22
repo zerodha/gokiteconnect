@@ -164,15 +164,22 @@ func (user *User) Login() error {
 		if err = user.generateAccessToken(); err != nil {
 			return fmt.Errorf("credentials.Login: generate access token: %w", err)
 		}
+		// The Kite Connect redirects can replace the web session's
+		// cookies, so read them again: Kite web needs the latest kf_session.
+		if err = user.generateWebSessionTokens(); err != nil {
+			return fmt.Errorf("credentials.Login: generate web session tokens: %w", err)
+		}
 	}
 
 	return nil
 }
 
-// KiteClient returns a new Kite client using the current credentials.
+// KiteClient returns a new Kite client using the current credentials. Its
+// ScreenerClient uses the stored web session.
 func (user *User) KiteClient() *kite.Client {
 	c := kite.New(user.APIKey)
 	c.SetHTTPClient(user.kiteHTTPClient)
+	c.SetScreenerSession(user.UserID, user.EncToken, user.KFSessionToken, user.PublicToken)
 	if user.isAPIUser() {
 		c.SetAccessToken(user.AccessToken)
 	} else {

@@ -11,6 +11,7 @@ import (
 	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/broker"
 )
 
 // portfolio is one user's positions, holdings and mutual funds. Each section
@@ -28,8 +29,13 @@ type portfolio struct {
 	fundsErr     error
 	ordersErr    error
 	loadedAt     time.Time
+	// mode is the account the portfolio is of.
+	mode broker.Mode
 	// loggedIn reports that loading the portfolio logged the user in again.
 	loggedIn bool
+	// matcher fills a paper account's open orders between loads; nil for a
+	// live account.
+	matcher broker.Matcher
 	// instruments holds the catalog entries of the positions and of their
 	// underlyings, by ID. Positions missing from it show their trading symbol
 	// and group under themselves.
@@ -50,26 +56,33 @@ type portfolio struct {
 	chargesErr   error
 }
 
-type portfolioLoader func(context.Context, credentials.Credentials) portfolio
+// portfolioLoader reads a user's portfolio from their account in mode.
+type portfolioLoader func(context.Context, credentials.Credentials, broker.Mode) portfolio
 
 // instrumentResolver looks up the catalog entries of positions and of their
 // underlyings.
 type instrumentResolver func(context.Context, []kite.Position) (map[models.InstrumentID]models.Instrument, error)
 
-// kitePortfolioLoader reads the portfolio after the manager checks the
-// user's stored session with a profile request, logging in and saving a new
-// session only when there is none or Kite reports it expired. Positions are
-// then named and grouped by the instruments resolve finds.
-func kitePortfolioLoader(manager *credentials.UserManager, resolve instrumentResolver) portfolioLoader {
-	return func(ctx context.Context, creds credentials.Credentials) portfolio {
-		user, loggedIn, err := manager.RefreshUserSessionIfRequired(ctx, creds.UserID)
+// accountPortfolioLoader reads the portfolio of the account accounts opens.
+// A live account is the user's stored session, checked with a profile
+// request and logged in again only when there is none or Kite reports it
+// expired. Positions are then named and grouped by the instruments resolve
+// finds.
+func accountPortfolioLoader(accounts broker.Accounts, resolve instrumentResolver) portfolioLoader {
+	return func(ctx context.Context, creds credentials.Credentials, mode broker.Mode) portfolio {
+		account, err := accounts.Open(ctx, creds.UserID, mode)
 		if err != nil {
-			return failedPortfolio(err)
+			result := failedPortfolio(err)
+			result.mode = mode
+			return result
 		}
-		client := user.KiteClient()
-		result := readPortfolio(client)
-		result.loggedIn = loggedIn
-		result.prices = client
+		result := readPortfolio(account)
+		result.mode = mode
+		if live, ok := account.(broker.KiteAccount); ok {
+			result.loggedIn = live.LoggedIn
+		}
+		result.matcher, _ = account.(broker.Matcher)
+		result.prices = account
 		// Orders are resolved too, for their lot and tick sizes.
 		lookups := slices.Clone(result.positions)
 		for _, order := range result.orders {
@@ -166,9 +179,8 @@ func groupPositions(positions []kite.Position, instruments map[models.Instrument
 	return groups
 }
 
-func readPortfolio(client *kite.Client) portfolio {
+func readPortfolio(client broker.Account) portfolio {
 	var result portfolio
-	client.SetAppName("kite-cli")
 	positions, err := client.GetPositions()
 	result.positions, result.positionsErr = positions.Net, err
 	result.holdings, result.holdingsErr = client.GetHoldings()

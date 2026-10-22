@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	marketdata "github.com/devshoe/gokiteconnect/market-data-service"
 	"github.com/devshoe/gokiteconnect/models"
 	"github.com/devshoe/gokiteconnect/pkg/candles"
@@ -156,6 +159,9 @@ func TestHistoryRebuildsTheListOnR(t *testing.T) {
 	h, store, lists, _ := historyHarness(t)
 	h.press("h")
 	h.waitFor("the list", h.shows("2 instruments"))
+	if screen := ansi.Strip(h.screen()); !regexp.MustCompile(`INSTRUMENT +│ 1m FROM +│ 1m TO +│ 1d FROM +│ 1d TO +│ SYNC`).MatchString(screen) {
+		t.Errorf("the columns have no dividers:\n%s", screen)
+	}
 	first := lists.byName(marketdata.DefaultSyncListName).ID
 
 	store.underlyings = append(store.underlyings, models.Instrument{ID: "NSE:TCS", Exchange: "NSE"})
@@ -166,31 +172,10 @@ func TestHistoryRebuildsTheListOnR(t *testing.T) {
 	}
 
 	// Leaving and coming back keeps the stored list.
-	h.press("q", "h")
+	h.press("esc", "h")
 	h.waitFor("the history screen", func() bool { return h.a.screen == screenHistory && h.idle() })
 	if !strings.Contains(h.screen(), "3 instruments") {
 		t.Errorf("history lost the list:\n%s", h.screen())
-	}
-}
-
-func TestExplorerHOpensHistoryOnTheSelectedInstrument(t *testing.T) {
-	h, _, _, _ := historyHarness(t)
-	h.press("i")
-	h.waitFor("the catalog", func() bool { return h.a.explorer.catalog != nil && h.idle() })
-	h.waitFor("underlyings", h.shows("NIFTY 50"))
-	h.a.explorer.results.setRows([]row{{ref: models.Instrument{ID: "NSE:TCS"}}})
-
-	h.press("h")
-	h.waitFor("the list", func() bool { return h.a.screen == screenHistory && h.idle() && len(h.a.history.list.Items) == 2 })
-	if id, _ := h.a.history.grid.selectedRef().(models.InstrumentID); id != "NSE:TCS" {
-		t.Fatalf("selected %q, want NSE:TCS", id)
-	}
-	if !strings.Contains(h.screen(), "NSE:TCS · not in list") {
-		t.Errorf("TCS isn't marked as outside the list:\n%s", h.screen())
-	}
-	h.press("q")
-	if h.a.screen != screenInstruments {
-		t.Errorf("Q went to screen %d, want the explorer", h.a.screen)
 	}
 }
 
@@ -229,4 +214,34 @@ func TestHistorySyncAllShowsLiveProgressAndStops(t *testing.T) {
 	if !strings.Contains(h.screen(), "stopped") {
 		t.Errorf("RELIANCE isn't marked stopped:\n%s", h.screen())
 	}
+}
+
+func TestShiftArrowsCycleTabsSkippingPortfolioWithoutAUser(t *testing.T) {
+	h, _, _, _ := historyHarness(t)
+	shift := func(code rune) {
+		h.dispatch(tea.KeyPressMsg{Code: code, Mod: tea.ModShift})
+	}
+	shift(tea.KeyRight)
+	h.waitFor("the explorer", func() bool { return h.a.screen == screenInstruments && h.idle() })
+	shift(tea.KeyRight)
+	h.waitFor("the Baskets screen", func() bool { return h.a.screen == screenBaskets && h.idle() })
+	shift(tea.KeyRight)
+	h.waitFor("the Data screen", func() bool { return h.a.screen == screenHistory && h.idle() })
+	if !strings.Contains(h.screen(), " Data ") || strings.Contains(h.screen(), "History") {
+		t.Errorf("the tab isn't named Data:\n%s", h.screen())
+	}
+	shift(tea.KeyRight)
+	if h.a.screen != screenSettings {
+		t.Fatalf("shift+right from Data went to screen %d, want settings", h.a.screen)
+	}
+	shift(tea.KeyRight)
+	if h.a.screen != screenUsers {
+		t.Fatalf("shift+right from Settings went to screen %d, want users", h.a.screen)
+	}
+	shift(tea.KeyLeft)
+	if h.a.screen != screenSettings {
+		t.Fatalf("shift+left from Users went to screen %d, want settings", h.a.screen)
+	}
+	shift(tea.KeyLeft)
+	h.waitFor("the Data screen", func() bool { return h.a.screen == screenHistory && h.idle() })
 }

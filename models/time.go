@@ -67,10 +67,12 @@ func parseTime(s string) (time.Time, error) {
 		}
 	}
 
-	// If pattern not found then iterate and parse layouts with zone.
+	// If pattern not found then iterate and parse layouts with zone. The
+	// zero time is accepted here: it is how a zero Time marshals, as
+	// 0001-01-01T00:00:00Z.
 	for _, l := range ctZonedLayouts {
 		pTime, err = time.Parse(l, s)
-		if err == nil && !pTime.IsZero() {
+		if err == nil {
 			return pTime, nil
 		}
 	}

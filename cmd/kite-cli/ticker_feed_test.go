@@ -238,7 +238,8 @@ func TestExplorerShowsTickerFallbackAndLiveTicks(t *testing.T) {
 	h.waitFor("the fallback note", h.shows("ticker down"))
 	h.waitFor("quoted prices", h.shows("25040.00"))
 
-	// With ticker-server up, R reconnects and ticks reprice the screen.
+	// With ticker-server up, reopening Watchlists reconnects and ticks
+	// reprice the screen.
 	bus := newFakeBus()
 	up := &tickerConnector{connect: func(context.Context) (*tickerFeed, error) {
 		return newTickerFeed(bus, "ticks.subscriptions"), nil
@@ -246,7 +247,7 @@ func TestExplorerShowsTickerFallbackAndLiveTicks(t *testing.T) {
 	defer up.close()
 	up.setNotify(func() { h.post(tickerTicksMsg{}) })
 	h.a.deps.loadQuotes = tickerQuoteLoader(explorerDeps(t, store, quotes, nil, &fakePlacer{}).loadQuotes, up, time.Hour)
-	h.press("R")
+	h.press("esc", "w")
 	h.waitFor("the ticker label", h.shows("prices TICKER TEST"))
 	h.waitFor("the subscription", func() bool { return slices.Contains(bus.subjects(), "ticks.nse.nifty_50") })
 	bus.tick(t, "NSE:NIFTY 50", 25111)

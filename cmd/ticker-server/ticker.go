@@ -199,7 +199,7 @@ func run(logger *slog.Logger, logs *tickerLogBuffer) error {
 	tickProducer, err := producer.New(producer.Config{
 		UserID:            config.UserID,
 		TokenPollInterval: config.TokenPollInterval,
-		ReplayInterval:    time.Second,
+		ReplayInterval:    producer.DefaultReplayInterval,
 	}, sessions, producer.NewZerodhaSocketFactory(), bus, logger)
 	if err != nil {
 		return err

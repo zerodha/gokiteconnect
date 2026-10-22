@@ -10,6 +10,7 @@ import (
 	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
+	"github.com/devshoe/gokiteconnect/pkg/broker"
 )
 
 // portfolioScreen is one user's positions, grouped by underlying, the day's
@@ -94,6 +95,12 @@ type (
 		generation int
 		data       portfolio
 	}
+	// portfolioMatchedMsg reports paper orders that filled, or were
+	// cancelled, since the portfolio loaded.
+	portfolioMatchedMsg struct {
+		generation int
+		changed    []kite.Order
+	}
 )
 
 func (a *app) reloadPortfolio() tea.Cmd {
@@ -104,9 +111,12 @@ func (a *app) reloadPortfolio() tea.Cmd {
 	p.generation++
 	p.loading = true
 	p.status = statusInfo(fmt.Sprintf("Loading the portfolio of %s · logs in if the session has expired…", p.user.UserID))
-	generation, user, load := p.generation, p.user, a.deps.loadPortfolio
+	if a.mode == broker.Paper {
+		p.status = statusInfo(fmt.Sprintf("Loading the paper portfolio of %s…", p.user.UserID))
+	}
+	generation, user, mode, load := p.generation, p.user, a.mode, a.deps.loadPortfolio
 	return a.task(func(ctx context.Context) tea.Msg {
-		return portfolioLoadedMsg{generation: generation, user: user, data: load(ctx, user)}
+		return portfolioLoadedMsg{generation: generation, user: user, data: load(ctx, user, mode)}
 	})
 }
 
@@ -119,7 +129,18 @@ func (a *app) refreshPortfolioPrices() tea.Cmd {
 	}
 	p.pricing = true
 	generation, data := p.generation, p.data
+	matcher := data.matcher
+	if !data.working() {
+		matcher = nil
+	}
 	return a.task(func(context.Context) tea.Msg {
+		// A paper account fills its orders, and squares off and settles its
+		// positions, as it is read: a change reloads the portfolio.
+		if matcher != nil {
+			if changed, err := matcher.Match(); err == nil && len(changed) > 0 {
+				return portfolioMatchedMsg{generation: generation, changed: changed}
+			}
+		}
 		return portfolioPricedMsg{generation: generation, data: data.reprice()}
 	})
 }
@@ -127,6 +148,23 @@ func (a *app) refreshPortfolioPrices() tea.Cmd {
 func (a *app) handlePortfolio(msg tea.Msg) (tea.Cmd, bool) {
 	p := a.portfolio
 	switch msg := msg.(type) {
+	case paperResetMsg:
+		if a.isBusy() {
+			a.closeOverlay()
+		}
+		if msg.err != nil {
+			a.showError(fmt.Errorf("reset %s's paper account: %w", msg.userID, msg.err))
+			return nil, true
+		}
+		message := statusOK("Reset " + msg.userID + "'s paper account")
+		a.notify(message)
+		if p.user.UserID != msg.userID || a.mode != broker.Paper {
+			return nil, true
+		}
+		p.data = portfolio{}
+		p.render()
+		p.notice = message
+		return a.reloadPortfolio(), true
 	case portfolioLoadedMsg:
 		// A newer load, or another user's, supersedes this one.
 		if msg.generation != p.generation {
@@ -176,8 +214,47 @@ func (a *app) handlePortfolio(msg tea.Msg) (tea.Cmd, bool) {
 			p.status = statusOK("Live prices restored")
 		}
 		return nil, true
+	case portfolioMatchedMsg:
+		p.pricing = false
+		if msg.generation != p.generation || p.loading {
+			return nil, true
+		}
+		p.notice = statusOK(matchedText(msg.changed))
+		return a.reloadPortfolio(), true
 	}
 	return nil, false
+}
+
+// matchedText says what became of the paper orders that changed.
+func matchedText(changed []kite.Order) string {
+	parts := make([]string, 0, min(len(changed), 3))
+	for _, order := range changed[:min(len(changed), 3)] {
+		part := fmt.Sprintf("%s %s %g %s %s", order.OrderID, order.TransactionType, order.Quantity, order.TradingSymbol, strings.ToLower(order.Status))
+		if order.FilledQuantity > 0 {
+			part += " at " + formatAmount(order.AveragePrice)
+		}
+		parts = append(parts, part)
+	}
+	if more := len(changed) - len(parts); more > 0 {
+		parts = append(parts, fmt.Sprintf("%d more", more))
+	}
+	return "Paper orders · " + strings.Join(parts, " · ")
+}
+
+// working reports whether a paper account has anything the market can still
+// change: an open order to fill, or a position to square off or settle.
+func (data portfolio) working() bool {
+	for _, order := range data.orders {
+		if orderOpen(order) {
+			return true
+		}
+	}
+	for _, position := range data.positions {
+		if position.Quantity != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -225,7 +302,7 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 		p.rawOffset++
 	case "K", "shift+up":
 		p.rawOffset = max(p.rawOffset-1, 0)
-	case "esc", "q", "Q":
+	case "esc":
 		if p.raw && p.focused() == &p.orders {
 			p.raw = false
 			return nil
@@ -235,6 +312,10 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 		return a.reloadPortfolio()
 	case "u", "U":
 		a.openUserPicker()
+	case "b", "B":
+		return a.openBaskets()
+	case "Z":
+		return a.confirmResetPaper(p.user.UserID)
 	case "m", "M", "x", "X":
 		if underlying, ok := p.focused().selectedRef().(models.InstrumentID); ok && (key == "x" || key == "X") {
 			return a.confirmExitGroup(underlying)
@@ -251,7 +332,7 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 			return a.confirmCancel(p.user.UserID, order)
 		}
 		return a.openOrder(modifyTicket(p.orderTarget(order).instrument, order, p.user.UserID))
-	case "o", "O":
+	case "+":
 		if underlying, ok := p.focused().selectedRef().(models.InstrumentID); ok {
 			return a.confirmExitGroup(underlying)
 		}
@@ -762,4 +843,33 @@ func trades(quantity int, price, value float64) string {
 		return styleFaint.Render("—")
 	}
 	return styleText.Render(fmt.Sprintf("%d @ %s (%s)", quantity, formatAmount(price), formatCount(value)))
+}
+
+// paperResetMsg ends a paper account's reset.
+type paperResetMsg struct {
+	userID string
+	err    error
+}
+
+// confirmResetPaper asks, then deletes userID's paper account and opens it
+// again with the starting capital. Live accounts are never reset.
+func (a *app) confirmResetPaper(userID string) tea.Cmd {
+	p := a.portfolio
+	switch {
+	case a.mode != broker.Paper:
+		p.status = statusWarn("Only paper accounts reset · P switches to paper")
+		return nil
+	case a.deps.resetPaper == nil:
+		p.status = statusWarn("Paper accounts are unavailable")
+		return nil
+	}
+	text := fmt.Sprintf("Reset %s's paper account?\n\nEvery paper order, trade, position and holding is deleted, and the account opens again with its starting capital. The live account is untouched.",
+		styleYellow.Bold(true).Render(userID))
+	reset := a.deps.resetPaper
+	a.confirm("Reset paper account", text, "Reset", func(a *app) tea.Cmd {
+		return tea.Batch(a.busy("Resetting "+userID+"'s paper account…"), a.task(func(ctx context.Context) tea.Msg {
+			return paperResetMsg{userID: userID, err: reset(ctx, userID)}
+		}))
+	})
+	return nil
 }

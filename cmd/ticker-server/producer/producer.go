@@ -15,6 +15,9 @@ import (
 	"github.com/devshoe/gokiteconnect/models"
 )
 
+// DefaultReplayInterval is the ReplayInterval used when none is set.
+const DefaultReplayInterval = 3 * time.Second
+
 type tickState struct {
 	latest           Tick
 	hasLatest        bool
@@ -87,7 +90,7 @@ func New(config Config, sessions SessionProvider, sockets SocketFactory, bus Mes
 		config.TokenPollInterval = 5 * time.Minute
 	}
 	if config.ReplayInterval <= 0 {
-		config.ReplayInterval = time.Second
+		config.ReplayInterval = DefaultReplayInterval
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -508,6 +511,10 @@ func (p *Producer) publishDirtyTicks() {
 	p.mu.RUnlock()
 	sort.Slice(dirty, func(i, j int) bool { return dirty[i].id < dirty[j].id })
 	for _, pending := range dirty {
+		pending.tick.BroadcastType = BroadcastNew
+		if pending.replay {
+			pending.tick.BroadcastType = BroadcastRepeat
+		}
 		if err := p.bus.PublishTick(pending.tick); err != nil {
 			p.recordError("NATS tick publish failed", err)
 			return
