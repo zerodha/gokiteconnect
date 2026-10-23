@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type PlainResponse struct {
 
 // Client represents interface for Kite Connect client.
 type Client struct {
+	tokenLock   sync.RWMutex
 	apiKey      string
 	accessToken string
 	debug       bool
@@ -195,7 +197,25 @@ func (c *Client) SetTimeout(timeout time.Duration) {
 
 // SetAccessToken sets the access token to the Kite Connect instance.
 func (c *Client) SetAccessToken(accessToken string) {
+	c.tokenLock.Lock()
+	defer c.tokenLock.Unlock()
 	c.accessToken = accessToken
+}
+
+// GetAccessToken gets the access token set on the Kite Connect instance.
+func (c *Client) GetAccessToken() string {
+	c.tokenLock.RLock()
+	defer c.tokenLock.RUnlock()
+	return c.accessToken
+}
+
+func (c *Client) getAuthHeader() string {
+	c.tokenLock.RLock()
+	defer c.tokenLock.RUnlock()
+	if c.apiKey != "" && c.accessToken != "" {
+		return fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+	}
+	return ""
 }
 
 // GetLoginURL gets Kite Connect login endpoint.
@@ -236,8 +256,7 @@ func (c *Client) doEnvelope(method, uri string, params url.Values, headers http.
 	headers.Add("X-Kite-Version", kiteHeaderVersion)
 	headers.Add("User-Agent", c.userAgent())
 
-	if c.apiKey != "" && c.accessToken != "" {
-		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+	if authHeader := c.getAuthHeader(); authHeader != "" {
 		headers.Add("Authorization", authHeader)
 	}
 
@@ -256,8 +275,7 @@ func (c *Client) do(method, uri string, params url.Values, headers http.Header) 
 	headers.Add("X-Kite-Version", kiteHeaderVersion)
 	headers.Add("User-Agent", c.userAgent())
 
-	if c.apiKey != "" && c.accessToken != "" {
-		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+	if authHeader := c.getAuthHeader(); authHeader != "" {
 		headers.Add("Authorization", authHeader)
 	}
 
@@ -272,8 +290,7 @@ func (c *Client) doRaw(method, uri string, reqBody []byte, headers http.Header) 
 	headers.Add("X-Kite-Version", kiteHeaderVersion)
 	headers.Add("User-Agent", c.userAgent())
 
-	if c.apiKey != "" && c.accessToken != "" {
-		authHeader := fmt.Sprintf("token %s:%s", c.apiKey, c.accessToken)
+	if authHeader := c.getAuthHeader(); authHeader != "" {
 		headers.Add("Authorization", authHeader)
 	}
 
