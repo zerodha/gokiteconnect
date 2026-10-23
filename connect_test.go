@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func TestClientSetters(t *testing.T) {
 
 	// Set access token
 	client.SetAccessToken(customAccessToken)
-	if client.accessToken != customAccessToken {
+	if client.accessToken != customAccessToken || client.GetAccessToken() != customAccessToken {
 		t.Errorf("Access token is not set properly.")
 	}
 
@@ -249,4 +250,26 @@ func RunAPITests(t *testing.T, ts *TestSuite) {
 func TestAPIMethods(t *testing.T) {
 	s := &TestSuite{}
 	RunAPITests(t, s)
+}
+
+func TestConcurrentAccessTokenAccess(t *testing.T) {
+	client := New("test_api_key")
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(3)
+		go func(idx int) {
+			defer wg.Done()
+			client.SetAccessToken(fmt.Sprintf("token_%d", idx))
+		}(i)
+		go func() {
+			defer wg.Done()
+			_ = client.GetAccessToken()
+			_ = client.getAuthHeader()
+		}()
+		go func() {
+			defer wg.Done()
+			_, _ = client.InvalidateAccessToken()
+		}()
+	}
+	wg.Wait()
 }

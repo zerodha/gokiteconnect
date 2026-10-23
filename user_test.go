@@ -56,8 +56,8 @@ func (ts *TestSuite) TestGenerateSessionSetsAccessToken(t *testing.T) {
 		t.Fatal("Expected access token in generated session")
 	}
 
-	if ts.KiteConnect.accessToken != session.AccessToken {
-		t.Errorf("Expected client access token to be set to %q, got %q", session.AccessToken, ts.KiteConnect.accessToken)
+	if ts.KiteConnect.GetAccessToken() != session.AccessToken {
+		t.Errorf("Expected client access token to be set to %q, got %q", session.AccessToken, ts.KiteConnect.GetAccessToken())
 	}
 
 	if session.UserSessionTokens.AccessToken != session.AccessToken {
@@ -77,8 +77,8 @@ func (ts *TestSuite) TestRenewAccessTokenSetsAccessToken(t *testing.T) {
 		t.Fatal("Expected access token in renewed session")
 	}
 
-	if ts.KiteConnect.accessToken != session.AccessToken {
-		t.Errorf("Expected client access token to be set to %q, got %q", session.AccessToken, ts.KiteConnect.accessToken)
+	if ts.KiteConnect.GetAccessToken() != session.AccessToken {
+		t.Errorf("Expected client access token to be set to %q, got %q", session.AccessToken, ts.KiteConnect.GetAccessToken())
 	}
 }
 

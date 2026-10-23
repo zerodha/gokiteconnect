@@ -185,7 +185,7 @@ func (c *Client) invalidateToken(tokenType string, token string) (bool, error) {
 
 // InvalidateAccessToken invalidates the current access token.
 func (c *Client) InvalidateAccessToken() (bool, error) {
-	return c.invalidateToken("access_token", c.accessToken)
+	return c.invalidateToken("access_token", c.GetAccessToken())
 }
 
 // RenewAccessToken renews expired access token using valid refresh token.
