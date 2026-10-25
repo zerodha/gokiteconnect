@@ -1,11 +1,17 @@
 package kiteticker
 
 import (
+	"bytes"
 	"encoding/base64"
 	"io/ioutil"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/zerodha/gokiteconnect/v4/models"
 )
@@ -111,4 +117,100 @@ func loadPacket(t *testing.T, fname string) []byte {
 	require.Nil(t, err)
 
 	return pkt
+}
+
+func TestTickerSetDebug(t *testing.T) {
+	ticker := New("test_api_key", "test_access_token")
+
+	// Check if default debug is false
+	require.False(t, ticker.debug, "default debug should be false")
+
+	// Set custom debug to true
+	require.NotPanics(t, func() {
+		ticker.SetDebug(true)
+	})
+	require.True(t, ticker.debug, "debug should be true after SetDebug(true)")
+
+	// Set custom debug to false
+	require.NotPanics(t, func() {
+		ticker.SetDebug(false)
+	})
+	require.False(t, ticker.debug, "debug should be false after SetDebug(false)")
+}
+
+func TestTickerDebugLogging(t *testing.T) {
+	ticker := New("test_api_key", "test_access_token")
+
+	var logBuf bytes.Buffer
+	origOutput := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOutput)
+
+	// When debug is false (default), Resubscribe should not emit logs
+	require.False(t, ticker.debug)
+	err := ticker.Resubscribe()
+	require.NoError(t, err)
+	require.Empty(t, logBuf.String(), "should not produce log output when debug is false")
+
+	// Enable debug and verify log output is captured
+	ticker.SetDebug(true)
+	logBuf.Reset()
+	err = ticker.Resubscribe()
+	require.NoError(t, err)
+	require.Contains(t, logBuf.String(), "Subscribe again:", "should produce log output when debug is true")
+
+	// Disable debug again and verify no logs are emitted
+	ticker.SetDebug(false)
+	logBuf.Reset()
+	err = ticker.Resubscribe()
+	require.NoError(t, err)
+	require.Empty(t, logBuf.String(), "should not produce log output after SetDebug(false)")
+}
+
+func TestTickerDebugLoggingWithTokens(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		for {
+			_, _, err := c.ReadMessage()
+			if err != nil {
+				break
+			}
+		}
+	}))
+	defer s.Close()
+
+	u, err := url.Parse(s.URL)
+	require.NoError(t, err)
+	u.Scheme = "ws"
+
+	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	ticker := New("test_api_key", "test_access_token")
+	ticker.Conn = conn
+	ticker.subscribedTokens[12345] = ModeFull
+
+	var logBuf bytes.Buffer
+	origOutput := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOutput)
+
+	// Test with debug = true and tokens present
+	ticker.SetDebug(true)
+	err = ticker.Resubscribe()
+	require.NoError(t, err)
+	require.Contains(t, logBuf.String(), "Subscribe again:  [12345] map[12345:full]")
+
+	// Test with debug = false
+	ticker.SetDebug(false)
+	logBuf.Reset()
+	err = ticker.Resubscribe()
+	require.NoError(t, err)
+	require.Empty(t, logBuf.String(), "should not produce log output when debug is false")
 }
