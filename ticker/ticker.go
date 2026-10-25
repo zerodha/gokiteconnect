@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net/url"
 	"sync"
@@ -40,6 +41,8 @@ type Ticker struct {
 	subscribedTokens map[uint32]Mode
 
 	cancel context.CancelFunc
+
+	debug bool
 }
 
 // atomicTime is wrapper over time.Time to safely access
@@ -47,12 +50,12 @@ type Ticker struct {
 type atomicTime struct {
 	v atomic.Value
 }
-	
+
 // Get returns the current timestamp.
 func (b *atomicTime) Get() time.Time {
 	return b.v.Load().(time.Time)
 }
-	 
+
 // Set sets the current timestamp.
 func (b *atomicTime) Set(value time.Time) {
 	b.v.Store(value)
@@ -90,10 +93,10 @@ const (
 	BseCD
 	McxFO
 	McxSX
-	Indices  // Equals 9
-    _       // Skip 10
-    _       // Skip 11
-    Nco     // Equals 12 (NSE Commodity)
+	Indices // Equals 9
+	_       // Skip 10
+	_       // Skip 11
+	Nco     // Equals 12 (NSE Commodity)
 
 	// ModeLTP subscribes for last price.
 	ModeLTP Mode = "ltp"
@@ -206,6 +209,11 @@ func (t *Ticker) SetReconnectMaxDelay(val time.Duration) error {
 // SetReconnectMaxRetries sets maximum reconnect attempts.
 func (t *Ticker) SetReconnectMaxRetries(val int) {
 	t.reconnectMaxRetries = val
+}
+
+// SetDebug sets debug mode to enable ticker logs.
+func (t *Ticker) SetDebug(debug bool) {
+	t.debug = debug
 }
 
 // OnConnect callback.
@@ -359,7 +367,6 @@ func (t *Ticker) handleClose(code int, reason string) error {
 	return nil
 }
 
-
 // Trigger callback methods
 func (t *Ticker) triggerError(err error) {
 	if t.callbacks.onError != nil {
@@ -390,7 +397,6 @@ func (t *Ticker) triggerNoReconnect(attempt int) {
 		t.callbacks.onNoReconnect(attempt)
 	}
 }
-
 
 func (t *Ticker) triggerMessage(messageType int, message []byte) {
 	if t.callbacks.onMessage != nil {
@@ -558,9 +564,9 @@ func (t *Ticker) SetMode(mode Mode, tokens []uint32) error {
 func (t *Ticker) Resubscribe() error {
 	var tokens []uint32
 	modes := map[Mode][]uint32{
-		ModeFull:  []uint32{},
-		ModeQuote: []uint32{},
-		ModeLTP:   []uint32{},
+		ModeFull:  {},
+		ModeQuote: {},
+		ModeLTP:   {},
 	}
 
 	// Make a map of mode and corresponding tokens
@@ -571,7 +577,9 @@ func (t *Ticker) Resubscribe() error {
 		}
 	}
 
-	fmt.Println("Subscribe again: ", tokens, t.subscribedTokens)
+	if t.debug {
+		log.Println("Subscribe again: ", tokens, t.subscribedTokens)
+	}
 
 	// Subscribe to tokens
 	if len(tokens) > 0 {
@@ -779,4 +787,3 @@ func convertPrice(seg uint32, val float64) float64 {
 		return val / 100.0
 	}
 }
-
