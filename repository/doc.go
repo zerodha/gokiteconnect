@@ -18,7 +18,9 @@
 // NewPortfolioSQLiteRepository opens one user's portfolio database, which
 // records every state their orders were seen in (RecordOrderUpdates,
 // OrderUpdates, LatestOrderUpdate, OpenOrders) and snapshots of their
-// account as Kite returned it (SaveSnapshot, LatestSnapshot, Snapshots).
+// account as Kite returned it (SaveSnapshot, LatestSnapshot, Snapshots),
+// and keeps their price alerts as JSON (AddPriceTrigger, PriceTriggers,
+// UpdatePriceTrigger, EvaluatePriceTriggers, DeletePriceTrigger).
 // NewPortfolioSQLiteDirectory keeps one such database per user in a
 // directory, as <USER>.db.
 package repository

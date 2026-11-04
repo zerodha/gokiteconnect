@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -465,7 +466,7 @@ func (g *grid) renderRow(r row, widths []int, current, focused bool) string {
 	}
 	selection := colorSelection
 	if !focused {
-		selection = lipgloss.Color("#23232E")
+		selection = colorIdleSelection
 	}
 	// Only the focused table shows its selection.
 	current = current && focused
@@ -542,6 +543,7 @@ const (
 	fieldSelect
 	fieldToggle
 	fieldNote
+	fieldSlider
 )
 
 // numeric restricts what an input accepts.
@@ -551,6 +553,8 @@ const (
 	anyText numeric = iota
 	wholeNumber
 	decimalNumber
+	// signedDecimal is a decimal that may start with a minus.
+	signedDecimal
 )
 
 type field struct {
@@ -562,6 +566,12 @@ type field struct {
 	index   int
 	on      bool
 	note    string
+	// amount is a slider's value, which Left and Right move by stride, and
+	// Shift+Left and Right by sliderShift strides, between low and high.
+	amount, low, high, stride float64
+	// counter makes a whole-number input step by stride with Left and
+	// Right, down to low.
+	counter bool
 	// hint is shown after the value: a warning about it, say.
 	hint     string
 	hidden   bool
@@ -584,8 +594,6 @@ func (f *field) focusable() bool {
 	return !f.hidden && !f.disabled && f.kind != fieldNote
 }
 
-var fieldBackground = lipgloss.Color("#23232E")
-
 func newInput(value string, width int, password bool) textinput.Model {
 	input := textinput.New()
 	input.Prompt = ""
@@ -595,7 +603,7 @@ func newInput(value string, width int, password bool) textinput.Model {
 		input.EchoMode = textinput.EchoPassword
 		input.EchoCharacter = '•'
 	}
-	focused := lipgloss.NewStyle().Foreground(colorText).Background(fieldBackground)
+	focused := lipgloss.NewStyle().Foreground(colorText).Background(colorField)
 	input.SetStyles(textinput.Styles{
 		Focused: textinput.StyleState{Text: focused, Placeholder: focused.Foreground(colorFaint)},
 		Blurred: textinput.StyleState{Text: styleMuted, Placeholder: styleFaint},
@@ -606,8 +614,8 @@ func newInput(value string, width int, password bool) textinput.Model {
 
 // form is a column of labelled fields over a row of buttons. Up and Down (or
 // Tab) move between fields, skipping hidden and disabled ones; Left and
-// Right change a select's option; Space flips a toggle; Enter moves on, or
-// presses the focused button.
+// Right change a select's option or move a slider; Space flips a toggle;
+// Enter moves on, or presses the focused button.
 type form struct {
 	fields     []*field
 	buttons    []string
@@ -627,14 +635,39 @@ func (f *form) addInput(label, value string, kind numeric, password bool) *field
 	return added
 }
 
+// addCounter adds a whole-number input that Left and Right (or - and +)
+// also step by step, down to low.
+func (f *form) addCounter(label string, value, low, step int) *field {
+	added := f.addInput(label, strconv.Itoa(value), wholeNumber, false)
+	added.counter, added.low, added.stride = true, float64(low), float64(max(step, 1))
+	return added
+}
+
 func (f *form) addSelect(label string, options []string, index int) *field {
 	added := &field{kind: fieldSelect, label: label, options: options, index: index}
 	f.fields = append(f.fields, added)
 	return added
 }
 
+// insertSelect adds a select before the field at index, keeping the focus
+// on the field it was on.
+func (f *form) insertSelect(index int, label string, options []string, selected int) *field {
+	added := &field{kind: fieldSelect, label: label, options: options, index: selected}
+	f.fields = append(f.fields[:index], append([]*field{added}, f.fields[index:]...)...)
+	if f.focus >= index {
+		f.focus++
+	}
+	return added
+}
+
 func (f *form) addToggle(label string, on bool) *field {
 	added := &field{kind: fieldToggle, label: label, on: on}
+	f.fields = append(f.fields, added)
+	return added
+}
+
+func (f *form) addSlider(label string, amount, low, high, stride float64) *field {
+	added := &field{kind: fieldSlider, label: label, amount: amount, low: low, high: high, stride: stride}
 	f.fields = append(f.fields, added)
 	return added
 }
@@ -767,6 +800,28 @@ func (f *form) update(msg tea.KeyPressMsg) (pressed int, changed bool) {
 		case current != nil && current.kind == fieldToggle:
 			current.on = !current.on
 			return -1, true
+		case current != nil && current.kind == fieldSlider:
+			current.slide(delta)
+			return -1, true
+		case current != nil && current.counter:
+			return -1, current.count(delta)
+		}
+	case "+", "-":
+		if current != nil && current.counter {
+			delta := 1
+			if key == "-" {
+				delta = -1
+			}
+			return -1, current.count(delta)
+		}
+	case "shift+left", "shift+right":
+		if current != nil && current.kind == fieldSlider {
+			delta := sliderShift
+			if key == "shift+left" {
+				delta = -sliderShift
+			}
+			current.slide(delta)
+			return -1, true
 		}
 	case "space":
 		switch {
@@ -797,10 +852,11 @@ func accepts(kind numeric, value, text string) bool {
 	if kind == anyText || text == "" {
 		return true
 	}
-	for _, r := range text {
+	for index, r := range text {
 		switch {
 		case r >= '0' && r <= '9':
-		case r == '.' && kind == decimalNumber && !strings.Contains(value, "."):
+		case r == '.' && kind != wholeNumber && !strings.Contains(value, "."):
+		case r == '-' && kind == signedDecimal && value == "" && index == 0:
 		default:
 			return false
 		}
@@ -830,13 +886,13 @@ func (f *form) view(width int) string {
 			case current.disabled:
 				value = styleFaint.Render(padRight("—", f.inputWidth))
 			case focused:
-				value = lipgloss.NewStyle().Background(fieldBackground).Render(padRight(current.input.View(), f.inputWidth+1))
+				value = lipgloss.NewStyle().Background(colorField).Render(padRight(current.input.View(), f.inputWidth+1))
 			default:
 				shown := current.input.Value()
 				if current.input.EchoMode == textinput.EchoPassword {
 					shown = strings.Repeat("•", len([]rune(shown)))
 				}
-				value = lipgloss.NewStyle().Foreground(colorText).Background(lipgloss.Color("#1C1C24")).Render(padRight(shown, f.inputWidth+1))
+				value = lipgloss.NewStyle().Foreground(colorText).Background(colorBlurredField).Render(padRight(shown, f.inputWidth+1))
 			}
 		case fieldSelect:
 			option := current.value()
@@ -849,6 +905,9 @@ func (f *form) view(width int) string {
 			default:
 				value = styleFaint.Render("‹ ") + styleText.Render(option) + styleFaint.Render(" ›")
 			}
+		case fieldSlider:
+			// A slider spans the row, leaving room for its hint.
+			value = sliderTrack(current, max(valueWidth-16, f.inputWidth+1), focused)
 		case fieldToggle:
 			box := styleFaint.Render("[ ]")
 			if current.on {
@@ -874,9 +933,9 @@ func (f *form) view(width int) string {
 	lines = append(lines, "")
 	var buttons []string
 	for index, label := range f.buttons {
-		style := lipgloss.NewStyle().Padding(0, 2).Background(lipgloss.Color("#2A2D37")).Foreground(colorText)
+		style := lipgloss.NewStyle().Padding(0, 2).Background(colorButton).Foreground(colorText)
 		if f.button() == index {
-			style = style.Background(colorAccent).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+			style = style.Background(colorAccent).Foreground(colorOnAccent).Bold(true)
 		}
 		buttons = append(buttons, style.Render(label))
 	}
@@ -885,6 +944,72 @@ func (f *form) view(width int) string {
 		lines = append(lines, "", ansi.Wordwrap(f.message, width, ""))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// sliderShift is how many strides Shift+Left and Right move a slider.
+const sliderShift = 4
+
+// slide moves a slider by strides, snapped to them, within its range.
+// count steps a counter by delta steps, keeping it at or above its low,
+// and reports whether it changed.
+func (f *field) count(delta int) bool {
+	value, _ := strconv.Atoi(f.value())
+	next := max(value+delta*int(f.stride), int(f.low))
+	if strconv.Itoa(next) == f.value() {
+		return false
+	}
+	f.input.SetValue(strconv.Itoa(next))
+	f.input.CursorEnd()
+	return true
+}
+
+func (f *field) slide(strides int) {
+	if f.stride <= 0 {
+		return
+	}
+	amount := min(max(f.amount, f.low), f.high)
+	amount = math.Round(amount/f.stride+float64(strides)) * f.stride
+	f.amount = min(max(amount, f.low), f.high)
+}
+
+// sliderTrack draws a slider width cells wide: its knob on a track, with
+// the stretch from zero to the knob drawn heavy, green above zero and red
+// below. An amount beyond the range pins the knob to the end.
+func sliderTrack(f *field, width int, focused bool) string {
+	cells := max(width, 3)
+	span := f.high - f.low
+	at := func(value float64) int {
+		if span <= 0 {
+			return 0
+		}
+		return int(math.Round((min(max(value, f.low), f.high) - f.low) / span * float64(cells-1)))
+	}
+	knob, zero := at(f.amount), at(0)
+	fill := styleGreen
+	if f.amount < 0 {
+		fill = styleRed
+	}
+	knobStyle := styleText
+	switch {
+	case f.disabled:
+		knobStyle, fill = styleFaint, styleFaint
+	case focused:
+		knobStyle = styleAccent
+	}
+	var track strings.Builder
+	for cell := range cells {
+		switch {
+		case cell == knob:
+			track.WriteString(knobStyle.Render("●"))
+		case (cell > zero && cell < knob) || (cell < zero && cell > knob):
+			track.WriteString(fill.Render("━"))
+		case cell == zero && f.low < 0 && f.high > 0:
+			track.WriteString(styleFaint.Render("┼"))
+		default:
+			track.WriteString(styleFaint.Render("─"))
+		}
+	}
+	return track.String()
 }
 
 // modal frames body as a dialog of width cells, sized to its content.
@@ -902,9 +1027,13 @@ func modal(title, info, body string, width int) string {
 // composite dims background and centres foreground over it.
 func composite(background, foreground string, w, h int) string {
 	lines := fitLines(background, w, h)
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("#3B3F4A"))
+	dim := lipgloss.NewStyle().Foreground(colorDim)
 	for index, line := range lines {
 		lines[index] = dim.Render(ansi.Strip(line))
+	}
+	// A dialog taller than the screen loses its bottom.
+	if parts := strings.Split(foreground, "\n"); len(parts) > h {
+		foreground = strings.Join(parts[:max(h, 0)], "\n")
 	}
 	fw, fh := lipgloss.Width(foreground), lipgloss.Height(foreground)
 	x, y := max((w-fw)/2, 0), max((h-fh)/2, 0)
@@ -921,8 +1050,7 @@ type menuItem struct {
 	run   func(*app) tea.Cmd
 }
 
-// menu is a list overlay: a picker of users, lists or expiries, or the
-// order menu.
+// menu is a list overlay: a picker of users, lists, baskets or expiries.
 type menu struct {
 	title  string
 	info   string

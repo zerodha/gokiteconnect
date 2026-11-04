@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -245,4 +246,32 @@ func future(id models.InstrumentID, expiryNumber int, expiry time.Time) models.I
 
 func cliDate(year int, month time.Month, day int) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.FixedZone("Asia/Kolkata", 5*60*60+30*60))
+}
+
+func TestStepThroughMovesAlongStops(t *testing.T) {
+	stops := []float64{1, 2, 5, 10}
+	for _, test := range []struct {
+		value string
+		start float64
+		steps int
+		want  string
+	}{
+		{"", 4, 1, "5"},
+		{"", 4, -1, "5"},
+		{"2", 0, 1, "5"},
+		{"3", 0, 1, "5"},
+		{"3", 0, -1, "2"},
+		{"5", 0, -2, "1"},
+		{"1", 0, -1, ""},
+		{"10", 0, 1, "10"},
+		{"2", 0, 5, "10"},
+		{"40", 0, -1, "10"},
+	} {
+		if got := stepThrough(stops, test.value, test.start, test.steps); got != test.want {
+			t.Errorf("stepThrough(%q, start %g, %d) = %q, want %q", test.value, test.start, test.steps, got, test.want)
+		}
+	}
+	if !slices.IsSorted(ltpStops) || !slices.IsSorted(breakevenStops) {
+		t.Error("the stops are not ascending")
+	}
 }

@@ -26,6 +26,8 @@ type basketStore interface {
 	AddBasketItems(context.Context, string, []models.BasketItem) error
 	UpdateBasketItem(context.Context, string, models.BasketItem) error
 	RemoveBasketItems(context.Context, string, []string) error
+	MoveBasket(context.Context, string, int) error
+	MoveBasketItem(context.Context, string, string, int) error
 }
 
 // basketMarginer works out what a basket needs as margin, hedges netted,
@@ -81,7 +83,7 @@ type basketItemRef struct {
 	item     models.BasketItem
 }
 
-// basketsScreen is the Baskets tab: the active user's baskets beside the
+// basketsScreen is Admin's Baskets tab: the active user's baskets beside the
 // selected one's orders, priced, with what they come to.
 type basketsScreen struct {
 	owner  string
@@ -94,7 +96,6 @@ type basketsScreen struct {
 	items     grid
 	focus     int
 	status    string
-	back      screenID
 	source    quoteSource
 	quotes    map[string]kite.QuoteData
 	fetching  bool
@@ -129,7 +130,7 @@ func newBasketsScreen() *basketsScreen {
 	}
 }
 
-// shown are the owner's baskets: stored ones oldest first, then drafts.
+// shown are the owner's baskets: stored ones in their order, then drafts.
 func (s *basketsScreen) shown() []models.Basket {
 	shown := slices.Clone(s.stored)
 	for _, draft := range s.drafts {
@@ -339,6 +340,11 @@ type (
 		ltp        float64
 		err        error
 	}
+	// basketMovedMsg ends storing a move the tab already shows.
+	basketMovedMsg struct {
+		owner string
+		err   error
+	}
 	basketPlacedMsg struct {
 		basket   models.Basket
 		mode     broker.Mode
@@ -371,13 +377,15 @@ func (a *app) basketOperation(owner, message string, operation func(context.Cont
 	}))
 }
 
-// openBaskets shows the Baskets tab for the active user.
+// openBaskets shows Admin's Baskets tab for the active user.
 func (a *app) openBaskets() tea.Cmd {
+	a.admin.tab = adminBaskets
+	return a.openAdmin()
+}
+
+// loadBasketsTab loads the Baskets tab's baskets, the active user's.
+func (a *app) loadBasketsTab() tea.Cmd {
 	s := a.baskets
-	if a.screen != screenBaskets {
-		s.back = a.screen
-	}
-	a.show(screenBaskets)
 	owner := a.activeUser()
 	if owner != s.owner {
 		s.owner, s.stored, s.focus = owner, nil, 0
@@ -397,6 +405,7 @@ func (a *app) openBaskets() tea.Cmd {
 // selectID, and prices the selected basket again.
 func (a *app) basketsChanged(selectID string) tea.Cmd {
 	a.baskets.render(selectID)
+	a.renderPortfolioBaskets()
 	return tea.Batch(a.basketMargin(), a.fetchBasketQuotes())
 }
 
@@ -473,6 +482,10 @@ func (a *app) handleBaskets(msg tea.Msg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		var cmd tea.Cmd
+		if p := a.portfolio; msg.owner == p.user.UserID {
+			p.basketList, p.basketsErr = msg.baskets, nil
+			a.renderPortfolioBaskets()
+		}
 		if msg.owner == s.owner {
 			s.stored, s.loading = msg.baskets, false
 			cmd = a.basketsChanged(msg.selectID)
@@ -522,6 +535,14 @@ func (a *app) handleBaskets(msg tea.Msg) (tea.Cmd, bool) {
 		return a.openOrder(orderTicket{instrument: msg.instrument, side: item.TransactionType, quantity: item.Quantity,
 			product: item.Product, orderType: item.OrderType, ltp: msg.ltp, userID: ref.owner,
 			price: item.Price, trigger: item.TriggerPrice, item: &ref}), true
+	case basketMovedMsg:
+		if msg.err == nil {
+			return nil, true
+		}
+		// The tab shows the move; reload what is stored instead.
+		return a.basketOperation(msg.owner, "", func(context.Context, basketStore) (string, error) {
+			return "", msg.err
+		}, nil), true
 	case basketPlacedMsg:
 		if a.isBusy() {
 			a.closeOverlay()
@@ -562,17 +583,6 @@ func (a *app) basketsKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	switch key {
-	case "esc":
-		if s.focus == 1 {
-			s.focus = 0
-			return nil
-		}
-		back := s.back
-		if back == screenBaskets {
-			back = screenUsers
-		}
-		a.show(back)
-		return nil
 	case "tab", "shift+tab":
 		if s.focus == 0 && len(s.items.rows) > 0 {
 			s.focus = 1
@@ -590,6 +600,10 @@ func (a *app) basketsKey(msg tea.KeyPressMsg) tea.Cmd {
 		return a.editBasketItem()
 	case "delete", "backspace":
 		return a.deleteBasketSelection()
+	case "shift+up", "K":
+		return a.moveBasketSelection(-1)
+	case "shift+down", "J":
+		return a.moveBasketSelection(1)
 	}
 	switch strings.ToLower(key) {
 	case "n":
@@ -607,12 +621,67 @@ func (a *app) basketsKey(msg tea.KeyPressMsg) tea.Cmd {
 		return a.confirmPlaceBasket()
 	case "r":
 		if s.owner == "" {
-			return a.openBaskets()
+			return a.loadBasketsTab()
 		}
 		s.marginFor = ""
 		return tea.Batch(a.basketOperation(s.owner, "", nil, nil), a.fetchBasketQuotes())
 	}
 	return nil
+}
+
+// moveBasketSelection moves the selected basket step places, or with the
+// orders focused the selected order. Drafts are kept in memory and move
+// among the owner's drafts, which follow the stored baskets.
+func (a *app) moveBasketSelection(step int) tea.Cmd {
+	s := a.baskets
+	basket, ok := s.selected()
+	if !ok {
+		return nil
+	}
+	if s.focus == 1 {
+		item, ok := s.selectedItem()
+		if !ok {
+			return nil
+		}
+		items := slices.Clone(basket.Items)
+		if !moveAmong(items, func(models.BasketItem) bool { return true }, func(i models.BasketItem) bool { return i.ID == item.ID }, step) {
+			return nil
+		}
+		if draft := s.draft(basket.ID); draft != nil {
+			draft.Items = items
+		} else {
+			s.stored[slices.IndexFunc(s.stored, func(b models.Basket) bool { return b.ID == basket.ID })].Items = items
+		}
+		s.renderItems()
+		s.items.selectWhere(func(r row) bool { return r.ref == item.ID })
+		if isDraft(basket.ID) {
+			return nil
+		}
+		return a.storeBasketMove(func(ctx context.Context, store basketStore) error {
+			return store.MoveBasketItem(ctx, basket.ID, item.ID, step)
+		})
+	}
+	match := func(b models.Basket) bool { return b.ID == basket.ID }
+	if isDraft(basket.ID) {
+		owner := s.owner
+		if moveAmong(s.drafts, func(b models.Basket) bool { return b.CreatedBy == owner }, match, step) {
+			s.render(basket.ID)
+		}
+		return nil
+	}
+	if !moveAmong(s.stored, func(models.Basket) bool { return true }, match, step) {
+		return nil
+	}
+	s.render(basket.ID)
+	return a.storeBasketMove(func(ctx context.Context, store basketStore) error {
+		return store.MoveBasket(ctx, basket.ID, step)
+	})
+}
+
+// storeBasketMove stores a move the tab already shows, in the background.
+func (a *app) storeBasketMove(move func(context.Context, basketStore) error) tea.Cmd {
+	store, owner := a.deps.baskets, a.baskets.owner
+	return a.task(func(ctx context.Context) tea.Msg { return basketMovedMsg{owner: owner, err: move(ctx, store)} })
 }
 
 // askBasketName asks for a basket name not among taken; Esc goes back to
@@ -658,7 +727,8 @@ func (a *app) newBasket() tea.Cmd {
 	return nil
 }
 
-// saveDraft stores the selected draft, which then leaves the drafts.
+// saveDraft asks for the selected draft's name, then stores it, and it
+// leaves the drafts.
 func (a *app) saveDraft() tea.Cmd {
 	s := a.baskets
 	basket, ok := s.selected()
@@ -669,15 +739,23 @@ func (a *app) saveDraft() tea.Cmd {
 		s.status = statusInfo(basket.Name + " is saved · changes to it are stored as they are made")
 		return nil
 	}
-	draft := basket
-	return a.basketOperation(basket.CreatedBy, "Saving "+basket.Name+"…", func(ctx context.Context, store basketStore) (string, error) {
-		saved, err := store.CreateBasket(ctx, draft)
-		return saved.ID, err
-	}, func(a *app, savedID string, _ []models.Basket) tea.Cmd {
-		s.drafts = slices.DeleteFunc(s.drafts, func(b models.Basket) bool { return b.ID == draft.ID })
-		s.status = statusOK(fmt.Sprintf("Saved %s with %d %s", draft.Name, len(draft.Items), pluralize("order", len(draft.Items))))
-		return a.basketsChanged(savedID)
+	a.askBasketName("Save basket", basket.Name, s.names(basket.CreatedBy, basket.ID, s.stored), nil, func(a *app, name string) tea.Cmd {
+		current := s.draft(basket.ID)
+		if current == nil {
+			return nil
+		}
+		current.Name = name
+		draft := *current
+		return a.basketOperation(draft.CreatedBy, "Saving "+name+"…", func(ctx context.Context, store basketStore) (string, error) {
+			saved, err := store.CreateBasket(ctx, draft)
+			return saved.ID, err
+		}, func(a *app, savedID string, _ []models.Basket) tea.Cmd {
+			s.drafts = slices.DeleteFunc(s.drafts, func(b models.Basket) bool { return b.ID == draft.ID })
+			s.status = statusOK(fmt.Sprintf("Saved %s with %d %s", name, len(draft.Items), pluralize("order", len(draft.Items))))
+			return a.basketsChanged(savedID)
+		})
 	})
+	return nil
 }
 
 func (a *app) renameBasket() tea.Cmd {
@@ -815,6 +893,10 @@ func (a *app) pickBasket(o *orderForm) tea.Cmd {
 		o.summary = styleRed.Render("Baskets are unavailable")
 		return nil
 	}
+	if stop, target, _ := o.exitLevels(params); stop > 0 || target > 0 {
+		o.summary = styleRed.Render("Exits are set on placing: clear them to add to a basket")
+		return nil
+	}
 	o.summary = styleYellow.Render("Loading " + owner + "'s baskets…")
 	item := basketItemOf(params)
 	return a.basketOperation(owner, "", nil, func(a *app, _ string, stored []models.Basket) tea.Cmd {
@@ -822,32 +904,38 @@ func (a *app) pickBasket(o *orderForm) tea.Cmd {
 			return nil
 		}
 		o.refresh()
-		a.openBasketPicker(o, owner, item, stored)
+		a.openBasketPicker(o, owner, []models.BasketItem{item}, stored)
 		return nil
 	})
 }
 
-// openBasketPicker lists a new basket, owner's drafts and owner's stored
-// baskets to add item to. Esc goes back to the order form.
-func (a *app) openBasketPicker(o *orderForm, owner string, item models.BasketItem, stored []models.Basket) {
+// openBasketPicker lists a new basket, named name or else numbered,
+// owner's drafts and owner's stored baskets to add items to. Esc goes back
+// to the form it was opened from.
+func (a *app) openBasketPicker(back overlay, owner string, items []models.BasketItem, stored []models.Basket) {
 	s := a.baskets
-	picker := &menu{title: "Add " + itemText(item) + " to", info: styleMuted.Render(owner), width: 52, back: o,
-		footer: "↑↓ Enter · Esc back to the order"}
+	what := itemText(items[0])
+	if len(items) > 1 {
+		what = fmt.Sprintf("%d orders", len(items))
+	}
+	picker := &menu{title: "Add " + what + " to", info: styleMuted.Render(owner), width: 52, back: back,
+		footer: "↑↓ Enter · Esc back"}
 	added := func(a *app, name string, saved bool) tea.Cmd {
 		note := " · unsaved, S on Baskets saves it"
 		if saved {
 			note = ""
 		}
-		a.notify(statusOK(fmt.Sprintf("Added %s to %s%s", itemText(item), name, note)))
-		if a.screen == screenBaskets && s.owner == owner {
+		a.notify(statusOK(fmt.Sprintf("Added %s to %s%s", what, name, note)))
+		if a.onBaskets() && s.owner == owner {
 			return a.basketsChanged("")
 		}
 		return nil
 	}
 	taken := s.names(owner, "", stored)
+	name := nextBasketName(taken)
 	picker.items = append(picker.items, menuItem{label: styleAccent.Render("+ New basket…"), run: func(a *app) tea.Cmd {
-		a.askBasketName("New basket", nextBasketName(taken), taken, picker, func(a *app, name string) tea.Cmd {
-			s.newDraft(owner, name, item)
+		a.askBasketName("New basket", name, taken, picker, func(a *app, name string) tea.Cmd {
+			s.newDraft(owner, name, items...)
 			return added(a, name, false)
 		})
 		return nil
@@ -857,7 +945,7 @@ func (a *app) openBasketPicker(o *orderForm, owner string, item models.BasketIte
 			label: styleCyan.Render(basket.Name) + styleFaint.Render(fmt.Sprintf("  (%d)", len(basket.Items))),
 			run: func(a *app) tea.Cmd {
 				return a.basketOperation(owner, "Adding to "+basket.Name+"…", func(ctx context.Context, store basketStore) (string, error) {
-					return basket.ID, store.AddBasketItems(ctx, basket.ID, []models.BasketItem{item})
+					return basket.ID, store.AddBasketItems(ctx, basket.ID, items)
 				}, func(a *app, _ string, _ []models.Basket) tea.Cmd { return added(a, basket.Name, true) })
 			},
 		})
@@ -869,7 +957,7 @@ func (a *app) openBasketPicker(o *orderForm, owner string, item models.BasketIte
 		picker.items = append(picker.items, menuItem{
 			label: styleYellow.Render(draft.Name+" *") + styleFaint.Render(fmt.Sprintf("  (%d) · unsaved", len(draft.Items))),
 			run: func(a *app) tea.Cmd {
-				s.addToDraft(draft.ID, item)
+				s.addToDraft(draft.ID, items...)
 				return added(a, draft.Name, false)
 			},
 		})
@@ -959,7 +1047,8 @@ func (s *basketsScreen) totals(basket models.Basket) string {
 func (a *app) basketsView(w, h int) string {
 	s := a.baskets
 	widths := splitWidth(w, 2, 5)
-	const top = 1
+	// The panels start under Admin's sub tab bar.
+	const top = 2
 	s.baskets.x, s.baskets.y = 1, top+2
 	s.items.x, s.items.y = widths[0]+1, top+2
 	title := "Baskets"
@@ -997,9 +1086,9 @@ func (a *app) basketsView(w, h int) string {
 	return joinColumns(left, right)
 }
 
-func (a *app) basketsHelp() string {
+func (a *app) basketsHelp() []string {
 	if a.baskets.focus == 1 {
-		return help("Enter/E", "edit order", "D", "remove order", "O", "place all", "Tab/Esc", "baskets", "R", "refresh", "P", "paper / live", "^C", "quit")
+		return bindings("Enter/E", "edit order", "D", "remove order", "J/K", "move", "O", "place all", "Tab/Esc", "baskets", "R", "refresh", "P", "paper / live", "^C", "quit")
 	}
-	return help("N", "new", "S", "save draft", "E", "rename", "D", "delete", "O", "place all", "Enter/Tab", "orders", "R", "refresh", "P", "paper / live", "W", "watchlists", "Esc", "back", "^C", "quit")
+	return bindings("N", "new", "S", "save draft", "E", "rename", "D", "delete", "J/K", "move", "O", "place all", "Enter/Tab", "orders", "R", "refresh", "P", "paper / live", "W", "watchlists", "Esc", "back", "^C", "quit")
 }

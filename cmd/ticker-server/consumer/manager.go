@@ -143,11 +143,17 @@ func (m *Manager) HandleHeartbeat(payload []byte) error {
 	if err := json.Unmarshal(payload, &heartbeat); err != nil {
 		return fmt.Errorf("decode heartbeat: %w", err)
 	}
+	return m.Refresh(heartbeat.IDs)
+}
+
+// Refresh subscribes the IDs, or renews their TTL, as a heartbeat would.
+// Live candle heartbeats use it to keep their instruments' ticks coming.
+func (m *Manager) Refresh(ids []string) error {
 	now := m.now().UTC()
-	seen := make(map[models.InstrumentID]struct{}, len(heartbeat.IDs))
+	seen := make(map[models.InstrumentID]struct{}, len(ids))
 	var invalid []error
 	m.mu.Lock()
-	for _, rawID := range heartbeat.IDs {
+	for _, rawID := range ids {
 		id, err := models.ParseInstrumentID(rawID)
 		if err != nil {
 			invalid = append(invalid, err)

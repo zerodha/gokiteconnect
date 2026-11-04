@@ -116,7 +116,7 @@ func (a *app) handleWatchlists(msg tea.Msg) (tea.Cmd, bool) {
 		// The watchlist replaces the dashboard when it shows one, or on the
 		// first load, unless a search is under way.
 		searching := e.searchFocused || e.search.Value() != ""
-		if e.mode == viewDashboard && !searching && (e.watching || first) {
+		if e.mode == viewDashboard && !searching && e.chainLoading == "" && (e.watching || first) {
 			var selectID models.InstrumentID
 			if instrument, ok := e.results.selectedRef().(models.Instrument); ok && !first {
 				selectID = instrument.ID
@@ -382,6 +382,33 @@ func (a *app) removeFromWatchlist() tea.Cmd {
 	}
 	return a.watchlistOperation(fmt.Sprintf("Removing %s…", instrument.ID), func(ctx context.Context, store listStore) (string, error) {
 		return list.ID, store.RemoveListItems(ctx, list.ID, []models.InstrumentID{instrument.ID})
+	})
+}
+
+// moveInWatchlist moves the selected instrument step places in the shown
+// watchlist, when it shows in list order.
+func (a *app) moveInWatchlist(step int) tea.Cmd {
+	e := a.explorer
+	list, ok := e.currentWatchlist()
+	instrument, selected := e.selectedInstrument()
+	if !e.watching || !ok || !selected {
+		return nil
+	}
+	if list.IsSmart() {
+		e.status = statusWarn(list.Name+" is smart: it follows its parent's order. Make a clone with ") + styleKey.Render("N") + statusWarn(" to reorder it.")
+		return nil
+	}
+	if e.resultSort.column != 0 {
+		e.status = statusWarn("Sorted by "+resultTitles[e.resultSort.column-1]+" · pick List order with ") + styleKey.Render("⇧S") + statusWarn(" to reorder")
+		return nil
+	}
+	if !e.moveListItem(list.ID, instrument.ID, step) {
+		return nil
+	}
+	moveAmong(e.resultItems, func(models.Instrument) bool { return true }, func(i models.Instrument) bool { return i.ID == instrument.ID }, step)
+	e.renderResults()
+	return a.storeListMove(func(ctx context.Context, store listStore) error {
+		return store.MoveListItem(ctx, list.ID, instrument.ID, step)
 	})
 }
 

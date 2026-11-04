@@ -18,6 +18,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/devshoe/gokiteconnect/config"
 	"github.com/devshoe/gokiteconnect/credentials"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
@@ -26,6 +27,7 @@ import (
 	"github.com/devshoe/gokiteconnect/paper"
 	"github.com/devshoe/gokiteconnect/pkg/broker"
 	"github.com/devshoe/gokiteconnect/pkg/nse"
+	"github.com/devshoe/gokiteconnect/pkg/telegram"
 	instrumentstore "github.com/devshoe/gokiteconnect/repository"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -54,11 +56,17 @@ func run() error {
 	userFlag := flag.String("user", settings.DefaultUserID, "user whose portfolio opens at start; empty starts on the users screen")
 	noQuotes := flag.Bool("no-quotes", false, "start the instruments explorer without prices")
 	modeFlag := flag.String("mode", settings.AccountMode, "account orders and portfolios start in: paper or live; P toggles it")
+	themeFlag := flag.String("theme", "auto", "colours: auto follows the terminal's background, light or dark")
 	flag.Parse()
 	mode, err := broker.ParseMode(strings.ToLower(strings.TrimSpace(*modeFlag)))
 	if err != nil {
 		return err
 	}
+	theme, err := choosePalette(*themeFlag, func() bool { return lipgloss.HasDarkBackground(os.Stdin, os.Stdout) })
+	if err != nil {
+		return err
+	}
+	usePalette(theme)
 
 	instrumentsPath := strings.TrimSpace(*instrumentsFlag)
 	credentialsPath := strings.TrimSpace(*credentialsFlag)
@@ -116,7 +124,7 @@ func run() error {
 		return openCatalog(ctx, "kite-cli", instrumentsPath, lists)
 	}
 
-	// The explorer, the strike picker and the positions' underlyings share
+	// The explorer, the order form and the positions' underlyings share
 	// one catalog, opened by whichever needs it first.
 	shared := &sharedCatalog{open: factory}
 	// Paper accounts trade on the data user's prices, candles and margin
@@ -146,6 +154,12 @@ func run() error {
 	}
 	defer book.Close()
 	accounts := broker.Accounts{Live: broker.KiteSessions(manager, "kite-cli"), Paper: book.Open}
+	// Price alerts live in each user's portfolio database.
+	portfolios, err := instrumentstore.NewPortfolioSQLiteDirectory(settings.PortfolioDir)
+	if err != nil {
+		return err
+	}
+	defer portfolios.Close()
 	deps := appDeps{
 		manager:       manager,
 		credentialsDB: credentialsPath,
@@ -159,12 +173,21 @@ func run() error {
 		place:         accountOrderPlacer(accounts),
 		modify:        accountOrderModifier(accounts),
 		cancel:        accountOrderCanceller(accounts),
+		orderStatus:   accountOrderLookup(accounts),
 		baskets:       baskets,
 		resetPaper:    book.Reset,
 		basketMargins: dataBasketMargins(credentialsPath, dataUserID),
 		openWeb:       kiteWebOpener(settings.BrowserDir),
 		defaultUser:   strings.TrimSpace(*userFlag),
 		every:         *quotesEvery,
+		triggers:      portfolioTriggers{portfolios},
+	}
+	if token := settings.Settings.Get("TRADEBOT_TELEGRAM_BOT_TOKEN"); token != "" {
+		bot, err := telegram.New(token, "")
+		if err != nil {
+			return err
+		}
+		deps.alert = telegramAlerts(bot, manager)
 	}
 	if fundamentalsPath := strings.TrimSpace(*fundamentalsFlag); fundamentalsPath != "" {
 		if fundamentalsPath != ":memory:" {
@@ -257,4 +280,74 @@ func openCatalog(ctx context.Context, appName, instrumentsPath string, lists *in
 		return nil, nil, err
 	}
 	return instruments, lists, nil
+}
+
+// portfolioTriggers keeps price alerts in each user's portfolio database.
+type portfolioTriggers struct {
+	dir *instrumentstore.PortfolioSQLiteDirectory
+}
+
+func (p portfolioTriggers) Users() ([]string, error) { return p.dir.Users() }
+
+func (p portfolioTriggers) AddPriceTrigger(ctx context.Context, userID string, trigger models.PriceTrigger) (models.PriceTrigger, error) {
+	portfolio, err := p.dir.User(ctx, userID)
+	if err != nil {
+		return models.PriceTrigger{}, err
+	}
+	return portfolio.AddPriceTrigger(ctx, trigger)
+}
+
+func (p portfolioTriggers) PriceTriggers(ctx context.Context, userID string, activeOnly bool) ([]models.PriceTrigger, error) {
+	portfolio, err := p.dir.User(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return portfolio.PriceTriggers(ctx, activeOnly)
+}
+
+func (p portfolioTriggers) UpdatePriceTrigger(ctx context.Context, userID string, id int64, edit func(*models.PriceTrigger) error) (models.PriceTrigger, error) {
+	portfolio, err := p.dir.User(ctx, userID)
+	if err != nil {
+		return models.PriceTrigger{}, err
+	}
+	return portfolio.UpdatePriceTrigger(ctx, id, edit)
+}
+
+func (p portfolioTriggers) EvaluatePriceTriggers(ctx context.Context, userID string, ticks map[models.InstrumentID]models.Tick) ([]models.TriggerEvaluation, error) {
+	portfolio, err := p.dir.User(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return portfolio.EvaluatePriceTriggers(ctx, ticks)
+}
+
+func (p portfolioTriggers) RecordTriggerOrders(ctx context.Context, userID string, id int64, results []models.TriggerOrderResult) error {
+	portfolio, err := p.dir.User(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return portfolio.RecordTriggerOrders(ctx, id, results)
+}
+
+func (p portfolioTriggers) DeletePriceTrigger(ctx context.Context, userID string, id int64) error {
+	portfolio, err := p.dir.User(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return portfolio.DeletePriceTrigger(ctx, id)
+}
+
+// telegramAlerts sends fired alerts through bot to the chat ID stored for
+// each user.
+func telegramAlerts(bot *telegram.Bot, manager *credentials.UserManager) alertSender {
+	return func(ctx context.Context, userID, text string) error {
+		chatID, err := manager.GetChatID(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(chatID) == "" {
+			return fmt.Errorf("%s has no Telegram chat ID", userID)
+		}
+		return bot.Send(ctx, chatID, text)
+	}
 }

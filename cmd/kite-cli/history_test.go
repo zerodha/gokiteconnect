@@ -221,27 +221,50 @@ func TestShiftArrowsCycleTabsSkippingPortfolioWithoutAUser(t *testing.T) {
 	shift := func(code rune) {
 		h.dispatch(tea.KeyPressMsg{Code: code, Mod: tea.ModShift})
 	}
+	if strings.Contains(strings.SplitN(h.screen(), "\n", 2)[0], "Users") {
+		t.Errorf("the tab bar lists Users:\n%s", h.screen())
+	}
 	shift(tea.KeyRight)
 	h.waitFor("the explorer", func() bool { return h.a.screen == screenInstruments && h.idle() })
-	shift(tea.KeyRight)
-	h.waitFor("the Baskets screen", func() bool { return h.a.screen == screenBaskets && h.idle() })
 	shift(tea.KeyRight)
 	h.waitFor("the Data screen", func() bool { return h.a.screen == screenHistory && h.idle() })
 	if !strings.Contains(h.screen(), " Data ") || strings.Contains(h.screen(), "History") {
 		t.Errorf("the tab isn't named Data:\n%s", h.screen())
 	}
+	// Baskets is one of Admin's sub tabs, off the tab bar.
+	if bar := strings.SplitN(h.screen(), "\n", 3); strings.Contains(bar[0], "Baskets") || !strings.Contains(bar[1], "Baskets") {
+		t.Errorf("Baskets isn't an Admin sub tab:\n%s", h.screen())
+	}
 	shift(tea.KeyRight)
 	if h.a.screen != screenSettings {
 		t.Fatalf("shift+right from Data went to screen %d, want settings", h.a.screen)
 	}
+	// Past the end it wraps round, skipping the portfolio and the users.
 	shift(tea.KeyRight)
+	h.waitFor("the explorer again", func() bool { return h.a.screen == screenInstruments && h.idle() })
+	shift(tea.KeyLeft)
+	if h.a.screen != screenSettings {
+		t.Fatalf("shift+left from the explorer went to screen %d, want settings", h.a.screen)
+	}
+
+	// ` shows the users and goes back; ₹, its key on an Indian layout, too.
+	h.press("`")
 	if h.a.screen != screenUsers {
-		t.Fatalf("shift+right from Settings went to screen %d, want users", h.a.screen)
+		t.Fatalf("` went to screen %d, want users", h.a.screen)
+	}
+	h.press("`")
+	if h.a.screen != screenSettings {
+		t.Fatalf("` from the users went to screen %d, want settings", h.a.screen)
+	}
+	h.dispatch(tea.KeyPressMsg{Code: '₹', Text: "₹"})
+	if h.a.screen != screenUsers {
+		t.Fatalf("₹ went to screen %d, want users", h.a.screen)
 	}
 	shift(tea.KeyLeft)
 	if h.a.screen != screenSettings {
-		t.Fatalf("shift+left from Users went to screen %d, want settings", h.a.screen)
+		t.Fatalf("shift+left from the users went to screen %d, want settings", h.a.screen)
 	}
-	shift(tea.KeyLeft)
-	h.waitFor("the Data screen", func() bool { return h.a.screen == screenHistory && h.idle() })
+	h.press("`")
+	shift(tea.KeyRight)
+	h.waitFor("the explorer from the users", func() bool { return h.a.screen == screenInstruments && h.idle() })
 }

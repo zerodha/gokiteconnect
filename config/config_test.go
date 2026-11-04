@@ -60,7 +60,7 @@ func TestLoadUsesTradebotHomeDefaults(t *testing.T) {
 	if got.DefaultUserID != "CC0006" || got.PriceMode != PriceModeQuote {
 		t.Fatalf("default user %q, price mode %q", got.DefaultUserID, got.PriceMode)
 	}
-	if got.AccountMode != AccountModePaper || got.PaperCapital != 1_000_000 || got.PaperSlippageBPS != 0 {
+	if got.AccountMode != AccountModeLive || got.PaperCapital != 1_000_000 || got.PaperSlippageBPS != 0 {
 		t.Fatalf("account mode %q, paper capital %v, slippage %v", got.AccountMode, got.PaperCapital, got.PaperSlippageBPS)
 	}
 	if got.SettingsPath != filepath.Join(home, "tradebot", "settings.json") {

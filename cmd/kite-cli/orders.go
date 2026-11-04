@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -14,113 +13,29 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
 	"github.com/devshoe/gokiteconnect/pkg/broker"
 )
 
-// orderAction is one entry of the order menu, run by its key.
-type orderAction struct {
-	key   string
-	label string
-	style func(string) string
-	// detail describes what the action orders, after the label.
-	detail string
-	run    func(*app) tea.Cmd
-}
-
-var (
-	buyStyle  = func(text string) string { return styleGreen.Bold(true).Render(text) }
-	sellStyle = func(text string) string { return styleRed.Bold(true).Render(text) }
-)
-
-// orderActions lists what can be ordered for target: a raw buy or sell of
-// the instrument itself (not of an index), closing the position or holding
-// when one is held, and buying or selling its underlying's options.
-func orderActions(target tradeTarget) []orderAction {
-	instrument := target.instrument
-	var actions []orderAction
-	if instrument.Segment != "INDICES" {
-		lot := "1 share"
-		if instrument.LotSize > 1 {
-			lot = fmt.Sprintf("1 lot of %d", instrument.LotSize)
-		}
-		raw := func(side string) func(*app) tea.Cmd {
-			return func(a *app) tea.Cmd {
-				ticket := newOrderTicket(instrument, side, target.ltp)
-				if position, ok := target.held.(kite.Position); ok {
-					ticket.product = position.Product
-				}
-				return a.openOrder(ticket)
-			}
-		}
-		actions = append(actions,
-			orderAction{key: "B", label: "Raw buy", style: buyStyle, detail: lot, run: raw(kite.TransactionTypeBuy)},
-			orderAction{key: "S", label: "Raw sell", style: sellStyle, detail: lot, run: raw(kite.TransactionTypeSell)},
-		)
-	}
-	if ticket, err := closingTicket(target); err == nil {
-		actions = append(actions, orderAction{key: "X", label: "Close position", style: func(text string) string { return styleYellow.Bold(true).Render(text) },
-			detail: fmt.Sprintf("%s %d at market", ticket.side, ticket.quantity),
-			run:    func(a *app) tea.Cmd { return a.openOrder(ticket) }})
-	}
-	if underlying, ok := optionUnderlying(instrument); ok {
-		option := func(side string, optionType models.OptionType) func(*app) tea.Cmd {
-			return func(a *app) tea.Cmd { return a.openStrikePicker(underlying, side, optionType) }
-		}
-		name := symbolOf(underlying)
-		actions = append(actions,
-			orderAction{key: "c", label: "Buy call", style: buyStyle, detail: name, run: option(kite.TransactionTypeBuy, models.OptionTypeCall)},
-			orderAction{key: "C", label: "Sell call", style: sellStyle, detail: name, run: option(kite.TransactionTypeSell, models.OptionTypeCall)},
-			orderAction{key: "p", label: "Buy put", style: buyStyle, detail: name, run: option(kite.TransactionTypeBuy, models.OptionTypePut)},
-			orderAction{key: "P", label: "Sell put", style: sellStyle, detail: name, run: option(kite.TransactionTypeSell, models.OptionTypePut)},
-		)
-	}
-	return actions
-}
-
-// openOrderMenu lists the orders for target; each runs by its key or by
-// Enter. B, S and X match either case; c, C, p and P pick calls and puts by
-// case.
-func (a *app) openOrderMenu(target tradeTarget) tea.Cmd {
-	actions := orderActions(target)
-	if len(actions) == 0 {
-		a.notify(statusWarn("Nothing to order for " + string(target.instrument.ID)))
-		return nil
-	}
-	name := fallback(strings.TrimSpace(target.instrument.DisplayName), target.instrument.TradingSymbol)
-	info := ""
-	if target.ltp > 0 {
-		info = styleMuted.Render(formatAmount(target.ltp))
-	}
-	m := &menu{title: "Order · " + name, info: info, width: max(48, len([]rune(name))+24), keyFold: "BSX",
-		footer: "key or ↑↓ Enter · Esc close"}
-	for _, action := range actions {
-		label := action.style(action.key) + "  " + styleText.Render(padRight(action.label, 15)) + " " + styleFaint.Render(action.detail)
-		m.items = append(m.items, menuItem{key: action.key, label: label, run: action.run})
-	}
-	a.overlay = m
-	return nil
-}
-
 // Order form labels.
 const (
-	orderFieldAccount  = "Account"
 	orderFieldSide     = "Side"
 	orderFieldQuantity = "Quantity"
 	orderFieldType     = "Order type"
 	orderFieldPrice    = "Price"
 	orderFieldTrigger  = "Trigger price"
 	orderFieldProduct  = "Product"
+	orderFieldStoploss = "Stoploss"
+	orderFieldTarget   = "Target"
 )
 
 // orderForm is the buy and sell form.
 type orderForm struct {
 	form   *form
 	ticket orderTicket
-	users  []string
-	// mode is the account the order goes to.
+	// userID and mode are the account the order goes to.
+	userID  string
 	mode    broker.Mode
 	placing bool
 	// summary shows the order as it will be placed, or why it cannot be.
@@ -132,6 +47,10 @@ type orderForm struct {
 	margin    string
 	marginFor kite.OrderMarginParam
 	marginSeq int
+	// target is what a form + opened is for, and legs its tabs; both are
+	// nil on other forms, and legs on a form with no derivatives to offer.
+	target *tradeTarget
+	legs   *tradeLegs
 }
 
 type (
@@ -158,6 +77,10 @@ type orderDoneMsg struct {
 	// modified reports a change to an open order rather than a new one.
 	modified bool
 	err      error
+	// exits are the stoploss and target alerts set on the placed order,
+	// and exitErr why setting them failed.
+	exits   []userTrigger
+	exitErr error
 }
 
 // portfolioMode is the account the shown portfolio is of: its orders and
@@ -166,13 +89,23 @@ func (a *app) portfolioMode() broker.Mode {
 	return cmp.Or(a.portfolio.data.mode, a.mode)
 }
 
-// openOrder opens the order form for ticket, placing for the active user by
-// default.
+// openOrder opens the order form for ticket, placing for ticket's user or
+// else the active one.
 func (a *app) openOrder(ticket orderTicket) tea.Cmd {
-	accounts := a.users.users
-	if len(accounts) == 0 {
-		a.showError(errors.New("add a user before placing orders"))
+	o, err := a.newOrderForm(ticket)
+	if err != nil {
+		a.showError(err)
 		return nil
+	}
+	a.overlay = o
+	return a.orderMargin(o)
+}
+
+// newOrderForm builds the order form for ticket.
+func (a *app) newOrderForm(ticket orderTicket) (*orderForm, error) {
+	accounts := a.users.users
+	if len(accounts) == 0 && ticket.userID == "" {
+		return nil, errors.New("add a user before placing orders")
 	}
 	if ticket.side == "" {
 		ticket.side = kite.TransactionTypeBuy
@@ -187,30 +120,18 @@ func (a *app) openOrder(ticket orderTicket) tea.Cmd {
 		// Keep a position's own product, such as MTF, to close it.
 		products = append(products, ticket.product)
 	}
-	o := &orderForm{ticket: ticket, mode: a.mode}
+	// An open order is modified with the session that placed it, and a
+	// basket's orders go to its owner.
+	o := &orderForm{ticket: ticket, mode: a.mode, userID: ticket.userID}
+	if ticket.alert != nil {
+		o.mode = ticket.alert.mode
+	}
+	if o.userID == "" {
+		o.userID = cmp.Or(a.activeUser(), accounts[0].UserID)
+	}
 	if ticket.modify != nil || ticket.closing {
 		// Open orders and positions are the portfolio's account's.
 		o.mode = a.portfolioMode()
-	}
-	account, active := 0, cmp.Or(ticket.userID, a.activeUser())
-	if ticket.modify != nil {
-		// An order is modified with the session that placed it.
-		active = ticket.userID
-		accounts = slices.DeleteFunc(slices.Clone(accounts), func(user credentials.Credentials) bool { return user.UserID != active })
-		if len(accounts) == 0 {
-			accounts = []credentials.Credentials{{UserID: active}}
-		}
-	}
-	labels := make([]string, len(accounts))
-	for index, user := range accounts {
-		o.users = append(o.users, user.UserID)
-		labels[index] = user.UserID
-		if user.UserName != "" {
-			labels[index] += " · " + user.UserName
-		}
-		if user.UserID == active {
-			account = index
-		}
 	}
 	price, trigger := "", ""
 	switch {
@@ -230,22 +151,24 @@ func (a *app) openOrder(ticket orderTicket) tea.Cmd {
 		buttons = []string{"Modify", "Cancel"}
 	case ticket.item != nil:
 		buttons = []string{"Save to basket", "Cancel"}
+	case ticket.alert != nil:
+		buttons = []string{"Add to alert", "Cancel"}
 	}
 	f := newForm(14, 14, buttons...)
-	f.addSelect(orderFieldAccount, labels, account)
 	f.addSelect(orderFieldSide, orderSides, max(slices.Index(orderSides, ticket.side), 0))
 	f.addInput(orderFieldQuantity, strconv.Itoa(ticket.quantity), wholeNumber, false)
 	f.addSelect(orderFieldType, orderTypes, max(slices.Index(orderTypes, ticket.orderType), 0))
 	f.addInput(orderFieldPrice, price, decimalNumber, false)
 	f.addInput(orderFieldTrigger, trigger, decimalNumber, false)
 	f.addSelect(orderFieldProduct, products, max(slices.Index(products, ticket.product), 0))
-	if ticket.item != nil {
-		// A basket's orders are placed into its owner's account.
-		f.field(orderFieldAccount).disabled = true
+	// A new order can be guarded by a stoploss and a target, set as alerts
+	// once it is placed.
+	if ticket.modify == nil && ticket.item == nil && ticket.alert == nil && !ticket.closing && a.deps.triggers != nil {
+		f.addInput(orderFieldStoploss, "", decimalNumber, false)
+		f.addInput(orderFieldTarget, "", decimalNumber, false)
 	}
 	if ticket.modify != nil {
 		// Kite changes only an order's quantity, type and prices.
-		f.field(orderFieldAccount).disabled = true
 		f.field(orderFieldSide).disabled = true
 		f.field(orderFieldProduct).disabled = true
 	}
@@ -253,8 +176,7 @@ func (a *app) openOrder(ticket orderTicket) tea.Cmd {
 	o.refresh()
 	// Start on the quantity, the field most orders change.
 	f.focusField(orderFieldQuantity)
-	a.overlay = o
-	return a.orderMargin(o)
+	return o, nil
 }
 
 // orderMargin asks for the margin of the form's order once it has rested
@@ -278,11 +200,10 @@ func (a *app) orderMargin(o *orderForm) tea.Cmd {
 
 // order reads the form into the account and the order to place.
 func (o *orderForm) order() (string, kite.OrderParams, error) {
-	f := o.form
-	index := f.field(orderFieldAccount).index
-	if index < 0 || index >= len(o.users) {
-		return "", kite.OrderParams{}, errors.New("choose an account")
+	if o.legs != nil && o.legs.missing != "" {
+		return o.userID, kite.OrderParams{}, errors.New(o.legs.missing)
 	}
+	f := o.form
 	params, err := orderParams(o.ticket.instrument, orderInput{
 		side:      f.field(orderFieldSide).value(),
 		orderType: f.field(orderFieldType).value(),
@@ -294,7 +215,108 @@ func (o *orderForm) order() (string, kite.OrderParams, error) {
 	if err == nil {
 		err = stopLossError(params, o.ticket.ltp)
 	}
-	return o.users[index], params, err
+	if err == nil {
+		_, _, err = o.exitLevels(params)
+	}
+	return o.userID, params, err
+}
+
+// entryPrice is what params is expected to fill at: its limit price, an
+// SL-M's trigger, or else the last price; 0 when unknown.
+func (o *orderForm) entryPrice(params kite.OrderParams) float64 {
+	switch params.OrderType {
+	case kite.OrderTypeLimit, kite.OrderTypeSL:
+		return params.Price
+	case kite.OrderTypeSLM:
+		return params.TriggerPrice
+	}
+	return o.ticket.ltp
+}
+
+// exitLevels are the stoploss and target the form guards params with, 0
+// for one left empty, or why they cannot guard it: a buy's stoploss goes
+// below its entry and its target above, a sell's the other way round.
+func (o *orderForm) exitLevels(params kite.OrderParams) (stop, target float64, err error) {
+	f := o.form
+	stop, _ = strconv.ParseFloat(f.field(orderFieldStoploss).value(), 64)
+	target, _ = strconv.ParseFloat(f.field(orderFieldTarget).value(), 64)
+	entry := o.entryPrice(params)
+	if entry <= 0 {
+		return stop, target, nil
+	}
+	side, at := strings.ToLower(params.TransactionType), formatAmount(entry)
+	buy := params.TransactionType == kite.TransactionTypeBuy
+	switch {
+	case stop > 0 && buy && stop >= entry:
+		err = fmt.Errorf("a %s's stoploss must be below its entry, %s", side, at)
+	case stop > 0 && !buy && stop <= entry:
+		err = fmt.Errorf("a %s's stoploss must be above its entry, %s", side, at)
+	case target > 0 && buy && target <= entry:
+		err = fmt.Errorf("a %s's target must be above its entry, %s", side, at)
+	case target > 0 && !buy && target >= entry:
+		err = fmt.Errorf("a %s's target must be below its entry, %s", side, at)
+	}
+	return stop, target, err
+}
+
+// exitHints show how far the stoploss and target are from params' entry,
+// in red when on the wrong side of it.
+func (o *orderForm) exitHints(params kite.OrderParams) {
+	f := o.form
+	entry := o.entryPrice(params)
+	buy := params.TransactionType == kite.TransactionTypeBuy
+	for _, label := range []string{orderFieldStoploss, orderFieldTarget} {
+		field := f.field(label)
+		level, _ := strconv.ParseFloat(field.value(), 64)
+		field.hint = ""
+		if level <= 0 || entry <= 0 {
+			continue
+		}
+		move := level - entry
+		text := fmt.Sprintf("%s (%+.2f%%)", formatSigned(move), move/entry*100)
+		// A buy loses below its entry and gains above; a sell the reverse.
+		if wrong := (label == orderFieldStoploss) == (buy == (move > 0)); wrong {
+			field.hint = styleRed.Bold(true).Render(text)
+		} else {
+			field.hint = styleMuted.Render(text)
+		}
+	}
+}
+
+// exitTriggers are the alerts that guard params, placed as orderID in
+// mode: a stoploss and a target, either left out when 0, each placing the
+// opposite order at market for the same quantity, one-cancels-other, and
+// waiting for orderID to fill.
+func exitTriggers(instrument models.Instrument, params kite.OrderParams, mode broker.Mode, orderID string, stop, target, ltp float64) []models.PriceTrigger {
+	buy := params.TransactionType == kite.TransactionTypeBuy
+	side := kite.TransactionTypeBuy
+	if buy {
+		side = kite.TransactionTypeSell
+	}
+	exit := models.BasketItem{Exchange: params.Exchange, TradingSymbol: params.Tradingsymbol, TransactionType: side,
+		OrderType: kite.OrderTypeMarket, Product: params.Product, Quantity: params.Quantity}
+	var triggers []models.PriceTrigger
+	for _, level := range []struct {
+		exit  string
+		value float64
+	}{{models.TriggerStoploss, stop}, {models.TriggerTarget, target}} {
+		if level.value <= 0 {
+			continue
+		}
+		// A buy's stoploss fires at or below it and its target at or
+		// above; a sell's the other way round.
+		condition := models.TriggerGTE
+		if buy == (level.exit == models.TriggerStoploss) {
+			condition = models.TriggerLTE
+		}
+		triggers = append(triggers, models.PriceTrigger{
+			InstrumentID: instrument.ID, Field: models.FieldLastPrice, Condition: condition, Value: level.value,
+			Action: models.TriggerActionBoth, Reference: ltp, Note: level.exit + " of order " + orderID,
+			FiringBudget: new(1), Orders: []models.BasketItem{exit}, OrderMode: string(mode),
+			OCO: "order:" + orderID, Entry: orderID, Exit: level.exit,
+		})
+	}
+	return triggers
 }
 
 // refresh enables the price fields the order type uses, names the Place
@@ -308,13 +330,14 @@ func (o *orderForm) refresh() {
 	switch {
 	case o.ticket.modify != nil:
 		f.buttons[0] = "Modify " + o.ticket.modify.OrderID
-	case o.ticket.item == nil:
+	case o.ticket.item == nil && o.ticket.alert == nil:
 		f.buttons[0] = "Place " + side
 	}
 	f.syncFocus()
 	o.hint()
 
 	userID, params, err := o.order()
+	o.exitHints(params)
 	if err != nil {
 		o.summary, o.charges = styleRed.Render(err.Error()), ""
 		return
@@ -345,6 +368,16 @@ func (o *orderForm) refresh() {
 	}
 	o.summary = style.Bold(true).Render(fmt.Sprintf("%s %d", params.TransactionType, params.Quantity)) +
 		styleText.Render(fmt.Sprintf("%s %s · %s · ", lots, at, params.Product)) + styleYellow.Render(userID) + styleMuted.Render(value)
+	if stop, target, _ := o.exitLevels(params); stop > 0 || target > 0 {
+		var exits []string
+		if stop > 0 {
+			exits = append(exits, "stoploss "+formatAmount(stop))
+		}
+		if target > 0 {
+			exits = append(exits, "target "+formatAmount(target))
+		}
+		o.summary += "\n" + styleMuted.Render("Exits at market: "+strings.Join(exits, ", ")+" · armed once it fills, one cancels the other")
+	}
 }
 
 // hint flags the price and trigger against the last price.
@@ -372,14 +405,29 @@ func (o *orderForm) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	if o.placing {
 		return nil
 	}
-	if msg.String() == "esc" {
+	switch msg.String() {
+	case "esc":
 		return o.close(a)
+	case "ctrl+o":
+		// The form's own action, from any field.
+		return o.press(a, 0)
+	case "ctrl+b":
+		if len(o.form.buttons) == 3 {
+			return o.press(a, 1)
+		}
+		return nil
+	}
+	if cmd, handled := a.tradeKey(o, msg.String()); handled {
+		return cmd
 	}
 	if o.step(msg.String()) {
 		o.refresh()
 		return a.orderMargin(o)
 	}
 	pressed, changed := o.form.update(msg)
+	if changed && o.changedContract() {
+		return tea.Batch(a.orderMargin(o), a.fetchTradeQuotes(o))
+	}
 	if changed {
 		o.refresh()
 	}
@@ -387,23 +435,35 @@ func (o *orderForm) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	case pressed < 0 && changed:
 		return a.orderMargin(o)
 	case pressed < 0:
+		return nil
+	}
+	return o.press(a, pressed)
+}
+
+// press does what the form's button pressed does.
+func (o *orderForm) press(a *app, pressed int) tea.Cmd {
+	switch {
 	case pressed == 0 && o.ticket.modify != nil:
 		return a.modifyOrder(o)
 	case pressed == 0 && o.ticket.item != nil:
 		return a.saveBasketItem(o)
+	case pressed == 0 && o.ticket.alert != nil:
+		return a.addAlertOrder(o)
 	case pressed == 0:
 		return a.placeOrder(o)
 	case pressed == 1 && len(o.form.buttons) == 3:
 		return a.pickBasket(o)
-	default:
-		return o.close(a)
 	}
-	return nil
+	return o.close(a)
 }
 
 // close leaves the form.
 func (o *orderForm) close(a *app) tea.Cmd {
 	a.closeOverlay()
+	// An alert's order goes back to the alert.
+	if alert := o.ticket.alert; alert != nil {
+		a.overlay = alert
+	}
 	return nil
 }
 
@@ -425,7 +485,7 @@ func (o *orderForm) step(key string) bool {
 			o.stepLots(key == "right")
 			return true
 		}
-		if current.label != orderFieldPrice && current.label != orderFieldTrigger {
+		if current.label != orderFieldPrice && current.label != orderFieldTrigger && current.label != orderFieldStoploss && current.label != orderFieldTarget {
 			return false
 		}
 		steps := 1
@@ -472,10 +532,25 @@ func (a *app) placeOrder(o *orderForm) tea.Cmd {
 	}
 	o.placing = true
 	o.summary = styleYellow.Render(fmt.Sprintf("Placing %s %d %s for %s…", params.TransactionType, params.Quantity, params.Tradingsymbol, userID))
-	place, mode := a.deps.place, o.mode
+	place, mode, store := a.deps.place, o.mode, a.deps.triggers
+	instrument, ltp := o.ticket.instrument, o.ticket.ltp
+	stop, target, _ := o.exitLevels(params)
 	return a.task(func(ctx context.Context) tea.Msg {
 		orderID, err := place(ctx, userID, mode, params)
-		return orderDoneMsg{form: o, userID: userID, mode: mode, orderID: orderID, params: params, err: err}
+		msg := orderDoneMsg{form: o, userID: userID, mode: mode, orderID: orderID, params: params, err: err}
+		if err != nil || store == nil {
+			return msg
+		}
+		// The exits are set once Kite has the order, to arm when it fills.
+		for _, trigger := range exitTriggers(instrument, params, mode, orderID, stop, target, ltp) {
+			added, err := store.AddPriceTrigger(ctx, userID, trigger)
+			if err != nil {
+				msg.exitErr = errors.Join(msg.exitErr, err)
+				continue
+			}
+			msg.exits = append(msg.exits, userTrigger{user: userID, trigger: added})
+		}
+		return msg
 	})
 }
 
@@ -501,7 +576,7 @@ func (a *app) modifyOrder(o *orderForm) tea.Cmd {
 	})
 }
 
-func (o *orderForm) view(_ *app, w, _ int) string {
+func (o *orderForm) view(_ *app, w, h int) string {
 	width := min(66, w-2)
 	instrument := o.ticket.instrument
 	side := o.form.field(orderFieldSide).value()
@@ -512,112 +587,75 @@ func (o *orderForm) view(_ *app, w, _ int) string {
 	}
 	header := sidePill(side) + " " + styleBold.Render(name) + "\n" +
 		styleFaint.Render(fmt.Sprintf("%s · lot %d · LTP %s", instrument.ID, max(instrument.LotSize, 1), ltp))
+	// The form's actions have their own keys, from any field.
+	actions := "^O place"
+	switch {
+	case o.ticket.modify != nil:
+		actions = "^O modify"
+	case o.ticket.item != nil:
+		actions = "^O save to basket"
+	case o.ticket.alert != nil:
+		actions = "^O add to alert"
+	}
+	if len(o.form.buttons) == 3 {
+		actions += " · ^B add to basket"
+	}
+	if o.target != nil {
+		if _, err := closingTicket(*o.target); err == nil {
+			actions += " · X close position"
+		}
+	}
+	help := []string{styleFaint.Render(actions), styleFaint.Render("↑↓ field · ←→ change · +/- lot · B/S side · Esc cancel")}
+	if legs := o.legs; legs != nil {
+		switch info := legs.contractInfo(instrument, o.ticket.ltp); {
+		case legs.missing != "":
+			header = styleBold.Render(symbolOf(legs.underlying)) + "\n" + styleMuted.Render(legs.missing)
+		case info != "":
+			header += "\n" + info
+		}
+		if legs.priceErr != nil {
+			header += "\n" + styleRed.Render("Prices failed: "+quoteErrorText(legs.priceErr))
+		}
+		header = legs.tabRow() + "\n\n" + header
+		keys := "⇧←→ or O C P F tab"
+		if _, contract := contractTab(o.ticket.instrument); legs.tab != tradeOrder || contract {
+			keys += " · [ ] expiry"
+		}
+		help = append([]string{styleFaint.Render(keys)}, help...)
+	}
 	title := "Place order"
 	switch {
 	case o.ticket.modify != nil:
 		title = "Modify order " + o.ticket.modify.OrderID
 	case o.ticket.item != nil:
 		title = "Basket order"
+	case o.ticket.alert != nil:
+		title = "Alert order"
 	case o.ticket.closing:
 		title = "Close position"
 	}
 	// The margin and charges share a row.
-	costs := ""
+	result := []string{o.summary}
 	if cost := strings.Join(slices.DeleteFunc([]string{o.margin, o.charges}, func(part string) bool { return part == "" }), styleFaint.Render("  ·  ")); cost != "" {
-		costs = cost + "\n"
+		result = append(result, cost)
 	}
-	body := header + "\n\n" + o.form.view(width-4) + "\n\n" + o.summary + "\n" + costs +
-		styleFaint.Render("↑↓ field · ←→ option/lot/tick · +/- lot · Enter next · Esc cancel")
-	return modal(title, modePill(o.mode), body, width)
-}
-
-// strikePicker chooses an option to buy or sell: one expiry of an
-// underlying's calls or puts at a time, priced live, with the at-the-money
-// strike selected. Enter orders the selected strike.
-type strikePicker struct {
-	side       string
-	optionType models.OptionType
-	underlying models.Instrument
-	// options are every expiry's contracts, by strike; expiries are their
-	// dates in order and expiry the one shown.
-	options  []models.Instrument
-	expiries []time.Time
-	expiry   int
-	quotes   map[string]kite.QuoteData
-	source   quoteSource
-	err      error
-	priceErr error
-	loading  bool
-	fetching bool
-	// atm selects the at-the-money strike once the spot price is known.
-	atm  bool
-	grid grid
-}
-
-type (
-	strikesLoadedMsg struct {
-		picker     *strikePicker
-		underlying models.Instrument
-		options    []models.Instrument
-		source     quoteSource
-		err        error
+	// A short terminal loses the keys' help, then the gaps between parts;
+	// the frame takes four lines.
+	sections := []string{header, o.form.view(width - 4), strings.Join(append(result, help...), "\n")}
+	gap := "\n\n"
+	if lipgloss.Height(strings.Join(sections, gap))+4 > h {
+		sections[2] = strings.Join(result, "\n")
 	}
-	strikeQuotesMsg struct {
-		picker *strikePicker
-		quotes kite.Quote
-		err    error
+	if lipgloss.Height(strings.Join(sections, gap))+4 > h {
+		gap = "\n"
 	}
-	strikeTickMsg struct{ picker *strikePicker }
-)
-
-// openStrikePicker opens the picker for side (buy or sell) of underlying's
-// calls or puts, pricing them from the explorer's quotes or by connecting
-// the data user.
-func (a *app) openStrikePicker(underlying models.InstrumentID, side string, optionType models.OptionType) tea.Cmd {
-	p := &strikePicker{
-		side: side, optionType: optionType, loading: true, atm: true,
-		underlying: models.Instrument{ID: underlying, TradingSymbol: symbolOf(underlying)},
-		source:     a.explorer.quoteSource,
-		grid: grid{columns: []column{
-			{title: "STRIKE", width: 10, align: alignRight},
-			{title: "LTP", width: 9, align: alignRight},
-			{title: "CHG", width: 8, align: alignRight},
-			{title: "MONEYNESS", width: 14},
-			{title: "BREAKEVEN", width: 18, align: alignRight},
-			{title: "PER LOT", width: 10, align: alignRight},
-			{title: "OI", width: 10, flex: 1, align: alignRight},
-		}},
-	}
-	p.render()
-	a.overlay = p
-	catalog, open, load := a.explorer.catalog, a.deps.openCatalog, a.deps.loadQuotes
-	source := p.source
-	return a.task(func(ctx context.Context) tea.Msg {
-		msg := strikesLoadedMsg{picker: p, source: source}
-		if catalog == nil {
-			if catalog, _, msg.err = open(ctx); msg.err != nil {
-				return msg
-			}
-		}
-		instrument, err := catalog.Get(ctx, underlying)
-		if errors.Is(err, models.ErrNotFound) {
-			instrument, err = models.Instrument{ID: underlying, TradingSymbol: symbolOf(underlying)}, nil
-		}
-		if err != nil {
-			msg.err = err
-			return msg
-		}
-		msg.underlying = instrument
-		msg.options, msg.err = catalog.GetOptions(ctx, models.OptionsFilter{UnderlyingID: underlying, Types: []models.OptionType{optionType}})
-		if msg.err == nil && msg.source == nil && load != nil {
-			// Unpriced strikes are still worth picking from.
-			msg.source, _, _ = load(ctx)
-		}
-		return msg
-	})
+	return modal(title, modePill(o.mode), strings.Join(sections, gap), width)
 }
 
 func (a *app) handleOrders(msg tea.Msg) (tea.Cmd, bool) {
+	if cmd, handled := a.handleTrade(msg); handled {
+		return cmd, true
+	}
 	switch msg := msg.(type) {
 	case orderDoneMsg:
 		msg.form.placing = false
@@ -632,7 +670,21 @@ func (a *app) handleOrders(msg tea.Msg) (tea.Cmd, bool) {
 			return a.orderChanged(msg.userID, statusOK(fmt.Sprintf("Order %s modified · %s %d at %s", msg.orderID,
 				msg.params.OrderType, msg.params.Quantity, priceOrMarket(msg.params.Price)))), true
 		}
-		return a.orderPlaced(msg.userID, msg.mode, msg.orderID, msg.params), true
+		more := ""
+		for _, exit := range msg.exits {
+			a.alerts.keep(exit)
+		}
+		if len(msg.exits) > 0 {
+			more += statusInfo(" · then " + exitsText(msg.exits))
+		}
+		if msg.exitErr != nil {
+			more += styleRed.Render(" · exits not set: " + msg.exitErr.Error())
+		}
+		placed := a.orderPlaced(msg.userID, msg.mode, msg.orderID, msg.params, more)
+		if len(msg.exits) == 0 {
+			return placed, true
+		}
+		return tea.Batch(placed, a.alertsChanged(msg.userID), a.checkAlerts(true)), true
 	case orderMarginDueMsg:
 		o := msg.form
 		if a.overlay != o || msg.seq != o.marginSeq || a.deps.basketMargins == nil {
@@ -670,354 +722,8 @@ func (a *app) handleOrders(msg tea.Msg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return a.orderChanged(msg.userID, statusOK("Order "+msg.order.OrderID+" cancelled")), true
-	case strikesLoadedMsg:
-		p := msg.picker
-		if a.overlay != p {
-			return nil, true
-		}
-		p.loading, p.err, p.source = false, msg.err, msg.source
-		if msg.err == nil {
-			p.underlying = msg.underlying
-			p.setOptions(msg.options)
-		}
-		p.render()
-		return tea.Batch(a.fetchStrikes(p), a.strikeTick(p)), true
-	case strikeTickMsg:
-		if a.overlay != msg.picker {
-			return nil, true
-		}
-		return tea.Batch(a.fetchStrikes(msg.picker), a.strikeTick(msg.picker)), true
-	case strikeQuotesMsg:
-		p := msg.picker
-		p.fetching = false
-		p.priceErr = msg.err
-		if msg.err == nil {
-			if p.quotes == nil {
-				p.quotes = make(map[string]kite.QuoteData, len(msg.quotes))
-			}
-			for id, quote := range msg.quotes {
-				p.quotes[id] = quote
-			}
-		}
-		p.render()
-		return nil, true
 	}
 	return nil, false
-}
-
-func (a *app) strikeTick(p *strikePicker) tea.Cmd {
-	if a.deps.strikeEvery <= 0 {
-		return nil
-	}
-	return tea.Tick(a.deps.strikeEvery, func(time.Time) tea.Msg { return strikeTickMsg{picker: p} })
-}
-
-// fetchStrikes prices the underlying and the shown expiry's strikes.
-func (a *app) fetchStrikes(p *strikePicker) tea.Cmd {
-	if p.source == nil || p.fetching || p.loading || p.err != nil {
-		return nil
-	}
-	ids := []string{string(p.underlying.ID)}
-	for _, option := range p.strikes() {
-		ids = append(ids, string(option.ID))
-	}
-	p.fetching = true
-	source := p.source
-	return a.task(func(context.Context) tea.Msg {
-		quotes, err := source.GetQuote(ids...)
-		return strikeQuotesMsg{picker: p, quotes: quotes, err: err}
-	})
-}
-
-// setOptions keeps the unexpired contracts of the picker's type and lists
-// their expiries, showing the nearest.
-func (p *strikePicker) setOptions(options []models.Instrument) {
-	today := expiryDay(time.Now())
-	seen := map[time.Time]bool{}
-	p.options = p.options[:0]
-	for _, option := range options {
-		if option.InstrumentType != string(p.optionType) || option.Expiry == nil || expiryDay(*option.Expiry).Before(today) {
-			continue
-		}
-		p.options = append(p.options, option)
-		if day := expiryDay(*option.Expiry); !seen[day] {
-			seen[day] = true
-			p.expiries = append(p.expiries, day)
-		}
-	}
-	sort.Slice(p.expiries, func(i, j int) bool { return p.expiries[i].Before(p.expiries[j]) })
-	sort.SliceStable(p.options, func(i, j int) bool { return p.options[i].Strike < p.options[j].Strike })
-}
-
-// strikes are the shown expiry's contracts, by strike.
-func (p *strikePicker) strikes() []models.Instrument {
-	if p.expiry >= len(p.expiries) {
-		return nil
-	}
-	day := p.expiries[p.expiry]
-	var strikes []models.Instrument
-	for _, option := range p.options {
-		if expiryDay(*option.Expiry).Equal(day) {
-			strikes = append(strikes, option)
-		}
-	}
-	return strikes
-}
-
-func (p *strikePicker) spot() float64 {
-	return p.quotes[string(p.underlying.ID)].LastPrice
-}
-
-func (p *strikePicker) selected() (models.Instrument, bool) {
-	option, ok := p.grid.selectedRef().(models.Instrument)
-	return option, ok
-}
-
-func nearestOption(strikes []models.Instrument, price float64) models.Instrument {
-	best := strikes[0]
-	for _, option := range strikes[1:] {
-		if math.Abs(option.Strike-price) < math.Abs(best.Strike-price) {
-			best = option
-		}
-	}
-	return best
-}
-
-// render fills the table, keeping the selected strike, or selecting the
-// at-the-money strike once the spot price is known.
-func (p *strikePicker) render() {
-	g := &p.grid
-	switch {
-	case p.loading:
-		g.empty = styleMuted.Render("Loading strikes…")
-	case p.err != nil:
-		g.empty = styleRed.Render(p.err.Error())
-	default:
-		g.empty = styleMuted.Render(fmt.Sprintf("No %ss listed for %s", optionWord(p.optionType), p.underlying.ID))
-	}
-	previous, hadSelection := p.selected()
-	strikes := p.strikes()
-	if p.loading || p.err != nil {
-		strikes = nil
-	}
-	spot := p.spot()
-	var largestOI float64
-	for _, option := range strikes {
-		largestOI = max(largestOI, p.quotes[string(option.ID)].OI)
-	}
-	call := p.optionType == models.OptionTypeCall
-	atm := math.NaN()
-	if len(strikes) > 0 && spot > 0 {
-		atm = nearestOption(strikes, spot).Strike
-	}
-	spotShown := spot <= 0
-	var rows []row
-	spotRow := func() row {
-		return row{skip: true, bg: colorSpot, cells: []cell{
-			textCell(formatAmount(spot), styleCyan.Bold(true)), textCell("◀ spot", styleCyan),
-		}}
-	}
-	for _, option := range strikes {
-		if !spotShown && option.Strike > spot {
-			rows = append(rows, spotRow())
-			spotShown = true
-		}
-		rows = append(rows, p.strikeRow(option, spot, atm, largestOI, call))
-	}
-	if !spotShown && len(strikes) > 0 {
-		rows = append(rows, spotRow())
-	}
-	g.setRows(rows)
-	at := func(strike float64) {
-		g.selectWhere(func(r row) bool {
-			option, ok := r.ref.(models.Instrument)
-			return ok && option.Strike == strike
-		})
-		g.centerNext = true
-	}
-	switch {
-	case p.atm && !math.IsNaN(atm):
-		at(atm)
-		p.atm = false
-	case hadSelection:
-		g.selectWhere(func(r row) bool {
-			option, ok := r.ref.(models.Instrument)
-			return ok && option.Strike == previous.Strike
-		})
-	case len(strikes) > 0:
-		at(strikes[len(strikes)/2].Strike)
-	}
-}
-
-func (p *strikePicker) strikeRow(option models.Instrument, spot, atm, largestOI float64, call bool) row {
-	quote, priced := p.quotes[string(option.ID)]
-	itm := spot > 0 && ((call && option.Strike < spot) || (!call && option.Strike > spot))
-	r := row{ref: option}
-	if itm {
-		r.bg = colorITM
-	}
-	strikeStyle := styleBold
-	if option.Strike == atm {
-		strikeStyle = styleYellow.Bold(true)
-	}
-	ltp, change, breakevenText, lot := textCell("—", styleFaint), textCell("", styleFaint), textCell("—", styleFaint), textCell("—", styleFaint)
-	if priced && quote.LastPrice > 0 {
-		ltp = textCell(formatPrice(quote.LastPrice), styleText)
-		text, direction := formatChange(quote)
-		change = textCell(text, signStyle(direction))
-		value := breakeven(option, quote.LastPrice)
-		text = formatPrice(value)
-		if spot > 0 {
-			text += " " + formatBreakeven(value, spot, true)
-		}
-		breakevenText = textCell(text, styleText)
-		lot = textCell(formatAmount(quote.LastPrice*float64(max(option.LotSize, 1))), styleText)
-	}
-	oi := textCell("", styleMuted)
-	if priced {
-		barColor := colorCallBar
-		if !call {
-			barColor = colorPutBar
-		}
-		oi = cell{text: formatCount(quote.OI), style: styleText, barColor: barColor, barRight: true}
-		if largestOI > 0 {
-			oi.bar = quote.OI / largestOI
-		}
-	}
-	r.cells = []cell{
-		textCell(formatStrike(option.Strike), strikeStyle), ltp, change,
-		moneyness(option.Strike, spot, atm, itm), breakevenText, lot, oi,
-	}
-	return r
-}
-
-// moneyness names a strike ATM, ITM or OTM with its distance from spot.
-func moneyness(strike, spot, atm float64, itm bool) cell {
-	if spot <= 0 {
-		return textCell("", styleFaint)
-	}
-	distance := fmt.Sprintf(" %.2f%%", math.Abs(strike-spot)/spot*100)
-	switch {
-	case strike == atm:
-		return textCell("ATM"+distance, styleYellow.Bold(true))
-	case itm:
-		return textCell("ITM"+distance, styleYellow)
-	}
-	return textCell("OTM"+distance, styleMuted)
-}
-
-func (p *strikePicker) cycleExpiry(a *app, delta int) tea.Cmd {
-	if len(p.expiries) == 0 {
-		return nil
-	}
-	next := min(max(p.expiry+delta, 0), len(p.expiries)-1)
-	if next == p.expiry {
-		return nil
-	}
-	p.expiry, p.atm = next, true
-	p.grid.cursor, p.grid.offset = 0, 0
-	p.render()
-	return a.fetchStrikes(p)
-}
-
-// update handles the picker's keys: Left, Right, [ and ] change expiry, R
-// refreshes prices, Enter orders the strike and Esc goes back.
-func (p *strikePicker) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
-	switch key := msg.String(); key {
-	case "esc":
-		a.closeOverlay()
-		return nil
-	case "left", "[":
-		return p.cycleExpiry(a, -1)
-	case "right", "]":
-		return p.cycleExpiry(a, 1)
-	case "r", "R":
-		return a.fetchStrikes(p)
-	case "enter":
-		option, ok := p.selected()
-		if !ok {
-			return nil
-		}
-		a.closeOverlay()
-		return a.openOrder(newOrderTicket(option, p.side, p.quotes[string(option.ID)].LastPrice))
-	default:
-		p.grid.update(key)
-	}
-	return nil
-}
-
-func (p *strikePicker) view(_ *app, w, h int) string {
-	width := min(100, max(w-2, 60))
-	height := min(32, max(h-2, 16))
-	side := strings.ToUpper(sideWord(p.side)) + " " + strings.ToUpper(optionWord(p.optionType))
-	header := sidePillText(p.side, side)
-	name := fallback(strings.TrimSpace(p.underlying.DisplayName), p.underlying.TradingSymbol)
-	header += " " + styleBold.Render(name)
-	if quote, ok := p.quotes[string(p.underlying.ID)]; ok && quote.LastPrice > 0 {
-		change, direction := formatChange(quote)
-		header += "  " + styleMuted.Render("spot ") + styleCyan.Bold(true).Render(formatAmount(quote.LastPrice)) + " " + signStyle(direction).Render(change)
-	}
-	if strikes := p.strikes(); len(strikes) > 0 {
-		header += styleFaint.Render(fmt.Sprintf("  · lot %d", max(strikes[0].LotSize, 1)))
-	}
-	lines := []string{header, p.tabs(), ""}
-	tableH := height - 10
-	lines = append(lines, p.grid.view(width-4, tableH, true), "")
-	footer := ""
-	if p.priceErr != nil {
-		footer = styleRed.Bold(true).Render("Prices failed: ") + styleRed.Render(quoteErrorText(p.priceErr))
-	} else if option, ok := p.selected(); ok {
-		footer = styleBold.Render(option.TradingSymbol)
-		if quote := p.quotes[string(option.ID)]; quote.LastPrice > 0 {
-			lots := max(option.LotSize, 1)
-			footer += styleMuted.Render(fmt.Sprintf(" · %d × %s = ", lots, formatPrice(quote.LastPrice))) +
-				styleYellow.Render("₹"+formatAmount(quote.LastPrice*float64(lots))) +
-				styleMuted.Render(" per lot · breakeven "+formatPrice(breakeven(option, quote.LastPrice)))
-		}
-	}
-	lines = append(lines, footer, help("↑↓", "strike", "←→ [ ]", "expiry", "Enter", "order", "R", "refresh", "Esc", "back"))
-	return modal(sideWord(p.side)+" "+optionWord(p.optionType), "", strings.Join(lines, "\n"), width)
-}
-
-// sidePillText is a side's pill with its own text.
-func sidePillText(side, text string) string {
-	if side == kite.TransactionTypeSell {
-		return pill(text, colorRed, colorInk)
-	}
-	return pill(text, colorGreen, colorInk)
-}
-
-// tabs lists the expiries, the shown one highlighted, with how many days
-// each has left.
-func (p *strikePicker) tabs() string {
-	if len(p.expiries) == 0 {
-		return ""
-	}
-	const window = 6
-	first := min(max(p.expiry-window/2, 0), max(len(p.expiries)-window, 0))
-	last := min(first+window, len(p.expiries))
-	var text strings.Builder
-	if first > 0 {
-		text.WriteString(styleFaint.Render("◀ "))
-	} else {
-		text.WriteString("  ")
-	}
-	today := expiryDay(time.Now())
-	for index := first; index < last; index++ {
-		day := p.expiries[index]
-		label := fmt.Sprintf(" %s · %s ", day.Format("02 Jan"), daysLeft(day, today))
-		if index == p.expiry {
-			text.WriteString(lipgloss.NewStyle().Background(colorCyan).Foreground(colorInk).Bold(true).Render(label))
-		} else {
-			text.WriteString(styleMuted.Render(label))
-		}
-		text.WriteString(" ")
-	}
-	if last < len(p.expiries) {
-		text.WriteString(styleFaint.Render("▶"))
-	}
-	text.WriteString(styleFaint.Render(fmt.Sprintf("  expiry %d of %d", p.expiry+1, len(p.expiries))))
-	return text.String()
 }
 
 type orderCancelledMsg struct {

@@ -21,12 +21,14 @@ import (
 	"github.com/devshoe/gokiteconnect/models"
 )
 
-// Each user's portfolio lives in its own SQLite database, so the tables
+// Each user's portfolio lives in its own SQLite database, so most tables
 // carry no user column. order_updates keeps every distinct state an order
 // was seen in, from ticker order updates and from polled order books;
 // digest, the SHA-256 of the stored JSON, makes recording the same state
 // twice harmless. portfolio_snapshots keeps each read of the account,
-// one Kite response as JSON per row.
+// one Kite response as JSON per row. triggers keeps the user's price
+// alerts, each a JSON document naming its user so alerts read from several
+// databases together still say whose they are.
 const createPortfolioTablesSQL = `
 	CREATE TABLE IF NOT EXISTS order_updates (
 		update_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +49,14 @@ const createPortfolioTablesSQL = `
 		data          TEXT NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS portfolio_snapshots_by_type ON portfolio_snapshots (snapshot_type, snapshot_id);
+
+	CREATE TABLE IF NOT EXISTS triggers (
+		trigger_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id    TEXT NOT NULL,
+		status     TEXT NOT NULL,
+		data       TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS triggers_by_status ON triggers (status, trigger_id);
 `
 
 // terminalStatusSQL is 1 for an update whose status ends its order, so
@@ -96,6 +106,10 @@ func NewPortfolioSQLiteRepository(ctx context.Context, databasePath, userID stri
 	if _, err := db.ExecContext(ctx, createPortfolioTablesSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("portfolio %s: create tables: %w", user, err)
+	}
+	if err := migrateTriggers(ctx, db, user); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("portfolio %s: %w", user, err)
 	}
 	return &PortfolioSQLiteRepository{db: db, userID: user, now: time.Now}, nil
 }

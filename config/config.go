@@ -49,8 +49,8 @@ type Config struct {
 	// PriceMode is TRADEBOT_PRICE_MODE: PriceModeQuote (the default) or
 	// PriceModeTicker.
 	PriceMode string
-	// AccountMode is TRADEBOT_ACCOUNT_MODE: AccountModePaper (the default)
-	// or AccountModeLive.
+	// AccountMode is TRADEBOT_ACCOUNT_MODE: AccountModeLive (the default)
+	// or AccountModePaper.
 	AccountMode string
 	// PaperCapital is TRADEBOT_PAPER_CAPITAL, default 10 lakh: the cash a
 	// new paper account opens with.
@@ -74,7 +74,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	settings, err := ReadSettings(settingsPath)
+	settings, err := SyncSettings(settingsPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("read settings: %w", err)
 	}

@@ -47,6 +47,12 @@ type explorerScreen struct {
 	futures       grid
 	chainGrid     grid
 	chainNeedsATM bool
+	// chainLoading is the underlying whose chain is loading, which a
+	// watchlist arriving meanwhile does not replace; chainOnOpen is the one
+	// to load once the catalog opens. chainLeaves makes Esc on the chain
+	// leave the explorer, for a chain opened from another tab.
+	chainLoading, chainOnOpen models.InstrumentID
+	chainLeaves               bool
 	// breakevenPercent shows breakevens as the move from spot.
 	breakevenPercent bool
 
@@ -230,8 +236,11 @@ type (
 		id     models.InstrumentID
 		margin lotMargin
 	}
+	// instrumentFoundMsg is a list item's instrument, to order, or to set
+	// an alert on when alert is set.
 	instrumentFoundMsg struct {
 		instrument models.Instrument
+		alert      bool
 		err        error
 	}
 )
@@ -274,6 +283,11 @@ func (a *app) handleExplorer(msg tea.Msg) (tea.Cmd, bool) {
 		e.underlyingCount = len(msg.initial.underlyings)
 		cmd := a.setResults(msg.initial.underlyings, true)
 		e.status = styleGreen.Bold(true).Render("READY") + statusInfo(fmt.Sprintf(" · %d F&O underlyings", len(msg.initial.underlyings)))
+		if underlying := e.chainOnOpen; underlying != "" {
+			e.chainOnOpen = ""
+			e.takeSnapshot()
+			cmd = tea.Batch(cmd, a.loadChain(underlying))
+		}
 		return tea.Batch(cmd, a.loadWatchlists("")), true
 	case searchFireMsg:
 		if msg.generation != e.searchGen {
@@ -300,6 +314,7 @@ func (a *app) handleExplorer(msg tea.Msg) (tea.Cmd, bool) {
 		return cmd, true
 	case chainLoadedMsg:
 		a.closeOverlay()
+		e.chainLoading = ""
 		if msg.err != nil {
 			a.showError(msg.err)
 			return nil, true
@@ -366,11 +381,18 @@ func (a *app) handleExplorer(msg tea.Msg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case instrumentFoundMsg:
-		if msg.err != nil {
+		ltp := e.quotes[string(msg.instrument.ID)].LastPrice
+		switch {
+		case msg.err != nil && msg.alert:
+			e.status = statusErr("Cannot set an alert:", msg.err.Error())
+		case msg.err != nil:
 			e.status = statusErr("Cannot order:", msg.err.Error())
-			return nil, true
+		case msg.alert:
+			return a.openAlertForm(msg.instrument, ltp), true
+		default:
+			return a.instrumentOrder(msg.instrument, ltp), true
 		}
-		return a.instrumentOrder(msg.instrument, e.quotes[string(msg.instrument.ID)].LastPrice), true
+		return nil, true
 	}
 	return a.handleLists(msg)
 }
@@ -643,7 +665,33 @@ func (a *app) openChain(instrument models.Instrument) tea.Cmd {
 		e.takeSnapshot()
 		e.snapshot.selectedID = instrument.ID
 	}
+	e.chainLeaves = false
+	return a.loadChain(underlying)
+}
+
+// openChainFrom shows underlying's chain in the explorer from another tab,
+// opening the catalog first if need be; Esc on it goes back to that tab.
+func (a *app) openChainFrom(underlying models.InstrumentID) tea.Cmd {
+	e := a.explorer
+	cmd := a.openInstruments()
+	e.chainLeaves = true
+	if e.catalog == nil {
+		e.chainOnOpen = underlying
+		return cmd
+	}
+	if e.mode == viewDashboard {
+		e.takeSnapshot()
+	}
+	return tea.Batch(cmd, a.loadChain(underlying))
+}
+
+// loadChain loads underlying's futures and options into the chain.
+func (a *app) loadChain(underlying models.InstrumentID) tea.Cmd {
+	e := a.explorer
+	// A watchlist on its way would replace the chain.
 	e.searchGen++
+	e.watchGen++
+	e.chainLoading = underlying
 	catalog := e.catalog
 	return tea.Batch(a.busy(fmt.Sprintf("Loading contracts for %s…", underlying)), a.task(func(ctx context.Context) tea.Msg {
 		data, err := loadChainData(ctx, catalog, underlying)
@@ -664,11 +712,6 @@ func (e *explorerScreen) spot() float64 {
 	}
 	return e.quotes[string(e.chain.underlying)].LastPrice
 }
-
-var (
-	styleATM     = lipgloss.NewStyle().Background(lipgloss.Color("#B8860B")).Foreground(colorInk).Bold(true)
-	styleNoTrade = lipgloss.NewStyle().Foreground(colorFaint)
-)
 
 func (e *explorerScreen) fillChain() {
 	data := e.chain
@@ -847,7 +890,7 @@ func (a *app) openFilters() {
 	f.addInput("Maximum LTP", optionalFloat(filter.maxLTP), decimalNumber, false)
 	f.addInput("Minimum BE %", optionalFloat(filter.minBreakeven), decimalNumber, false)
 	f.addInput("Maximum BE %", optionalFloat(filter.maxBreakeven), decimalNumber, false)
-	f.message = styleMuted.Render("BE % is the breakeven's distance from spot either way.")
+	f.message = styleMuted.Render("BE % is the breakeven's distance from spot either way. ←→ step a range, Shift by five.")
 	f.focusFirst()
 	a.overlay = &filterOverlay{form: f}
 }
@@ -862,6 +905,9 @@ func optionalFloat(value *float64) string {
 func (o *filterOverlay) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	if msg.String() == "esc" {
 		a.closeOverlay()
+		return nil
+	}
+	if o.step(a.explorer, msg.String()) {
 		return nil
 	}
 	pressed, _ := o.form.update(msg)
@@ -896,6 +942,157 @@ func (o *filterOverlay) update(a *app, msg tea.KeyPressMsg) tea.Cmd {
 	a.closeOverlay()
 	e.chainNeedsATM = true
 	return a.renderChain()
+}
+
+// filterStepStride is how many stops Shift+Left and Shift+Right move.
+const filterStepStride = 5
+
+// step handles the range fields' steppers: Left and Right move a strike to
+// the expiry's next strike, an LTP along round prices and a BE % by a
+// quarter or half point, Shift by five stops. An empty field starts at the
+// ATM strike, the ATM premium or 1%, and stepping below the lowest stop
+// empties it.
+func (o *filterOverlay) step(e *explorerScreen, key string) bool {
+	steps := 0
+	switch key {
+	case "left":
+		steps = -1
+	case "right":
+		steps = 1
+	case "shift+left":
+		steps = -filterStepStride
+	case "shift+right":
+		steps = filterStepStride
+	default:
+		return false
+	}
+	current := o.form.current()
+	if current == nil || current.kind != fieldInput {
+		return false
+	}
+	var stops []float64
+	var start float64
+	switch current.label {
+	case "Minimum strike", "Maximum strike":
+		stops, start = e.chainStrikes(), e.spot()
+	case "Minimum LTP", "Maximum LTP":
+		stops, start = ltpStops, e.atmPremium()
+	case "Minimum BE %", "Maximum BE %":
+		stops, start = breakevenStops, 1
+	default:
+		return false
+	}
+	current.input.SetValue(stepThrough(stops, current.value(), start, steps))
+	current.input.CursorEnd()
+	return true
+}
+
+// stepThrough moves value steps stops along the ascending stops. An empty
+// or unreadable value lands on the stop nearest start; moving below the
+// first stop empties it, and moving past the last stays there.
+func stepThrough(stops []float64, value string, start float64, steps int) string {
+	if len(stops) == 0 {
+		return value
+	}
+	current, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		nearest := 0
+		for index, stop := range stops {
+			if math.Abs(stop-start) < math.Abs(stops[nearest]-start) {
+				nearest = index
+			}
+		}
+		return formatStrike(stops[nearest])
+	}
+	// The first stop above the value, or the last below it, is one step.
+	index, found := slices.BinarySearch(stops, current)
+	if steps > 0 {
+		if found {
+			index++
+		}
+		index += steps - 1
+	} else {
+		index += steps
+	}
+	if index < 0 {
+		return ""
+	}
+	return formatStrike(stops[min(index, len(stops)-1)])
+}
+
+// ltpStops are round premiums from 0.1 to 75,000: 1, 1.5, 2, 2.5, 3, 4, 5,
+// 6 and 7.5 in each power of ten.
+var ltpStops = func() []float64 {
+	var stops []float64
+	for scale := 0.1; scale < 1e5; scale *= 10 {
+		for _, mantissa := range []float64{1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5} {
+			stops = append(stops, math.Round(mantissa*scale*100)/100)
+		}
+	}
+	return stops
+}()
+
+// breakevenStops are BE percents: quarter points to 3%, half points to
+// 10%, then whole points to 30%.
+var breakevenStops = func() []float64 {
+	var stops []float64
+	for value := 0.25; value <= 3; value += 0.25 {
+		stops = append(stops, value)
+	}
+	for value := 3.5; value <= 10; value += 0.5 {
+		stops = append(stops, value)
+	}
+	for value := 11.0; value <= 30; value++ {
+		stops = append(stops, value)
+	}
+	return stops
+}()
+
+// chainStrikes are the selected expiry's strikes, ascending.
+func (e *explorerScreen) chainStrikes() []float64 {
+	if e.chain == nil {
+		return nil
+	}
+	rows := buildChainRows(e.chain.options, chainFilter{expiryNumber: e.chain.filter.expiryNumber, side: optionSideBoth})
+	strikes := make([]float64, 0, len(rows))
+	for _, candidate := range rows {
+		strikes = append(strikes, candidate.strike)
+	}
+	return strikes
+}
+
+// atmPremium is the mean price of the selected expiry's quoted ATM call and
+// put, or 0 without a spot or quotes.
+func (e *explorerScreen) atmPremium() float64 {
+	spot := e.spot()
+	if e.chain == nil || spot <= 0 {
+		return 0
+	}
+	rows := buildChainRows(e.chain.options, chainFilter{expiryNumber: e.chain.filter.expiryNumber, side: optionSideBoth})
+	var atm *chainRow
+	for index := range rows {
+		if atm == nil || math.Abs(rows[index].strike-spot) < math.Abs(atm.strike-spot) {
+			atm = &rows[index]
+		}
+	}
+	if atm == nil {
+		return 0
+	}
+	var total float64
+	var quoted int
+	for _, leg := range []*models.Instrument{atm.call, atm.put} {
+		if leg == nil {
+			continue
+		}
+		if price := e.quotes[string(leg.ID)].LastPrice; price > 0 {
+			total += price
+			quoted++
+		}
+	}
+	if quoted == 0 {
+		return 0
+	}
+	return total / float64(quoted)
 }
 
 func (o *filterOverlay) view(_ *app, w, _ int) string {
@@ -973,7 +1170,12 @@ func (a *app) explorerKey(msg tea.KeyPressMsg) tea.Cmd {
 			a.leaveInstruments()
 			return nil
 		}
-		return a.backToDashboard()
+		cmd := a.backToDashboard()
+		if e.chainLeaves {
+			e.chainLeaves = false
+			a.leaveInstruments()
+		}
+		return cmd
 	}
 	if e.mode == viewLists {
 		if cmd, handled := a.listKey(key); handled {
@@ -998,6 +1200,14 @@ func (a *app) explorerKey(msg tea.KeyPressMsg) tea.Cmd {
 			return a.removeFromWatchlist()
 		}
 		return nil
+	case "shift+up", "K", "shift+down", "J":
+		if e.mode != viewDashboard {
+			return nil
+		}
+		if key == "shift+up" || key == "K" {
+			return a.moveInWatchlist(-1)
+		}
+		return a.moveInWatchlist(1)
 	case "%":
 		return a.toggleBreakevenFormat()
 	case "/":
@@ -1031,9 +1241,14 @@ func (a *app) explorerKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch strings.ToLower(key) {
 	case "b":
+		if e.mode == viewChain && e.chain != nil {
+			return a.openStrategyMenu()
+		}
 		return a.openBaskets()
 	case "l":
 		return a.openLists()
+	case "t":
+		return a.alertSelected()
 	case "a":
 		return a.addSelectedToList()
 	case "n":
@@ -1050,22 +1265,47 @@ func (a *app) explorerKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// orderSelected opens the order menu for the selected instrument: a search
+// orderSelected opens the order form for the selected instrument: a search
 // result, a chain contract or future, or a list item.
 func (a *app) orderSelected() tea.Cmd {
 	e := a.explorer
 	if instrument, ok := e.selectedInstrument(); ok {
 		return a.instrumentOrder(instrument, e.quotes[string(instrument.ID)].LastPrice)
 	}
-	if id, ok := e.itemsGrid.selectedRef().(models.InstrumentID); ok && e.mode == viewLists && e.focus == 1 {
-		catalog := e.catalog
-		return a.task(func(ctx context.Context) tea.Msg {
-			instrument, err := catalog.Get(ctx, id)
-			return instrumentFoundMsg{instrument: instrument, err: err}
-		})
+	if cmd := a.findListItem(false); cmd != nil {
+		return cmd
 	}
 	e.status = statusWarn("Select an instrument to trade")
 	return nil
+}
+
+// alertSelected opens the alert form on the selected instrument, as
+// orderSelected opens the order form.
+func (a *app) alertSelected() tea.Cmd {
+	e := a.explorer
+	if instrument, ok := e.selectedInstrument(); ok {
+		return a.openAlertForm(instrument, e.quotes[string(instrument.ID)].LastPrice)
+	}
+	if cmd := a.findListItem(true); cmd != nil {
+		return cmd
+	}
+	e.status = statusWarn("Select an instrument to set an alert on")
+	return nil
+}
+
+// findListItem looks up the selected list item's instrument, when one is
+// selected, to set an alert on or else to order.
+func (a *app) findListItem(alert bool) tea.Cmd {
+	e := a.explorer
+	id, ok := e.itemsGrid.selectedRef().(models.InstrumentID)
+	if !ok || e.mode != viewLists || e.focus != 1 {
+		return nil
+	}
+	catalog := e.catalog
+	return a.task(func(ctx context.Context) tea.Msg {
+		instrument, err := catalog.Get(ctx, id)
+		return instrumentFoundMsg{instrument: instrument, alert: alert, err: err}
+	})
 }
 
 // connectQuotes opens the data user's quote source, then fetches prices
@@ -1419,23 +1659,23 @@ func (e *explorerScreen) underlyingPrice(option models.Instrument) float64 {
 	return e.quotes[string(*option.UnderlyingID)].LastPrice
 }
 
-func (a *app) explorerHelp() string {
+func (a *app) explorerHelp() []string {
 	e := a.explorer
 	switch {
 	case e.searchFocused:
-		return help("type", "to search", "Enter/↓", "results", "Esc", "table", "^C", "quit")
+		return bindings("type", "to search", "Enter/↓", "results", "Esc", "table", "^C", "quit")
 	case e.mode == viewChain:
-		return help("←→", "call/put", "Tab", "futures", "E", "expiry", "[ ]", "cycle", "F", "filters", "%", "BE", "+", "order", "B", "basket", "A", "add to list", "M", "metadata", "Esc", "back")
+		return bindings("←→", "call/put", "Tab", "futures", "E", "expiry", "[ ]", "cycle", "F", "filters", "%", "BE", "+", "order", "T", "alert", "B", "strategy basket", "A", "add to list", "M", "metadata", "Esc", "back")
 	case e.mode == viewLists:
-		return help("N", "new watchlist", "E", "rename", "A", "add instrument", "D", "delete", "+", "order", "Tab", "items", "Esc", "back")
+		return bindings("N", "new watchlist", "E", "rename", "A", "add instrument", "D", "delete", "J/K", "move", "+", "order", "T", "alert", "Tab", "items", "Esc", "back")
 	}
 	if e.watching {
-		return help("[ ]", "watchlist", "N", "new", "D", "remove", "L", "lists", "/", "search", "O", "chain", "⇧S", "sort", "A", "add to list", "+", "order", "B", "baskets", "M", "metadata", "Esc", "back")
+		return bindings("[ ]", "watchlist", "N", "new", "D", "remove", "J/K", "move", "L", "lists", "/", "search", "O", "chain", "⇧S", "sort", "A", "add to list", "+", "order", "T", "alert", "B", "baskets", "M", "metadata", "Esc", "back")
 	}
 	if len(e.watchlists) > 0 {
-		return help("Esc", "watchlist", "[ ]", "watchlist", "N", "new", "/", "search", "O", "chain", "⇧S", "sort", "L", "lists", "A", "add to list", "+", "order", "B", "baskets", "M", "metadata")
+		return bindings("Esc", "watchlist", "[ ]", "watchlist", "N", "new", "/", "search", "O", "chain", "⇧S", "sort", "L", "lists", "A", "add to list", "+", "order", "T", "alert", "B", "baskets", "M", "metadata")
 	}
-	return help("/", "search", "O", "chain", "⇧S", "sort", "L", "lists", "A", "add to list", "+", "order", "B", "baskets", "M", "metadata", "Esc", "back")
+	return bindings("/", "search", "O", "chain", "⇧S", "sort", "L", "lists", "A", "add to list", "+", "order", "T", "alert", "B", "baskets", "M", "metadata", "Esc", "back")
 }
 
 func (a *app) explorerView(w, h int) string {

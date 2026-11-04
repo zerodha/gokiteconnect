@@ -22,6 +22,9 @@ const (
 	TickStreamName = "ticks"
 	// PriceStreamName retains the latest compact price per instrument subject.
 	PriceStreamName = "prices"
+	// CandleStreamName retains the latest live candle per instrument and mode
+	// subject.
+	CandleStreamName = "candles"
 	// OrderStreamName retains compatible account order updates.
 	OrderStreamName = "orders"
 	// OrderDeliveryStreamName durably buffers socket order callbacks.
@@ -118,6 +121,10 @@ func StreamConfigs() []jetstream.StreamConfig {
 			Discard: jetstream.DiscardOld, MaxMsgsPerSubject: 1,
 		},
 		{
+			Name: CandleStreamName, Subjects: []string{"candles.>"}, Storage: jetstream.MemoryStorage,
+			Discard: jetstream.DiscardOld, MaxMsgsPerSubject: 1,
+		},
+		{
 			Name: OrderStreamName, Subjects: []string{"accounts.>"}, Storage: jetstream.MemoryStorage,
 			Discard: jetstream.DiscardOld, MaxMsgsPerSubject: 1000,
 		},
@@ -166,8 +173,8 @@ func (b *NATSBus) StartOrderDelivery(ctx context.Context, onRetry func(error), o
 
 // PublishTick emits compact price data before the corresponding full tick.
 func (b *NATSBus) PublishTick(tick Tick) error {
-	priceSubject, priceSubjectErr := instrumentSubject("prices", tick.ID)
-	tickSubject, tickSubjectErr := instrumentSubject("ticks", tick.ID)
+	priceSubject, priceSubjectErr := InstrumentSubject("prices", tick.ID)
+	tickSubject, tickSubjectErr := InstrumentSubject("ticks", tick.ID)
 	pricePayload, pricePayloadErr := encodePrice(tick.LastPrice)
 	tickPayload, tickPayloadErr := json.Marshal(tick)
 
@@ -294,7 +301,9 @@ func (b *NATSBus) Close() error {
 	return b.closeErr
 }
 
-func instrumentSubject(prefix, instrumentID string) (string, error) {
+// InstrumentSubject is prefix.<exchange>.<symbol> for an EXCHANGE:SYMBOL
+// instrument ID, lowercased, with spaces as underscores.
+func InstrumentSubject(prefix, instrumentID string) (string, error) {
 	parts := strings.SplitN(strings.TrimSpace(instrumentID), ":", 2)
 	if len(parts) != 2 {
 		return "", fmt.Errorf("invalid instrument ID %q", instrumentID)

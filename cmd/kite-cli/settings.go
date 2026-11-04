@@ -83,10 +83,11 @@ func readSettingsForm(path string) (*settingsForm, error) {
 		s.labels[label] = setting.Key
 		// An unset setting shows the default it takes.
 		value := settings.Get(setting.Key)
-		if spec, known := config.Spec(setting.Key); known && len(spec.Options) > 0 {
+		spec, _ := config.Spec(setting.Key)
+		if len(spec.Options) > 0 {
 			s.form.addSelect(label, spec.Options, max(slices.Index(spec.Options, value), 0))
 		} else {
-			s.form.addInput(label, value, anyText, false)
+			s.form.addInput(label, value, anyText, spec.Secret)
 		}
 	}
 	s.opened = map[string]string{}
@@ -230,8 +231,8 @@ func (a *app) settingsView(w, h int) string {
 	return panel("Settings", styleFaint.Render(info), body, w, h, true)
 }
 
-func (a *app) settingsHelp() string {
-	return help("↑↓", "field", "←→", "option", "Enter", "save", "Esc", "revert / back", "⇧←→", "tabs", "^C", "quit")
+func (a *app) settingsHelp() []string {
+	return bindings("↑↓", "field", "←→", "option", "Enter", "save", "Esc", "revert / back", "⇧←→", "tabs", "^C", "quit")
 }
 
 // homeRelative shortens a path under the home directory to ~/….

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,9 +18,9 @@ import (
 
 // Lists live in their own SQLite database, which several processes can
 // write: the instrument catalog is read-only between refreshes. Items store
-// only the instrument ID and when it was added; list order is the order
-// items were added. A smart list has a parent_id and no items: it reads the
-// parent's.
+// only the instrument ID, when it was added and its position: new items go
+// last, and MoveListItem moves them. A smart list has a parent_id and no
+// items: it reads the parent's.
 const createListTablesSQL = `
 	CREATE TABLE IF NOT EXISTS list_metadata (
 		list_id        TEXT PRIMARY KEY,
@@ -39,6 +40,7 @@ const createListTablesSQL = `
 		list_id    TEXT NOT NULL,
 		id         TEXT NOT NULL,
 		created_at DATETIME NOT NULL,
+		position   INTEGER,
 		PRIMARY KEY (list_id, id)
 	);
 
@@ -54,6 +56,10 @@ const (
 	listColumns       = "list_id, created_by, list_number, name, is_index, auto_generated, url, created_at, updated_at"
 	storedListColumns = listColumns + ", parent_id"
 )
+
+// listItemOrder orders a list's items. Items a build older than positions
+// added have none, and go last in the order they were added.
+const listItemOrder = "position IS NULL, position, created_at, rowid"
 
 // listItemBatchSize bounds the number of rows in one multi-row INSERT.
 const listItemBatchSize = 400
@@ -91,7 +97,7 @@ func NewListsSQLiteRepository(ctx context.Context, databasePath, legacyInstrumen
 		_ = db.Close()
 		return nil, fmt.Errorf("lists: create tables: %w", err)
 	}
-	if err := addParentColumn(ctx, db); err != nil {
+	if err := errors.Join(addParentColumn(ctx, db), addItemPositions(ctx, db)); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -121,6 +127,43 @@ func addParentColumn(ctx context.Context, db *sql.DB) error {
 	}
 	if _, err := db.ExecContext(ctx, "ALTER TABLE list_metadata ADD COLUMN parent_id TEXT"); err != nil {
 		return fmt.Errorf("lists: add parent_id: %w", err)
+	}
+	return nil
+}
+
+// addItemPositions adds position to the items of a database made before
+// items could be moved, numbering each list's items in the order they were
+// added.
+func addItemPositions(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("lists: begin adding positions: %w", err)
+	}
+	defer tx.Rollback()
+	var has int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT count(*) FROM pragma_table_info('list_items') WHERE name = 'position'",
+	).Scan(&has); err != nil {
+		return fmt.Errorf("lists: read item columns: %w", err)
+	}
+	if has > 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE list_items ADD COLUMN position INTEGER"); err != nil {
+		return fmt.Errorf("lists: add position: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE list_items SET position = ordered.position
+		FROM (
+			SELECT rowid AS item, row_number() OVER (PARTITION BY list_id ORDER BY created_at, rowid) AS position
+			FROM list_items
+		) AS ordered
+		WHERE list_items.rowid = ordered.item`,
+	); err != nil {
+		return fmt.Errorf("lists: number items: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("lists: commit positions: %w", err)
 	}
 	return nil
 }
@@ -208,14 +251,16 @@ func copyDuckDBLists(ctx context.Context, tx *sql.Tx, path string) (bool, error)
 		return false, fmt.Errorf("lists: read list items of %s: %w", path, err)
 	}
 	defer items.Close()
+	positions := map[string]int{}
 	for items.Next() {
 		var listID, id string
 		var createdAt time.Time
 		if err := items.Scan(&listID, &id, &createdAt); err != nil {
 			return false, fmt.Errorf("lists: read list items of %s: %w", path, err)
 		}
+		positions[listID]++
 		if _, err := tx.ExecContext(ctx,
-			"INSERT OR IGNORE INTO list_items (list_id, id, created_at) VALUES (?, ?, ?)", listID, id, createdAt.UTC(),
+			"INSERT OR IGNORE INTO list_items (list_id, id, created_at, position) VALUES (?, ?, ?, ?)", listID, id, createdAt.UTC(), positions[listID],
 		); err != nil {
 			return false, fmt.Errorf("lists: migrate items of %q: %w", listID, err)
 		}
@@ -443,11 +488,11 @@ func (s *ListsSQLiteRepository) DeleteList(ctx context.Context, id string) error
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO list_items (list_id, id, created_at)
-		SELECT child.list_id, item.id, item.created_at
+		INSERT INTO list_items (list_id, id, created_at, position)
+		SELECT child.list_id, item.id, item.created_at, item.position
 		FROM list_metadata child JOIN list_items item ON item.list_id = child.parent_id
 		WHERE child.parent_id = ?
-		ORDER BY child.list_id, item.created_at, item.rowid`, id,
+		ORDER BY child.list_id, item.position IS NULL, item.position, item.created_at, item.rowid`, id,
 	); err != nil {
 		return fmt.Errorf("lists: copy %q into the lists following it: %w", id, err)
 	}
@@ -500,6 +545,96 @@ func (s *ListsSQLiteRepository) RemoveListItems(ctx context.Context, id string, 
 	})
 }
 
+// MoveListItem moves an instrument offset places within a list, a negative
+// offset towards the top, stopping at either end. Smart lists refuse with
+// models.ErrSmartList.
+func (s *ListsSQLiteRepository) MoveListItem(ctx context.Context, id string, instrumentID models.InstrumentID, offset int) error {
+	return s.changeListItems(ctx, id, func(tx *sql.Tx, _ time.Time) error {
+		ids, err := queryIDs(ctx, tx, "SELECT id FROM list_items WHERE list_id = ? ORDER BY "+listItemOrder, id)
+		if err != nil {
+			return fmt.Errorf("lists: read items of %q: %w", id, err)
+		}
+		order, ok := moveID(ids, string(instrumentID), offset)
+		if !ok {
+			return fmt.Errorf("%w: %s in list %q", models.ErrNotFound, instrumentID, id)
+		}
+		if err := renumber(ctx, tx, "UPDATE list_items SET position = ? WHERE list_id = ? AND id = ?", order, id); err != nil {
+			return fmt.Errorf("lists: move %s in %q: %w", instrumentID, id, err)
+		}
+		return nil
+	})
+}
+
+// MoveList moves a list offset places among its creator's lists, a negative
+// offset towards the first, stopping at either end. The creator's lists are
+// numbered again from 1, in their new order.
+func (s *ListsSQLiteRepository) MoveList(ctx context.Context, id string, offset int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("lists: begin move: %w", err)
+	}
+	defer tx.Rollback()
+	var createdBy string
+	if err := tx.QueryRowContext(ctx, "SELECT created_by FROM list_metadata WHERE list_id = ?", id).Scan(&createdBy); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: list %q", models.ErrNotFound, id)
+		}
+		return fmt.Errorf("lists: read %q: %w", id, err)
+	}
+	ids, err := queryIDs(ctx, tx, "SELECT list_id FROM list_metadata WHERE created_by = ? ORDER BY list_number, rowid", createdBy)
+	if err != nil {
+		return fmt.Errorf("lists: read lists of %s: %w", createdBy, err)
+	}
+	order, _ := moveID(ids, id, offset)
+	if err := renumber(ctx, tx, "UPDATE list_metadata SET list_number = ? WHERE list_id = ?", order); err != nil {
+		return fmt.Errorf("lists: move %q: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("lists: commit move: %w", err)
+	}
+	return nil
+}
+
+// moveID is ids with id moved offset places, stopping at either end, and
+// whether id is among them.
+func moveID[T comparable](ids []T, id T, offset int) ([]T, bool) {
+	from := slices.Index(ids, id)
+	if from < 0 {
+		return ids, false
+	}
+	to := max(0, min(len(ids)-1, from+offset))
+	return slices.Insert(slices.Delete(slices.Clone(ids), from, from+1), to, id), true
+}
+
+// renumber numbers ids from 1 in their order, running update with the
+// number, scope and the ID for each.
+func renumber(ctx context.Context, tx *sql.Tx, update string, ids []string, scope ...any) error {
+	for index, id := range ids {
+		if _, err := tx.ExecContext(ctx, update, append(append([]any{index + 1}, scope...), id)...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// queryIDs reads the one text column query returns.
+func queryIDs(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *ListsSQLiteRepository) changeListItems(ctx context.Context, id string, change func(*sql.Tx, time.Time) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -531,10 +666,8 @@ func (s *ListsSQLiteRepository) changeListItems(ctx context.Context, id string, 
 }
 
 func (s *ListsSQLiteRepository) listItems(ctx context.Context, where string, args ...any) (map[string][]models.ListItem, error) {
-	// Items added together share created_at; rowid keeps them in the order
-	// they were added.
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT list_id, id, created_at FROM list_items "+where+" ORDER BY list_id, created_at, rowid", args...,
+		"SELECT list_id, id, created_at FROM list_items "+where+" ORDER BY list_id, "+listItemOrder, args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("lists: query items: %w", err)
@@ -585,17 +718,23 @@ func insertListMetadata(ctx context.Context, tx *sql.Tx, list models.List, now t
 	return nil
 }
 
+// insertListItems appends instruments after the list's last item. Ones
+// already in the list keep their position, leaving gaps in the numbering.
 func insertListItems(ctx context.Context, tx *sql.Tx, listID string, instrumentIDs []models.InstrumentID, now time.Time) error {
+	var last int
+	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(position), 0) FROM list_items WHERE list_id = ?", listID).Scan(&last); err != nil {
+		return fmt.Errorf("lists: read items of %q: %w", listID, err)
+	}
 	for start := 0; start < len(instrumentIDs); start += listItemBatchSize {
 		batch := instrumentIDs[start:min(start+listItemBatchSize, len(instrumentIDs))]
 		values := make([]string, 0, len(batch))
-		args := make([]any, 0, 3*len(batch))
-		for _, instrumentID := range batch {
-			values = append(values, "(?, ?, ?)")
-			args = append(args, listID, string(instrumentID), now)
+		args := make([]any, 0, 4*len(batch))
+		for index, instrumentID := range batch {
+			values = append(values, "(?, ?, ?, ?)")
+			args = append(args, listID, string(instrumentID), now, last+start+index+1)
 		}
 		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO list_items (list_id, id, created_at) VALUES "+strings.Join(values, ", ")+" ON CONFLICT DO NOTHING", args...,
+			"INSERT INTO list_items (list_id, id, created_at, position) VALUES "+strings.Join(values, ", ")+" ON CONFLICT DO NOTHING", args...,
 		); err != nil {
 			return fmt.Errorf("lists: insert items into %q: %w", listID, err)
 		}

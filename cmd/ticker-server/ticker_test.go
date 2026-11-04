@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/devshoe/gokiteconnect/cmd/ticker-server/consumer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/livecandles"
 	"github.com/devshoe/gokiteconnect/cmd/ticker-server/producer"
 	baseconfig "github.com/devshoe/gokiteconnect/config"
 )
@@ -32,6 +33,14 @@ type fakeHeartbeatStatus bool
 
 func (f fakeHeartbeatStatus) Running() bool { return bool(f) }
 
+type fakeCandleStatus struct {
+	running       bool
+	subscriptions []livecandles.Subscription
+}
+
+func (f fakeCandleStatus) Running() bool                             { return f.running }
+func (f fakeCandleStatus) Subscriptions() []livecandles.Subscription { return f.subscriptions }
+
 func TestHealthContract(t *testing.T) {
 	ready := producer.Status{
 		SessionLoaded: true, SocketConnected: true, NATSConnected: true,
@@ -41,6 +50,8 @@ func TestHealthContract(t *testing.T) {
 	handler := healthHandler(
 		fakeProducerStatus{status: ready},
 		fakeSubscriptionStatus{running: true, subscriptions: subscriptions},
+		fakeHeartbeatStatus(true),
+		fakeCandleStatus{running: true, subscriptions: []livecandles.Subscription{{ID: "NSE:INFY", Mode: livecandles.ModeOnComplete}}},
 		fakeHeartbeatStatus(true),
 	)
 
@@ -53,20 +64,22 @@ func TestHealthContract(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &basic); err != nil {
 		t.Fatal(err)
 	}
-	if basic["running"] != true || basic["subscriptions"] != nil {
+	if basic["running"] != true || basic["subscriptions"] != nil || basic["candle_subscriptions"] != nil {
 		t.Fatalf("body=%v", basic)
 	}
 
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health?subs=true", nil))
 	var detailed struct {
-		Running       bool                    `json:"running"`
-		Subscriptions []consumer.Subscription `json:"subscriptions"`
+		Running             bool                       `json:"running"`
+		Subscriptions       []consumer.Subscription    `json:"subscriptions"`
+		CandleSubscriptions []livecandles.Subscription `json:"candle_subscriptions"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &detailed); err != nil {
 		t.Fatal(err)
 	}
-	if response.Code != http.StatusOK || !detailed.Running || len(detailed.Subscriptions) != 1 || detailed.Subscriptions[0].ID != "NSE:INFY" {
+	if response.Code != http.StatusOK || !detailed.Running || len(detailed.Subscriptions) != 1 || detailed.Subscriptions[0].ID != "NSE:INFY" ||
+		len(detailed.CandleSubscriptions) != 1 || detailed.CandleSubscriptions[0].Mode != livecandles.ModeOnComplete {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
@@ -75,6 +88,8 @@ func TestHealthReportsUnavailableAndRejectsInvalidQuery(t *testing.T) {
 	handler := healthHandler(
 		fakeProducerStatus{},
 		fakeSubscriptionStatus{running: true},
+		fakeHeartbeatStatus(true),
+		fakeCandleStatus{running: true},
 		fakeHeartbeatStatus(true),
 	)
 	response := httptest.NewRecorder()
@@ -111,7 +126,7 @@ func TestLoadTickerConfigDefaultsAndStorageRoot(t *testing.T) {
 	if got.CredentialsPath != filepath.Join(root, "credentials.sqlite3") || got.InstrumentsPath != filepath.Join(root, "instruments.duckdb") {
 		t.Fatalf("paths credentials=%q instruments=%q", got.CredentialsPath, got.InstrumentsPath)
 	}
-	if got.HeartbeatTopic != defaultHeartbeatTopic || got.Port != defaultTickerPort || got.SubscriptionTTL != time.Minute {
+	if got.HeartbeatTopic != defaultHeartbeatTopic || got.CandleHeartbeatTopic != defaultCandleHeartbeatTopic || got.Port != defaultTickerPort || got.SubscriptionTTL != time.Minute {
 		t.Fatalf("defaults=%+v", got)
 	}
 }

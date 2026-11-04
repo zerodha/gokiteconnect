@@ -41,6 +41,9 @@ type orderTicket struct {
 	userID string
 	// item is the basket order the form changes; its account is fixed.
 	item *basketItemRef
+	// alert is the alert form the order is added to, placed when the alert
+	// fires; its account and mode are the alert's.
+	alert *alertForm
 	// price and trigger prefill the price fields.
 	price, trigger float64
 }
@@ -84,6 +87,28 @@ type orderModifier func(ctx context.Context, userID string, mode broker.Mode, or
 
 // orderCanceller cancels an open order of userID's.
 type orderCanceller func(ctx context.Context, userID string, mode broker.Mode, order kite.Order) error
+
+// orderLookup is an order of userID's in mode as it now is.
+type orderLookup func(ctx context.Context, userID string, mode broker.Mode, orderID string) (kite.Order, error)
+
+// accountOrderLookup reads an order's latest state from its history in the
+// account accounts opens.
+func accountOrderLookup(accounts broker.Accounts) orderLookup {
+	return func(ctx context.Context, userID string, mode broker.Mode, orderID string) (kite.Order, error) {
+		account, err := accounts.Open(ctx, userID, mode)
+		if err != nil {
+			return kite.Order{}, err
+		}
+		history, err := account.GetOrderHistory(orderID)
+		if err != nil {
+			return kite.Order{}, err
+		}
+		if len(history) == 0 {
+			return kite.Order{}, fmt.Errorf("order %s has no history", orderID)
+		}
+		return history[len(history)-1], nil
+	}
+}
 
 // accountOrderPlacer places orders in the account accounts opens: the paper
 // account, or the user's stored Kite session, logging in first only when it
@@ -326,9 +351,9 @@ func positive(text, name string) (float64, error) {
 	return value, nil
 }
 
-// tradeTarget is what the order menu opens for: an instrument at its last
-// price and, when the user holds it, the kite.Position or kite.Holding that
-// Close position exits.
+// tradeTarget is what the order form + opens is for: an instrument at its
+// last price and, when the user holds it, the kite.Position or kite.Holding
+// that X closes.
 type tradeTarget struct {
 	instrument models.Instrument
 	ltp        float64
@@ -367,9 +392,9 @@ func closingTicket(target tradeTarget) (orderTicket, error) {
 	return ticket, nil
 }
 
-// optionUnderlying is the underlying whose options the order menu offers: a
-// derivative's underlying, an F&O underlying itself, or a held share, whose
-// options the strike picker looks for.
+// optionUnderlying is the underlying whose contracts the order form's Call,
+// Put and Fut tabs offer: a derivative's underlying, an F&O underlying
+// itself, or a share, whose contracts are looked for.
 func optionUnderlying(instrument models.Instrument) (models.InstrumentID, bool) {
 	if id, ok := drilldownUnderlying(instrument); ok {
 		return id, true
@@ -378,18 +403,4 @@ func optionUnderlying(instrument models.Instrument) (models.InstrumentID, bool) 
 		return instrument.ID, true
 	}
 	return "", false
-}
-
-func sideWord(side string) string {
-	if side == kite.TransactionTypeSell {
-		return "Sell"
-	}
-	return "Buy"
-}
-
-func optionWord(optionType models.OptionType) string {
-	if optionType == models.OptionTypePut {
-		return "put"
-	}
-	return "call"
 }

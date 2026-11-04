@@ -245,6 +245,23 @@ func TestLatestTickWinsAndReplaysAfterQuietInterval(t *testing.T) {
 	}
 }
 
+func TestTheTickObserverSeesEveryTickBeforeCoalescing(t *testing.T) {
+	var observed []Tick
+	p, _ := New(Config{UserID: "U1", TickObserver: func(tick Tick) { observed = append(observed, tick) }},
+		&fakeSessions{}, &fakeSocketFactory{}, newFakeBus(), discardLogger())
+	p.socketGeneration = 1
+	p.desired["NSE:INFY"] = 123
+	p.reverse[123] = "NSE:INFY"
+	p.socketTick(1, models.Tick{InstrumentToken: 123, LastPrice: 100})
+	p.socketTick(1, models.Tick{InstrumentToken: 123, LastPrice: 101})
+	p.socketTick(1, models.Tick{InstrumentToken: 999, LastPrice: 1})
+	p.socketTick(2, models.Tick{InstrumentToken: 123, LastPrice: 1})
+	if len(observed) != 2 || observed[0].LastPrice != 100 || observed[1].LastPrice != 101 ||
+		observed[0].ID != "NSE:INFY" || observed[0].BroadcastType != BroadcastNew {
+		t.Fatalf("observed=%+v", observed)
+	}
+}
+
 func TestStaleSocketCallbacksAreIgnored(t *testing.T) {
 	bus := newFakeBus()
 	p, _ := New(Config{UserID: "U1"}, &fakeSessions{}, &fakeSocketFactory{}, bus, discardLogger())

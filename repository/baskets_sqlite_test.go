@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/devshoe/gokiteconnect/models"
@@ -120,5 +122,119 @@ func TestBasketsCreateEditAndDelete(t *testing.T) {
 	}
 	if err := store.AddBasketItems(ctx, created.ID, []models.BasketItem{basketItem("X", "BUY", 1)}); !errors.Is(err, models.ErrNotFound) {
 		t.Fatalf("add to deleted error = %v", err)
+	}
+}
+
+func TestBasketsMoveBasketsAndItems(t *testing.T) {
+	ctx := context.Background()
+	store, _ := openBaskets(t, ":memory:")
+	var ids []string
+	for _, name := range []string{"Fly", "Condor", "Strangle"} {
+		basket, err := store.CreateBasket(ctx, models.Basket{CreatedBy: "AB1234", Name: name, Items: []models.BasketItem{
+			basketItem("NIFTY25000CE", "SELL", 75), basketItem("NIFTY25000PE", "SELL", 75), basketItem("NIFTY24500PE", "BUY", 75),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, basket.ID)
+	}
+	if _, err := store.CreateBasket(ctx, models.Basket{CreatedBy: "CD5678", Name: "Fly"}); err != nil {
+		t.Fatal(err)
+	}
+	names := func(createdBy string) []string {
+		t.Helper()
+		baskets, err := store.GetBaskets(ctx, createdBy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, basket := range baskets {
+			names = append(names, basket.Name)
+		}
+		return names
+	}
+
+	// Moves stop at either end; a new basket goes last.
+	if err := store.MoveBasket(ctx, ids[2], -1); err != nil {
+		t.Fatalf("MoveBasket() error = %v", err)
+	}
+	if err := store.MoveBasket(ctx, ids[0], -1); err != nil {
+		t.Fatalf("MoveBasket() error = %v", err)
+	}
+	if _, err := store.CreateBasket(ctx, models.Basket{CreatedBy: "AB1234", Name: "Straddle"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := names("AB1234"), []string{"Fly", "Strangle", "Condor", "Straddle"}; !slices.Equal(got, want) {
+		t.Fatalf("baskets = %v, want %v", got, want)
+	}
+	if got := names(""); len(got) != 5 {
+		t.Fatalf("every basket = %v", got)
+	}
+	if err := store.MoveBasket(ctx, "missing", 1); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("MoveBasket(missing) error = %v, want ErrNotFound", err)
+	}
+
+	// Items move within their basket, which counts as a change to it.
+	before, err := store.GetBasket(ctx, ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveBasketItem(ctx, ids[0], before.Items[2].ID, -2); err != nil {
+		t.Fatalf("MoveBasketItem() error = %v", err)
+	}
+	if err := store.AddBasketItems(ctx, ids[0], []models.BasketItem{basketItem("NIFTY25500CE", "BUY", 75)}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.GetBasket(ctx, ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var symbols []string
+	for _, item := range after.Items {
+		symbols = append(symbols, item.TradingSymbol)
+	}
+	if want := []string{"NIFTY24500PE", "NIFTY25000CE", "NIFTY25000PE", "NIFTY25500CE"}; !slices.Equal(symbols, want) || !after.UpdatedAt.After(before.UpdatedAt) {
+		t.Fatalf("items = %v, updated %v after %v; want %v", symbols, after.UpdatedAt, before.UpdatedAt, want)
+	}
+	if err := store.MoveBasketItem(ctx, ids[1], before.Items[0].ID, 1); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("MoveBasketItem(another basket's item) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestBasketsNumberTheBasketsOfAnOlderDatabase(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "lists.sqlite3")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE baskets (basket_id TEXT PRIMARY KEY, created_by TEXT NOT NULL, name TEXT NOT NULL,
+			created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, UNIQUE (created_by, name));
+		INSERT INTO baskets VALUES
+			('new', 'AB1234', 'Newer', '2026-02-01 00:00:00', '2026-02-01 00:00:00'),
+			('old', 'AB1234', 'Older', '2026-01-01 00:00:00', '2026-01-01 00:00:00');`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	store, _ := openBaskets(t, path)
+	if _, err := store.CreateBasket(ctx, models.Basket{CreatedBy: "AB1234", Name: "Newest"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveBasket(ctx, "new", -1); err != nil {
+		t.Fatal(err)
+	}
+	baskets, err := store.GetBaskets(ctx, "AB1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, basket := range baskets {
+		names = append(names, basket.Name)
+	}
+	if want := []string{"Newer", "Older", "Newest"}; !slices.Equal(names, want) {
+		t.Fatalf("baskets = %v, want %v", names, want)
 	}
 }

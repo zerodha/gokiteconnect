@@ -277,6 +277,8 @@ func mustManager(t *testing.T) *credentials.UserManager {
 type fakeListStore struct {
 	mu    sync.Mutex
 	lists []models.List
+	// moveErr fails moves, after which the screen reloads the lists.
+	moveErr error
 }
 
 func (f *fakeListStore) byName(name string) models.List {
@@ -372,6 +374,42 @@ func (f *fakeListStore) RemoveListItems(_ context.Context, id string, ids []mode
 			}
 		}
 		list.Items = kept
+	})
+}
+
+func (f *fakeListStore) MoveList(_ context.Context, id string, offset int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.moveErr != nil {
+		return f.moveErr
+	}
+	index := slices.IndexFunc(f.lists, func(list models.List) bool { return list.ID == id })
+	if index < 0 {
+		return models.ErrNotFound
+	}
+	owner := f.lists[index].CreatedBy
+	mine := func(list models.List) bool { return list.CreatedBy == owner }
+	moveAmong(f.lists, mine, func(list models.List) bool { return list.ID == id }, offset)
+	number := 0
+	for i := range f.lists {
+		if mine(f.lists[i]) {
+			number++
+			f.lists[i].Number = number
+		}
+	}
+	return nil
+}
+
+func (f *fakeListStore) MoveListItem(_ context.Context, id string, instrumentID models.InstrumentID, offset int) error {
+	f.mu.Lock()
+	moveErr := f.moveErr
+	f.mu.Unlock()
+	if moveErr != nil {
+		return moveErr
+	}
+	return f.update(id, func(list *models.List) {
+		moveAmong(list.Items, func(models.ListItem) bool { return true },
+			func(item models.ListItem) bool { return item.InstrumentID == instrumentID }, offset)
 	})
 }
 
@@ -517,18 +555,18 @@ func TestAppMovesBetweenUsersPortfolioAndInstruments(t *testing.T) {
 		t.Errorf("the failed section is not reported:\n%s", h.screen())
 	}
 
-	// + on a position offers to close it.
+	// + on a position orders it, and X closes it.
 	h.press("+")
-	m, ok := h.a.overlay.(*menu)
+	form, ok := h.a.overlay.(*orderForm)
 	if !ok {
-		t.Fatalf("O opened %T", h.a.overlay)
+		t.Fatalf("+ opened %T", h.a.overlay)
 	}
-	var labels []string
-	for _, item := range m.items {
-		labels = append(labels, ansi.Strip(item.label))
+	if form.ticket.instrument.ID != "NSE:INFY" || form.legs != nil || !strings.Contains(h.screen(), "X close position") {
+		t.Fatalf("ticket %+v:\n%s", form.ticket, h.screen())
 	}
-	if joined := strings.Join(labels, "|"); !strings.Contains(joined, "Close position") || !strings.Contains(joined, "Raw buy") {
-		t.Errorf("menu = %q", joined)
+	h.press("x")
+	if closing, ok := h.a.overlay.(*orderForm); !ok || !closing.ticket.closing {
+		t.Fatalf("X opened %T", h.a.overlay)
 	}
 	h.press("esc")
 
@@ -699,6 +737,38 @@ func TestExplorerSearchChainAndPrices(t *testing.T) {
 	if e.chain.filter.side != optionSidePuts {
 		t.Errorf("side = %v, want puts", e.chain.filter.side)
 	}
+
+	// Left and Right step the ranges: strikes from ATM along the expiry's
+	// strikes, LTPs from the ATM premium along round prices, BE % from 1%.
+	value := func(label string) string {
+		return h.a.overlay.(*filterOverlay).form.field(label).value()
+	}
+	h.press("f", "tab", "right")
+	if got := value("Minimum strike"); got != "25000" {
+		t.Fatalf("Right on an empty strike gave %q, want the ATM 25000", got)
+	}
+	h.press("right", "right")
+	if got := value("Minimum strike"); got != "25100" {
+		t.Fatalf("Right past the top strike gave %q", got)
+	}
+	h.press("left", "left", "left")
+	if got := value("Minimum strike"); got != "" {
+		t.Fatalf("Left below the lowest strike gave %q, want it cleared", got)
+	}
+	h.press("tab", "tab", "right")
+	if got := value("Minimum LTP"); got != "100" {
+		t.Fatalf("Right on an empty LTP gave %q, want 100 near the ATM premium", got)
+	}
+	h.press("right")
+	h.dispatch(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if got := value("Minimum LTP"); got != "40" {
+		t.Fatalf("Right then Shift+Left from 100 gave %q, want 40", got)
+	}
+	h.press("tab", "tab", "right", "right")
+	if got := value("Minimum BE %"); got != "1.25" {
+		t.Fatalf("Right twice on an empty BE %% gave %q", got)
+	}
+	h.press("esc")
 
 	// The expiry picker picks the first expiry.
 	h.press("e", "up", "enter")
@@ -878,48 +948,93 @@ func TestAdminInstrumentsSummaryAndRefresh(t *testing.T) {
 	}
 }
 
-func TestOrderMenuStrikePickerAndForm(t *testing.T) {
+func TestOrderFormTabsAndPlacing(t *testing.T) {
 	store, quotes := niftyMarket()
 	placer := &fakePlacer{}
 	h := newHarness(t, explorerDeps(t, store, quotes, nil, placer))
 	openExplorer(h)
 	h.waitFor("prices", h.shows("25040.00"))
 
-	// NIFTY is an index: options only, no raw orders.
+	// NIFTY is an index, which is not traded: + opens on its nearest call
+	// at the money, a buy.
 	h.press("+")
-	m, ok := h.a.overlay.(*menu)
-	if !ok {
-		t.Fatalf("O opened %T", h.a.overlay)
+	form, ok := h.a.overlay.(*orderForm)
+	if !ok || form.legs == nil {
+		t.Fatalf("+ opened %T", h.a.overlay)
 	}
-	if len(m.items) != 4 {
-		t.Fatalf("index menu has %d items, want the four option orders", len(m.items))
+	symbol := func() string { return form.ticket.instrument.TradingSymbol }
+	h.waitFor("the priced ATM call", func() bool { return symbol() == "NIFTYW125000CE" && form.ticket.ltp == 110 })
+	screen := h.screen()
+	if !regexp.MustCompile(`Order +Call +Put +Fut +NIFTY 50 25,040\.00`).MatchString(screen) || !strings.Contains(screen, "ATM 0.16%") ||
+		form.form.field(orderFieldSide).value() != kite.TransactionTypeBuy || form.form.field(orderFieldPrice).value() != "110" {
+		t.Fatalf("form:\n%s", screen)
+	}
+	h.press("o")
+	if form.legs.tab != tradeCall {
+		t.Fatal("O showed an index's own order")
 	}
 
-	// c buys a call from the strike picker, at the money by default.
-	h.press("c")
-	picker, ok := h.a.overlay.(*strikePicker)
-	if !ok {
-		t.Fatalf("c opened %T", h.a.overlay)
+	// ] and [ change the expiry, keeping the strike.
+	h.press("]")
+	if symbol() != "NIFTYW225000CE" {
+		t.Fatalf("] showed %s", symbol())
 	}
-	h.waitFor("priced strikes", func() bool {
-		selected, ok := picker.selected()
-		return ok && selected.Strike == 25000 && picker.spot() > 0
-	})
-	if !strings.Contains(h.screen(), "◀ spot") {
-		t.Errorf("no spot row:\n%s", h.screen())
+	h.press("]", "[")
+	if symbol() != "NIFTYW125000CE" {
+		t.Fatalf("[ showed %s", symbol())
+	}
+
+	// P shows the put at the strike, F the expiry's future and C the call
+	// at the money again, each a lot.
+	h.press("p")
+	if symbol() != "NIFTYW125000PE" {
+		t.Fatalf("P showed %s", symbol())
+	}
+	h.press("f")
+	if symbol() != "NFO:NIFTYW1FUT" || !form.form.field(orderFieldStrike).hidden || form.form.field(orderFieldQuantity).value() != "75" {
+		t.Fatalf("F showed %s:\n%s", symbol(), h.screen())
+	}
+	h.press("c")
+	if symbol() != "NIFTYW125000CE" {
+		t.Fatalf("C showed %s", symbol())
+	}
+
+	// The form has the keys: Shift+←/→ switch its tabs, not the screen's,
+	// wrapping past the index's own Order tab.
+	tabs := func(code rune, times int, want tradeTab, wantSymbol string) {
+		t.Helper()
+		for range times {
+			h.dispatch(tea.KeyPressMsg{Code: code, Mod: tea.ModShift})
+		}
+		if h.a.overlay != form || h.a.screen != screenInstruments || form.legs.tab != want || symbol() != wantSymbol {
+			t.Fatalf("shift %c ×%d showed tab %d, %s (overlay %T)", code, times, form.legs.tab, symbol(), h.a.overlay)
+		}
+	}
+	tabs(tea.KeyRight, 1, tradePut, "NIFTYW125000PE")
+	tabs(tea.KeyRight, 2, tradeCall, "NIFTYW125000CE")
+	tabs(tea.KeyLeft, 1, tradeFut, "NFO:NIFTYW1FUT")
+	tabs(tea.KeyRight, 1, tradeCall, "NIFTYW125000CE")
+
+	// Left and Right on the strike step strikes.
+	h.press("up", "up")
+	if current := form.form.current(); current == nil || current.label != orderFieldStrike {
+		t.Fatalf("focus is not on the strike")
 	}
 	h.press("right")
-	h.waitFor("the next expiry", func() bool {
-		selected, ok := picker.selected()
-		return picker.expiry == 1 && ok && selected.Strike == 25000
-	})
-	h.press("left", "enter")
-	form, ok := h.a.overlay.(*orderForm)
-	if !ok {
-		t.Fatalf("Enter opened %T", h.a.overlay)
+	h.waitFor("the next strike's price", func() bool { return symbol() == "NIFTYW125100CE" && form.ticket.ltp == 120 })
+	h.press("left", "down", "down")
+	if symbol() != "NIFTYW125000CE" {
+		t.Fatalf("Left showed %s", symbol())
 	}
-	if form.ticket.instrument.TradingSymbol != "NIFTYW125000CE" || form.ticket.side != kite.TransactionTypeBuy {
-		t.Fatalf("ticket = %+v", form.ticket)
+
+	// S and B pick the side.
+	h.press("s")
+	if side := form.form.field(orderFieldSide).value(); side != kite.TransactionTypeSell || !strings.Contains(h.screen(), "Place SELL") {
+		t.Fatalf("S made the side %s", side)
+	}
+	h.press("b")
+	if side := form.form.field(orderFieldSide).value(); side != kite.TransactionTypeBuy {
+		t.Fatalf("B made the side %s", side)
 	}
 
 	// A limit order: backspace edits the price.
@@ -940,15 +1055,20 @@ func TestOrderMenuStrikePickerAndForm(t *testing.T) {
 		t.Errorf("placed %+v", order)
 	}
 
+	// A share opens on its own order, without derivatives to offer here.
 	// A rejected order keeps the form open with the reason.
 	placer.fail(errors.New("insufficient funds"))
 	h.press("down", "+", "s")
 	form, ok = h.a.overlay.(*orderForm)
 	if !ok {
-		t.Fatalf("s opened %T", h.a.overlay)
+		t.Fatalf("+ opened %T", h.a.overlay)
 	}
-	if form.ticket.side != kite.TransactionTypeSell || form.ticket.instrument.ID != "NSE:RELIANCE" || form.ticket.product != kite.ProductCNC {
+	h.waitFor("the contracts", func() bool { return !form.legs.loading })
+	if form.form.field(orderFieldSide).value() != kite.TransactionTypeSell || form.ticket.instrument.ID != "NSE:RELIANCE" || form.ticket.product != kite.ProductCNC {
 		t.Fatalf("ticket = %+v", form.ticket)
+	}
+	if form.legs.available(tradeCall) || form.legs.available(tradeFut) {
+		t.Errorf("RELIANCE offers another underlying's contracts")
 	}
 	h.press("down", "down", "down", "enter")
 	h.waitFor("the rejection", func() bool { return strings.Contains(ansi.Strip(form.summary), "insufficient funds") })
@@ -991,7 +1111,7 @@ func TestRendersInSmallTerminals(t *testing.T) {
 	h.press("o")
 	h.waitFor("the chain", func() bool { return h.a.explorer.mode == viewChain && h.idle() })
 	h.press("+", "p")
-	h.waitFor("strikes", func() bool { p, ok := h.a.overlay.(*strikePicker); return ok && !p.loading })
+	h.waitFor("the contracts", func() bool { o, ok := h.a.overlay.(*orderForm); return ok && !o.legs.loading })
 	for _, size := range [][2]int{{160, 50}, {100, 30}, {80, 24}, {60, 16}, {30, 10}} {
 		h.dispatch(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		for _, screen := range []screenID{screenUsers, screenPortfolio, screenInstruments} {
@@ -1029,13 +1149,13 @@ func TestPortfolioOrdersAndRawPayload(t *testing.T) {
 	// into the next, down to the orders at the bottom; Up at the first
 	// order goes back.
 	p := h.a.portfolio
-	h.press("down", "down", "down")
+	h.press("down", "down")
 	if p.focused() != &p.orders || p.orders.cursor != 0 {
 		t.Fatalf("Down reached table %d row %d, want the first order", p.focus, p.orders.cursor)
 	}
 	h.press("up")
-	if p.focused() != &p.funds {
-		t.Fatalf("Up at the first order reached table %d, want funds", p.focus)
+	if p.focused() != &p.holdings {
+		t.Fatalf("Up at the first order reached table %d, want holdings", p.focus)
 	}
 	h.press("down", "down")
 	if p.focused() != &p.orders || p.orders.cursor != 1 {
@@ -1229,8 +1349,9 @@ func TestSettingsTab(t *testing.T) {
 	if h.a.screen != screenSettings || s.form.current().value() != "wh1234" {
 		t.Fatalf("typing: screen %v, value %q", h.a.screen, s.form.current().value())
 	}
-	// Unsaved changes survive switching tabs.
+	// Unsaved changes survive switching tabs, even while typing.
 	shift(tea.KeyRight)
+	h.waitFor("the explorer", func() bool { return h.a.screen == screenInstruments && h.idle() })
 	shift(tea.KeyLeft)
 	if h.a.screen != screenSettings || h.a.settings != s || !strings.Contains(h.screen(), "unsaved changes") {
 		t.Fatalf("switching tabs lost the edits")
@@ -1262,8 +1383,9 @@ func TestSettingsTab(t *testing.T) {
 	if h.a.screen != screenSettings || s.edited() || s.form.field("Default User").value() != "WH1234" {
 		t.Fatalf("Esc with changes: screen %v, default user %q", h.a.screen, s.form.field("Default User").value())
 	}
+	// Back to Watchlists, where Settings was last shown from.
 	h.press("esc")
-	if h.a.screen != screenUsers {
+	if h.a.screen != screenInstruments {
 		t.Fatalf("Esc without changes went to %v", h.a.screen)
 	}
 
@@ -1513,4 +1635,44 @@ func TestUsersOpensKiteWeb(t *testing.T) {
 	h.a.deps.openWeb = nil
 	h.press("b")
 	h.waitFor("unavailable notice", h.shows("Kite web is not available"))
+}
+
+func TestStatusBarKeepsPillsOverALongMessage(t *testing.T) {
+	a := &app{screen: screenSettings, mode: broker.Live, baskets: &basketsScreen{}, settingsStatus: strings.Repeat("a long message ", 10)}
+	bar := ansi.Strip(a.statusBar(60))
+	if ansi.StringWidth(bar) != 60 || !strings.HasSuffix(strings.TrimSpace(bar), "LIVE  ? keys") || !strings.Contains(bar, "…") {
+		t.Fatalf("status bar %q, want the message cut before the LIVE pill", bar)
+	}
+	if bar := ansi.Strip(a.statusBar(12)); strings.Contains(bar, "LIVE") {
+		t.Fatalf("narrow status bar %q, want only the mode", bar)
+	}
+}
+
+func TestSettingsTabMasksTheTelegramToken(t *testing.T) {
+	store, _ := niftyMarket()
+	deps := explorerDeps(t, store, nil, nil, &fakePlacer{})
+	settings, err := config.ReadSettings(deps.settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The token is hidden until the file shows it, and masked when shown.
+	settings.Set("TRADEBOT_TELEGRAM_BOT_TOKEN", "123456:secret-token")
+	for i := range settings {
+		if settings[i].Key == "TRADEBOT_TELEGRAM_BOT_TOKEN" {
+			settings[i].Visible = true
+		}
+	}
+	if err := config.WriteSettings(deps.settingsPath, settings); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, deps)
+	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
+	h.dispatch(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	h.waitFor("the token setting", h.shows("Telegram Bot Token"))
+	if screen := h.screen(); strings.Contains(screen, "secret-token") || !strings.Contains(screen, strings.Repeat("•", len("123456:secret-token"))) {
+		t.Fatalf("token not masked:\n%s", screen)
+	}
+	if got := h.a.settings.form.field("Telegram Bot Token").value(); got != "123456:secret-token" {
+		t.Fatalf("token field = %q", got)
+	}
 }

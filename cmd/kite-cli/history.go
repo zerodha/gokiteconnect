@@ -579,9 +579,9 @@ func (a *app) historyPills() []string {
 	if hs.syncing == "" || hs.batchTotal <= 1 {
 		return nil
 	}
-	pills := []string{pill(fmt.Sprintf("%d/%d", hs.batchDone+1, hs.batchTotal), colorAccent, colorInk)}
+	pills := []string{pill(fmt.Sprintf("%d/%d", hs.batchDone+1, hs.batchTotal), colorAccent, colorOnAccent)}
 	if hs.batchFailed > 0 {
-		pills = append(pills, pill(fmt.Sprintf("%d failed", hs.batchFailed), colorRed, colorInk))
+		pills = append(pills, pill(fmt.Sprintf("%d failed", hs.batchFailed), colorRed, colorOnPill))
 	}
 	return pills
 }

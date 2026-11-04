@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/devshoe/gokiteconnect/kite"
+	"github.com/devshoe/gokiteconnect/models"
 )
 
 func TestPriceHints(t *testing.T) {
@@ -64,10 +65,11 @@ func TestOrderFormLotsHintsAndCosts(t *testing.T) {
 	h := newHarness(t, deps)
 	openExplorer(h)
 	h.waitFor("prices", h.shows("25040.00"))
-	h.press("+", "c")
-	strikes := h.a.overlay.(*strikePicker)
-	h.waitFor("priced strikes", func() bool { _, ok := strikes.selected(); return ok && strikes.spot() > 0 })
-	h.press("enter")
+	h.press("+")
+	h.waitFor("the priced ATM call", func() bool {
+		o, ok := h.a.overlay.(*orderForm)
+		return ok && o.ticket.instrument.TradingSymbol == "NIFTYW125000CE" && o.ticket.ltp > 0
+	})
 	form := h.a.overlay.(*orderForm)
 	quantity := form.form.field(orderFieldQuantity)
 
@@ -141,5 +143,55 @@ func TestOrderFormLotsHintsAndCosts(t *testing.T) {
 	h.press("up", "up", "left", "left")
 	if screen := h.screen(); strings.Contains(screen, hintPriceAtLeast) || strings.Contains(screen, "!") {
 		t.Fatalf("a market order warns:\n%s", screen)
+	}
+}
+
+// The order form opens on a contract's own Order tab, which hides the
+// expiry; [ and ] still step it, from the contract's tab, keeping the
+// strike. A stock has no expiry to step.
+func TestOrderFormStepsAContractsExpiryFromItsOrderTab(t *testing.T) {
+	store, quotes := niftyMarket()
+	h := newHarness(t, explorerDeps(t, store, quotes, nil, &fakePlacer{}))
+	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
+	openExplorer(h)
+	h.waitFor("prices", h.shows("25040.00"))
+
+	var put models.Instrument
+	for _, contract := range store.options {
+		if contract.ID == "NFO:NIFTYW125000PE" {
+			put = contract
+		}
+	}
+	h.run(h.a.openTradeForm(tradeTarget{instrument: put, ltp: 110}))
+	form, ok := h.a.overlay.(*orderForm)
+	if !ok || form.legs == nil || form.legs.tab != tradeOrder {
+		t.Fatalf("+ on the put opened %T", h.a.overlay)
+	}
+	h.waitFor("the contracts", func() bool { return !form.legs.loading })
+	if !strings.Contains(h.screen(), "[ ] expiry") {
+		t.Fatalf("the form lacks the expiry keys:\n%s", h.screen())
+	}
+	symbol := func() string { return form.ticket.instrument.TradingSymbol }
+	h.press("]")
+	if form.legs.tab != tradePut || symbol() != "NIFTYW225000PE" {
+		t.Fatalf("] on the Order tab showed %s on tab %v", symbol(), form.legs.tab)
+	}
+	h.press("o", "[")
+	if form.legs.tab != tradePut || symbol() != "NIFTYW125000PE" {
+		t.Fatalf("[ on the Order tab showed %s on tab %v", symbol(), form.legs.tab)
+	}
+	h.press("esc")
+
+	// RELIANCE itself has no expiry: [ ] leave it, and the form does not
+	// offer them on its Order tab.
+	h.run(h.a.openTradeForm(tradeTarget{instrument: store.underlyings[1], ltp: 1400}))
+	form = h.a.overlay.(*orderForm)
+	h.waitFor("the contracts", func() bool { return !form.legs.loading })
+	h.press("]")
+	if form.legs.tab != tradeOrder || form.ticket.instrument.ID != "NSE:RELIANCE" {
+		t.Fatalf("] on RELIANCE showed %s on tab %v", form.ticket.instrument.ID, form.legs.tab)
+	}
+	if strings.Contains(h.screen(), "[ ] expiry") {
+		t.Fatalf("RELIANCE's Order tab offers the expiry keys:\n%s", h.screen())
 	}
 }

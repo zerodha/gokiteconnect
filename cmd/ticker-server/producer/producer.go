@@ -408,14 +408,19 @@ func (p *Producer) socketTick(generation uint64, tick models.Tick) {
 		p.counters.coalescedTicks.Add(1)
 	}
 	state.sequence++
-	state.latest = Tick{ID: id, Tick: tick}
+	state.latest = Tick{ID: id, Tick: tick, Fields: tick.Values()}
 	state.hasLatest = true
 	state.dirty = true
 	state.replay = false
 	state.lastReplayQueued = time.Time{}
 	state.lastRealTickAt = now
+	latest := state.latest
 	p.mu.Unlock()
 	p.counters.upstreamTicks.Add(1)
+	if p.config.TickObserver != nil {
+		latest.BroadcastType = BroadcastNew
+		p.config.TickObserver(latest)
+	}
 	p.signal(p.tickWake)
 }
 

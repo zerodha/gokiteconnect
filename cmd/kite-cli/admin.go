@@ -25,16 +25,20 @@ const (
 	adminHistory adminTab = iota
 	adminInstruments
 	adminLists
+	adminBaskets
 )
 
 var adminTabs = []struct {
 	icon  string
 	label string
 	tab   adminTab
-}{{"◷", "Historical Data", adminHistory}, {"▦", "Instruments", adminInstruments}, {"☰", "Admin Lists", adminLists}}
+}{{"◷", "Historical Data", adminHistory}, {"▦", "Instruments", adminInstruments}, {"☰", "Admin Lists", adminLists}, {"◫", "Baskets", adminBaskets}}
+
+// onBaskets reports whether the Admin screen's Baskets tab is showing.
+func (a *app) onBaskets() bool { return a.screen == screenHistory && a.admin.tab == adminBaskets }
 
 // adminScreen holds the Admin screen's Instruments and Admin Lists tabs;
-// Historical Data is the history screen.
+// Historical Data is the history screen and Baskets the baskets screen.
 type adminScreen struct {
 	tab   adminTab
 	spots []adminSpot
@@ -155,6 +159,8 @@ func (a *app) startAdminTab() tea.Cmd {
 			ad.listsStarted = true
 			return a.loadAdminLists(true)
 		}
+	case adminBaskets:
+		return a.loadBasketsTab()
 	default:
 		if !a.history.started {
 			a.history.started = true
@@ -424,6 +430,11 @@ func (a *app) adminKey(msg tea.KeyPressMsg) tea.Cmd {
 	key := msg.String()
 	switch key {
 	case "esc":
+		// On Baskets, Esc leaves the orders for the baskets first.
+		if a.onBaskets() && a.baskets.focus == 1 {
+			a.baskets.focus = 0
+			return nil
+		}
 		a.show(a.historyBack)
 		return nil
 	case "[", "]":
@@ -447,6 +458,8 @@ func (a *app) adminKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case adminLists:
 		return a.adminListsKey(key)
+	case adminBaskets:
+		return a.basketsKey(msg)
 	}
 	return a.historyKey(msg)
 }
@@ -610,14 +623,16 @@ func (a *app) downloadIndices(indices []nse.NSEIndexMetadata) tea.Cmd {
 	})
 }
 
-func (a *app) adminHelp() string {
+func (a *app) adminHelp() []string {
 	switch a.admin.tab {
 	case adminInstruments:
-		return help("[ ]", "sub tab", "R", "refresh catalog from Kite", "F", "refresh fundamentals", "W", "watchlists", "Esc", "back", "^C", "quit")
+		return bindings("[ ]", "sub tab", "R", "refresh catalog from Kite", "F", "refresh fundamentals", "W", "watchlists", "Esc", "back", "^C", "quit")
 	case adminLists:
-		return help("[ ]", "sub tab", "↑↓", "select", "Enter", "download / refresh", "A", "download all", "R", "reload NSE index list", "D", "delete", "W", "watchlists", "Esc", "back")
+		return bindings("[ ]", "sub tab", "↑↓", "select", "Enter", "download / refresh", "A", "download all", "R", "reload NSE index list", "D", "delete", "W", "watchlists", "Esc", "back")
+	case adminBaskets:
+		return append(bindings("[ ]", "sub tab"), a.basketsHelp()...)
 	}
-	return help("[ ]", "sub tab", "↑↓", "select", "s", "sync 1m + 1d", "A", "sync all", "X", "stop", "R", "rebuild list", "W", "watchlists", "Esc", "back", "^C", "quit")
+	return bindings("[ ]", "sub tab", "↑↓", "select", "s", "sync 1m + 1d", "A", "sync all", "X", "stop", "R", "rebuild list", "W", "watchlists", "Esc", "back", "^C", "quit")
 }
 
 func (a *app) adminModeName() string {
@@ -626,6 +641,8 @@ func (a *app) adminModeName() string {
 		return "ADMIN · INSTRUMENTS"
 	case adminLists:
 		return "ADMIN · LISTS"
+	case adminBaskets:
+		return "ADMIN · BASKETS"
 	}
 	if a.history.syncing != "" {
 		return "ADMIN · SYNCING"
@@ -639,6 +656,8 @@ func (a *app) adminStatus() string {
 		return a.admin.summaryStatus
 	case adminLists:
 		return a.admin.listsStatus
+	case adminBaskets:
+		return a.baskets.status
 	}
 	return a.historyStatus()
 }
@@ -655,6 +674,8 @@ func (a *app) adminGrids() []*grid {
 		return []*grid{&a.admin.summaryGrid}
 	case adminLists:
 		return []*grid{&a.admin.listsGrid}
+	case adminBaskets:
+		return []*grid{&a.baskets.baskets, &a.baskets.items}
 	}
 	return []*grid{&a.history.grid}
 }
@@ -666,6 +687,8 @@ func (a *app) adminSelectionChanged() tea.Cmd {
 		return nil
 	case adminInstruments:
 		return nil
+	case adminBaskets:
+		return a.basketsChanged("")
 	}
 	return a.historySelectionChanged()
 }
@@ -681,7 +704,7 @@ func (a *app) adminTabBar(w int) string {
 		label := strip.Foreground(colorMuted)
 		icon := strip.Foreground(colorFaint)
 		if tab.tab == ad.tab {
-			label = lipgloss.NewStyle().Background(colorAccent).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+			label = lipgloss.NewStyle().Background(colorAccent).Foreground(colorOnAccent).Bold(true)
 			icon = label
 		}
 		start := ansi.StringWidth(line)
@@ -730,6 +753,8 @@ func (a *app) adminView(w, h int) string {
 		}
 		items := panel(title, styleMuted.Render(pluralize("item", len(ad.itemsGrid.rows))), ad.itemsGrid.view(widths[1]-2, h-2, false), widths[1], h, false)
 		body = joinColumns(lists, items)
+	case adminBaskets:
+		body = a.basketsView(w, h)
 	default:
 		a.history.grid.x, a.history.grid.y = 1, top+2
 		body = a.historyView(w, h)

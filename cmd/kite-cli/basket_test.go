@@ -15,6 +15,12 @@ import (
 func basketDeps(t *testing.T) (appDeps, *fakePlacer, *repository.BasketsSQLiteRepository) {
 	t.Helper()
 	store, quotes := niftyMarket()
+	return basketMarketDeps(t, store, quotes)
+}
+
+// basketMarketDeps is basketDeps on another market.
+func basketMarketDeps(t *testing.T, store *fakeCatalog, quotes *fakeQuotes) (appDeps, *fakePlacer, *repository.BasketsSQLiteRepository) {
+	t.Helper()
 	placer := &fakePlacer{}
 	deps := explorerDeps(t, store, quotes, nil, placer)
 	lists, err := repository.NewListsSQLiteRepository(context.Background(), ":memory:", "")
@@ -66,10 +72,11 @@ func TestBasketsDraftSaveEditAndPlace(t *testing.T) {
 
 	// A NIFTY call buy goes to a new basket, which stays a draft: nothing
 	// is stored and nothing placed.
-	h.press("+", "c")
-	strikes := h.a.overlay.(*strikePicker)
-	h.waitFor("priced strikes", func() bool { _, ok := strikes.selected(); return ok && strikes.spot() > 0 })
-	h.press("enter")
+	h.press("+")
+	h.waitFor("the priced ATM call", func() bool {
+		o, ok := h.a.overlay.(*orderForm)
+		return ok && o.ticket.instrument.TradingSymbol == "NIFTYW125000CE" && o.ticket.ltp > 0
+	})
 	picker := addToBasket(h)
 	if !strings.Contains(h.screen(), "+ New basket") || len(picker.items) != 1 {
 		t.Fatalf("picker:\n%s", h.screen())
@@ -106,7 +113,7 @@ func TestBasketsDraftSaveEditAndPlace(t *testing.T) {
 
 	// B shows the Baskets tab: both orders, priced, with the hedged margin.
 	h.press("b")
-	if h.a.screen != screenBaskets {
+	if !h.a.onBaskets() {
 		t.Fatalf("B showed screen %d", h.a.screen)
 	}
 	h.waitFor("the prices and margin", func() bool { return h.shows("hedges save")() && h.shows("Charges")() })
@@ -116,12 +123,12 @@ func TestBasketsDraftSaveEditAndPlace(t *testing.T) {
 		}
 	}
 
-	// Enter on an order edits it in the form, its account fixed; Save puts
-	// it back in the draft.
+	// Enter on an order edits it in the form, for the basket's owner; Save
+	// puts it back in the draft.
 	h.press("tab", "enter")
 	var form *orderForm
 	h.waitFor("the order form", func() bool { form, _ = h.a.overlay.(*orderForm); return form != nil })
-	if form.ticket.item == nil || form.form.buttons[0] != "Save to basket" || !form.form.field(orderFieldAccount).disabled {
+	if form.ticket.item == nil || form.form.buttons[0] != "Save to basket" || form.userID != "AB1234" {
 		t.Fatalf("form = %+v", form.ticket)
 	}
 	h.press("+", "down", "down", "down", "enter")
@@ -129,9 +136,13 @@ func TestBasketsDraftSaveEditAndPlace(t *testing.T) {
 		t.Fatalf("overlay %T, draft %+v", h.a.overlay, h.a.baskets.drafts[0].Items)
 	}
 
-	// S stores it.
+	// S asks for its name, then stores it.
 	h.press("s")
-	h.waitFor("the saved basket", func() bool { return len(stored(t, baskets)) == 1 && h.idle() })
+	if _, ok := h.a.overlay.(*inputOverlay); !ok || !strings.Contains(h.screen(), "Save basket") {
+		t.Fatalf("S opened %T:\n%s", h.a.overlay, h.screen())
+	}
+	h.press("enter")
+	h.waitFor("the saved basket", func() bool { return len(stored(t, baskets)) == 1 && len(h.a.baskets.drafts) == 0 && h.idle() })
 	saved := stored(t, baskets)[0]
 	if saved.Name != "Basket 1" || len(saved.Items) != 2 || saved.Items[0].Quantity != 150 || len(h.a.baskets.drafts) != 0 {
 		t.Fatalf("saved %+v, drafts %d", saved, len(h.a.baskets.drafts))
@@ -193,7 +204,7 @@ func TestBasketsNewDraftNamesAndDiscards(t *testing.T) {
 	deps, _, baskets := basketDeps(t)
 	h := newHarness(t, deps)
 	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
-	h.run(h.a.switchTo(screenBaskets))
+	h.run(h.a.openBaskets())
 	h.waitFor("the baskets", h.shows("No baskets yet"))
 
 	// N names a draft; a taken name is refused.

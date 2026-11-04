@@ -43,6 +43,21 @@ func (a *app) handleLists(msg tea.Msg) (tea.Cmd, bool) {
 			a.showError(msg.opErr)
 		}
 		return cmd, true
+	case listMovedMsg:
+		if msg.err == nil {
+			return nil, true
+		}
+		// The screen shows the move; reload what is stored instead.
+		return a.listOperation("Reloading lists…", func(context.Context, listStore) (string, error) {
+			return "", msg.err
+		}, func(a *app, _ string) tea.Cmd {
+			e := a.explorer
+			if e.mode == viewLists {
+				return a.renderLists("")
+			}
+			instrument, _ := e.selectedInstrument()
+			return a.showWatchlist(e.watchIndex, instrument.ID)
+		}), true
 	}
 	if cmd, handled := a.handleWatchlists(msg); handled {
 		return cmd, true
@@ -187,6 +202,10 @@ func (a *app) listKey(key string) (tea.Cmd, bool) {
 		return a.orderSelected(), true
 	case "delete":
 		return a.deleteSelected(), true
+	case "shift+up", "K":
+		return a.moveInLists(-1), true
+	case "shift+down", "J":
+		return a.moveInLists(1), true
 	}
 	switch strings.ToLower(key) {
 	case "n":
@@ -232,6 +251,111 @@ func (a *app) addInstrumentByID() {
 			return list.ID, store.AddListItems(ctx, list.ID, []models.InstrumentID{id})
 		}, (*app).renderLists)
 	})
+}
+
+// listMovedMsg ends storing a move the screen already shows.
+type listMovedMsg struct{ err error }
+
+// storeListMove stores a move the screen already shows, in the background.
+func (a *app) storeListMove(move func(context.Context, listStore) error) tea.Cmd {
+	store := a.explorer.lists
+	return a.task(func(ctx context.Context) tea.Msg { return listMovedMsg{err: move(ctx, store)} })
+}
+
+// moveInLists moves the selected list step places, which reorders the
+// watchlists too, or with the items focused the selected item.
+func (a *app) moveInLists(step int) tea.Cmd {
+	e := a.explorer
+	list, ok := e.selectedList()
+	if !ok {
+		return nil
+	}
+	if e.focus == 0 {
+		owner := e.watchUser
+		mine := func(l models.List) bool { return l.CreatedBy == owner }
+		if !moveAmong(e.listData, mine, func(l models.List) bool { return l.ID == list.ID }, step) {
+			return nil
+		}
+		// The store numbers the owner's lists again, from 1.
+		number := 0
+		for index := range e.listData {
+			if mine(e.listData[index]) {
+				number++
+				e.listData[index].Number = number
+			}
+		}
+		e.setWatchlists(ownLists(e.listData, owner), e.currentWatchlistID())
+		return tea.Batch(a.renderLists(list.ID), a.storeListMove(func(ctx context.Context, store listStore) error {
+			return store.MoveList(ctx, list.ID, step)
+		}))
+	}
+	id, ok := e.selectedListItem()
+	if !ok {
+		return nil
+	}
+	if list.IsSmart() {
+		e.status = statusWarn(list.Name+" is smart: it follows its parent's order. Make a clone with ") + styleKey.Render("N") + statusWarn(" to reorder it.")
+		return nil
+	}
+	if !e.moveListItem(list.ID, id, step) {
+		return nil
+	}
+	e.renderListItems(false)
+	e.itemsGrid.selectWhere(func(r row) bool { return r.ref == id })
+	return a.storeListMove(func(ctx context.Context, store listStore) error {
+		return store.MoveListItem(ctx, list.ID, id, step)
+	})
+}
+
+// moveListItem moves an instrument step places in list listID and in the
+// smart lists following it, reporting whether it moved.
+func (e *explorerScreen) moveListItem(listID string, id models.InstrumentID, step int) bool {
+	list, ok := e.listByID(listID)
+	if !ok {
+		return false
+	}
+	// A list and those following it can share one slice of items, so the
+	// move is made on a copy.
+	items := slices.Clone(list.Items)
+	if !moveAmong(items, func(models.ListItem) bool { return true }, func(item models.ListItem) bool { return item.InstrumentID == id }, step) {
+		return false
+	}
+	for index := range e.listData {
+		if e.listData[index].ID == listID || e.listData[index].ParentID == listID {
+			e.listData[index].Items = items
+		}
+	}
+	if e.watchUser != "" {
+		e.setWatchlists(ownLists(e.listData, e.watchUser), e.currentWatchlistID())
+	}
+	return true
+}
+
+// moveAmong moves the value match picks step places among the values in
+// group, in place, stopping at either end of the group. It reports whether
+// the value moved.
+func moveAmong[T any](values []T, group, match func(T) bool, step int) bool {
+	var at []int
+	for index, value := range values {
+		if group(value) {
+			at = append(at, index)
+		}
+	}
+	from := slices.IndexFunc(at, func(index int) bool { return match(values[index]) })
+	to := max(0, min(len(at)-1, from+step))
+	if from < 0 || to == from {
+		return false
+	}
+	members := make([]T, 0, len(at))
+	for _, index := range at {
+		members = append(members, values[index])
+	}
+	moved := members[from]
+	members = slices.Insert(slices.Delete(members, from, from+1), to, moved)
+	for position, index := range at {
+		values[index] = members[position]
+	}
+	return true
 }
 
 // deleteSelected removes the selected item when the items have focus, and

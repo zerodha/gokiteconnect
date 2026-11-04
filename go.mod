@@ -17,6 +17,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.4.2
 	github.com/jarcoal/httpmock v1.4.1
+	github.com/lib/pq v1.10.9
 	github.com/mattn/go-sqlite3 v1.14.38
 	github.com/nats-io/nats.go v1.48.0
 	github.com/pquerna/otp v1.5.0

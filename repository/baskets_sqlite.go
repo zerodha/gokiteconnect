@@ -15,12 +15,14 @@ import (
 )
 
 // Baskets live in the lists database, beside the lists. Each item is the
-// parameters of one order; position keeps the order items were added in.
+// parameters of one order. Positions order a user's baskets and a basket's
+// items: new ones go last, and MoveBasket and MoveBasketItem move them.
 const createBasketTablesSQL = `
 	CREATE TABLE IF NOT EXISTS baskets (
 		basket_id  TEXT PRIMARY KEY,
 		created_by TEXT NOT NULL,
 		name       TEXT NOT NULL,
+		position   INTEGER,
 		created_at DATETIME NOT NULL,
 		updated_at DATETIME NOT NULL,
 		UNIQUE (created_by, name)
@@ -47,6 +49,10 @@ const createBasketTablesSQL = `
 	CREATE INDEX IF NOT EXISTS basket_items_by_basket ON basket_items (basket_id, position);
 `
 
+// basketOrder orders a user's baskets. Baskets a build older than positions
+// made have none, and go last, oldest first.
+const basketOrder = "position IS NULL, position, created_at, rowid"
+
 const basketItemColumns = "item_id, exchange, tradingsymbol, transaction_type, order_type, product, quantity, " +
 	"price, trigger_price, validity, tag, created_at, updated_at"
 
@@ -62,11 +68,51 @@ func (s *ListsSQLiteRepository) Baskets(ctx context.Context) (*BasketsSQLiteRepo
 	if _, err := s.db.ExecContext(ctx, createBasketTablesSQL); err != nil {
 		return nil, fmt.Errorf("baskets: create tables: %w", err)
 	}
+	if err := addBasketPositions(ctx, s.db); err != nil {
+		return nil, err
+	}
 	return &BasketsSQLiteRepository{db: s.db}, nil
 }
 
-// CreateBasket stores a new basket and its items. IDs and timestamps are
-// assigned by the repository. Names are unique per user.
+// addBasketPositions adds position to the baskets of a database made before
+// baskets could be moved, numbering each user's oldest first.
+func addBasketPositions(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("baskets: begin adding positions: %w", err)
+	}
+	defer tx.Rollback()
+	var has int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT count(*) FROM pragma_table_info('baskets') WHERE name = 'position'",
+	).Scan(&has); err != nil {
+		return fmt.Errorf("baskets: read columns: %w", err)
+	}
+	if has > 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE baskets ADD COLUMN position INTEGER"); err != nil {
+		return fmt.Errorf("baskets: add position: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE baskets SET position = ordered.position
+		FROM (
+			SELECT rowid AS basket, row_number() OVER (PARTITION BY created_by ORDER BY created_at, rowid) AS position
+			FROM baskets
+		) AS ordered
+		WHERE baskets.rowid = ordered.basket`,
+	); err != nil {
+		return fmt.Errorf("baskets: number baskets: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("baskets: commit positions: %w", err)
+	}
+	return nil
+}
+
+// CreateBasket stores a new basket and its items, after the creator's other
+// baskets. IDs and timestamps are assigned by the repository. Names are
+// unique per user.
 func (s *BasketsSQLiteRepository) CreateBasket(ctx context.Context, basket models.Basket) (models.Basket, error) {
 	basket.Name = strings.TrimSpace(basket.Name)
 	basket.CreatedBy = strings.TrimSpace(basket.CreatedBy)
@@ -88,9 +134,12 @@ func (s *BasketsSQLiteRepository) CreateBasket(ctx context.Context, basket model
 	}
 	now := time.Now().UTC()
 	basket.ID = uuid.NewString()
-	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO baskets (basket_id, created_by, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		basket.ID, basket.CreatedBy, basket.Name, now, now,
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO baskets (basket_id, created_by, name, position, created_at, updated_at)
+		SELECT ?, ?, ?, COALESCE(MAX(position), 0) + 1, ?, ?
+		FROM baskets
+		WHERE created_by = ?`,
+		basket.ID, basket.CreatedBy, basket.Name, now, now, basket.CreatedBy,
 	); err != nil {
 		return models.Basket{}, fmt.Errorf("baskets: create %q: %w", basket.Name, err)
 	}
@@ -151,7 +200,7 @@ func (s *BasketsSQLiteRepository) GetBasket(ctx context.Context, id string) (mod
 }
 
 // GetBaskets returns every basket created by createdBy, or every basket
-// when createdBy is empty, oldest first.
+// when createdBy is empty, ordered by creator and position.
 func (s *BasketsSQLiteRepository) GetBaskets(ctx context.Context, createdBy string) ([]models.Basket, error) {
 	if createdBy = strings.TrimSpace(createdBy); createdBy != "" {
 		return s.queryBaskets(ctx, "WHERE created_by = ?", createdBy)
@@ -161,7 +210,7 @@ func (s *BasketsSQLiteRepository) GetBaskets(ctx context.Context, createdBy stri
 
 func (s *BasketsSQLiteRepository) queryBaskets(ctx context.Context, where string, args ...any) ([]models.Basket, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT basket_id, created_by, name, created_at, updated_at FROM baskets "+where+" ORDER BY created_by, created_at, rowid", args...)
+		"SELECT basket_id, created_by, name, created_at, updated_at FROM baskets "+where+" ORDER BY created_by, "+basketOrder, args...)
 	if err != nil {
 		return nil, fmt.Errorf("baskets: query baskets: %w", err)
 	}
@@ -294,6 +343,54 @@ func (s *BasketsSQLiteRepository) RemoveBasketItems(ctx context.Context, id stri
 			"DELETE FROM basket_items WHERE basket_id = ? AND item_id IN ("+placeholders(len(itemIDs))+")", args...,
 		); err != nil {
 			return fmt.Errorf("baskets: remove items from %q: %w", id, err)
+		}
+		return nil
+	})
+}
+
+// MoveBasket moves a basket offset places among its creator's baskets, a
+// negative offset towards the first, stopping at either end.
+func (s *BasketsSQLiteRepository) MoveBasket(ctx context.Context, id string, offset int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("baskets: begin move: %w", err)
+	}
+	defer tx.Rollback()
+	var createdBy string
+	if err := tx.QueryRowContext(ctx, "SELECT created_by FROM baskets WHERE basket_id = ?", id).Scan(&createdBy); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: basket %q", models.ErrNotFound, id)
+		}
+		return fmt.Errorf("baskets: read %q: %w", id, err)
+	}
+	ids, err := queryIDs(ctx, tx, "SELECT basket_id FROM baskets WHERE created_by = ? ORDER BY "+basketOrder, createdBy)
+	if err != nil {
+		return fmt.Errorf("baskets: read baskets of %s: %w", createdBy, err)
+	}
+	order, _ := moveID(ids, id, offset)
+	if err := renumber(ctx, tx, "UPDATE baskets SET position = ? WHERE basket_id = ?", order); err != nil {
+		return fmt.Errorf("baskets: move %q: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("baskets: commit move: %w", err)
+	}
+	return nil
+}
+
+// MoveBasketItem moves an order offset places within its basket, a negative
+// offset towards the first, stopping at either end.
+func (s *BasketsSQLiteRepository) MoveBasketItem(ctx context.Context, id, itemID string, offset int) error {
+	return s.change(ctx, id, func(tx *sql.Tx, _ string, _ time.Time) error {
+		ids, err := queryIDs(ctx, tx, "SELECT item_id FROM basket_items WHERE basket_id = ? ORDER BY position, rowid", id)
+		if err != nil {
+			return fmt.Errorf("baskets: read items of %q: %w", id, err)
+		}
+		order, ok := moveID(ids, itemID, offset)
+		if !ok {
+			return fmt.Errorf("%w: basket item %q", models.ErrNotFound, itemID)
+		}
+		if err := renumber(ctx, tx, "UPDATE basket_items SET position = ? WHERE basket_id = ? AND item_id = ?", order, id); err != nil {
+			return fmt.Errorf("baskets: move item %q: %w", itemID, err)
 		}
 		return nil
 	})

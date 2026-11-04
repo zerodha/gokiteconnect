@@ -24,14 +24,15 @@ const (
 )
 
 // SettingSpec describes a known setting: its key, its label and help, its
-// default, whether the settings dialog shows it, and the values it may take
-// (any, when Options is empty).
+// default, whether the settings dialog shows it, whether it masks the value,
+// and the values it may take (any, when Options is empty).
 type SettingSpec struct {
 	Key         string
 	DisplayName string
 	Help        string
 	Default     string
 	Hidden      bool
+	Secret      bool
 	Options     []string
 }
 
@@ -58,7 +59,7 @@ var SettingSpecs = []SettingSpec{
 		Help: "The account whose portfolio kite-cli opens at start."},
 	{Key: "TRADEBOT_PRICE_MODE", DisplayName: "Price Mode", Default: PriceModeQuote, Options: []string{PriceModeQuote, PriceModeTicker},
 		Help: "quote polls prices; ticker streams them."},
-	{Key: "TRADEBOT_ACCOUNT_MODE", DisplayName: "Account Mode", Default: AccountModePaper, Options: []string{AccountModePaper, AccountModeLive},
+	{Key: "TRADEBOT_ACCOUNT_MODE", DisplayName: "Account Mode", Default: AccountModeLive, Options: []string{AccountModePaper, AccountModeLive},
 		Help: "paper trades each user's paper account, priced from the data user; live sends orders to Kite. P toggles it in kite-cli."},
 	{Key: "TRADEBOT_PAPER_CAPITAL", DisplayName: "Paper Capital", Default: "1000000", Hidden: true,
 		Help: "The cash a new paper account opens with, in rupees."},
@@ -74,6 +75,8 @@ var SettingSpecs = []SettingSpec{
 		Help: "The NATS WebSocket kite-cli reads ticks from in price mode ticker."},
 	{Key: "TRADEBOT_HEARTBEAT_TOPIC", DisplayName: "Heartbeat Topic", Default: "ticks.subscriptions",
 		Help: "The NATS subject ticker-server takes subscription heartbeats on."},
+	{Key: "TRADEBOT_CANDLE_HEARTBEAT_TOPIC", DisplayName: "Candle Heartbeat Topic", Default: "subscriptions.candles",
+		Help: "The NATS subject ticker-server takes live candle heartbeats on, with a mode: continuous, periodic or on_complete."},
 	{Key: "TRADEBOT_SUBSCRIPTION_TTL_SECONDS", DisplayName: "Subscription TTL", Default: "60",
 		Help: "Seconds a subscription lives without a heartbeat."},
 	{Key: "TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS", DisplayName: "Token Poll Interval", Default: "300",
@@ -82,6 +85,10 @@ var SettingSpecs = []SettingSpec{
 		Help: "Seconds between ticker-server's instrument mapping refreshes."},
 	{Key: "TRADEBOT_TICKER_SERVICE_PORT", DisplayName: "Ticker Port", Default: "8082",
 		Help: "The port ticker-server's health endpoint listens on."},
+	{Key: "TRADEBOT_TIMESCALE_DSN", DisplayName: "Live Candles Database",
+		Help: "The Postgres database candle-writer keeps live minute candles in, as a postgres:// URL. candle-writer needs it."},
+	{Key: "TRADEBOT_TELEGRAM_BOT_TOKEN", DisplayName: "Telegram Bot Token", Hidden: true, Secret: true,
+		Help: "The bot kite-cli sends fired price alerts through, to each user's Telegram chat ID. Empty keeps alerts in kite-cli."},
 }
 
 // Spec is key's SettingSpec, if it is a known setting.
@@ -185,20 +192,44 @@ func SettingsPath() (string, error) {
 // and visibility filled in when the file leaves them out. A missing file
 // gives the known settings, unset.
 func ReadSettings(path string) (Settings, error) {
+	settings, _, err := readSettings(path)
+	return settings, err
+}
+
+// SyncSettings reads the settings file at path like ReadSettings and, when
+// the file lacks a known setting, writes it back with every one listed, so
+// that new and hidden settings can be found and edited in the file.
+func SyncSettings(path string) (Settings, error) {
+	settings, missing, err := readSettings(path)
+	if err != nil || !missing {
+		return settings, err
+	}
+	if err := WriteSettings(path, settings); err != nil {
+		return nil, fmt.Errorf("add new settings to %s: %w", path, err)
+	}
+	return settings, nil
+}
+
+// readSettings is ReadSettings, also reporting whether the file lacks any
+// known setting.
+func readSettings(path string) (Settings, bool, error) {
 	entries := map[string]settingEntry{}
 	data, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
-		return nil, err
+		return nil, false, err
 	case len(bytes.TrimSpace(data)) > 0:
 		if err := json.Unmarshal(data, &entries); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
+			return nil, false, fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	settings := make(Settings, 0, len(SettingSpecs)+len(entries))
+	missing := false
 	for _, spec := range SettingSpecs {
-		setting := entries[spec.Key].setting(spec)
+		entry, listed := entries[spec.Key]
+		missing = missing || !listed
+		setting := entry.setting(spec)
 		delete(entries, spec.Key)
 		if setting.DisplayName == "" {
 			setting.DisplayName = spec.DisplayName
@@ -216,7 +247,7 @@ func ReadSettings(path string) (Settings, error) {
 	for _, key := range others {
 		settings = append(settings, entries[key].setting(SettingSpec{Key: key}))
 	}
-	return settings, nil
+	return settings, missing, nil
 }
 
 // setting is the entry as a Setting, taking spec's default and visibility

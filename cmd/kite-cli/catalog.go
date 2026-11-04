@@ -40,6 +40,8 @@ type listStore interface {
 	DeleteList(context.Context, string) error
 	AddListItems(context.Context, string, []models.InstrumentID) error
 	RemoveListItems(context.Context, string, []models.InstrumentID) error
+	MoveList(context.Context, string, int) error
+	MoveListItem(context.Context, string, models.InstrumentID, int) error
 }
 
 // indexSource discovers NSE indices and downloads their constituents.

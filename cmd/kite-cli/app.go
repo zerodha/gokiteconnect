@@ -28,7 +28,6 @@ const (
 	screenInstruments
 	screenHistory
 	screenSettings
-	screenBaskets
 )
 
 // appDeps is everything kite-cli talks to, so tests can replace it.
@@ -69,8 +68,16 @@ type appDeps struct {
 	defaultUser string
 	// every is how often visible prices refresh; 0 refreshes only on R.
 	every time.Duration
-	// strikeEvery is how often the strike picker reprices.
+	// strikeEvery is how often the order form + opens reprices.
 	strikeEvery time.Duration
+	// triggers keeps the users' price alerts; nil turns T off.
+	triggers triggerStore
+	// alert sends fired alerts to a user's Telegram; nil keeps them to the
+	// status bar.
+	alert alertSender
+	// orderStatus looks up the orders stoplosses and targets wait on; nil
+	// leaves them waiting.
+	orderStatus orderLookup
 }
 
 // overlay is a dialog over the screens: it takes every key while open.
@@ -108,8 +115,8 @@ func (t *tracker) close() {
 
 // app is kite-cli: the users screen, a user's portfolio, the instruments
 // explorer and the candle history, with dialogs over them. Q goes back a
-// screen, I opens the instruments, H the history, U picks a user, O opens
-// the order menu and Ctrl+C quits.
+// screen, I opens the instruments, H the history, U picks a user, + opens
+// the order form, T sets a price alert and Ctrl+C quits.
 type app struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -128,6 +135,8 @@ type app struct {
 	admin         *adminScreen
 	// historyBack is the screen the Admin screen goes back to.
 	historyBack screenID
+	// usersBack is the screen ` goes back to from the users.
+	usersBack screenID
 	// settings is the Settings tab's form, nil until it is opened;
 	// settingsBack is the screen it goes back to.
 	settings       *settingsForm
@@ -142,8 +151,10 @@ type app struct {
 	// mode is the account new orders go to and the portfolio shows; P
 	// toggles it.
 	mode broker.Mode
-	// baskets is the Baskets tab, which also keeps the unsaved baskets.
+	// baskets is Admin's Baskets tab, which also keeps the unsaved baskets.
 	baskets *basketsScreen
+	// alerts are the price alerts checked each refresh.
+	alerts alertWatch
 }
 
 type tabSpot struct {
@@ -211,7 +222,7 @@ type (
 )
 
 func (a *app) Init() tea.Cmd {
-	return tea.Batch(a.loadUsers("", ""), a.tick())
+	return tea.Batch(a.loadUsers("", ""), a.tick(), a.loadAlerts())
 }
 
 func (a *app) tick() tea.Cmd {
@@ -232,6 +243,8 @@ func (a *app) handle(msg tea.Msg) tea.Cmd {
 		return nil
 	case tea.KeyPressMsg:
 		return a.key(msg)
+	case tea.KeyReleaseMsg:
+		return a.keyReleased(msg)
 	case tea.MouseWheelMsg:
 		if a.overlay == nil {
 			if g := a.focusedGrid(); g != nil {
@@ -258,13 +271,19 @@ func (a *app) handle(msg tea.Msg) tea.Cmd {
 		}
 		return nil
 	case tickMsg:
-		return tea.Batch(a.tick(), a.periodic())
+		return tea.Batch(a.tick(), a.periodic(), a.checkAlerts(true))
 	}
 	if cmd, handled := a.handleUsers(msg); handled {
 		return cmd
 	}
 	if _, ok := msg.(tickerTicksMsg); ok {
-		return a.periodic()
+		return tea.Batch(a.periodic(), a.checkAlertsOnTicks())
+	}
+	if cmd, handled := a.handleAlerts(msg); handled {
+		return cmd
+	}
+	if cmd, handled := a.handlePortfolioTabs(msg); handled {
+		return cmd
 	}
 	if cmd, handled := a.handlePortfolio(msg); handled {
 		return cmd
@@ -273,6 +292,9 @@ func (a *app) handle(msg tea.Msg) tea.Cmd {
 		return cmd
 	}
 	if cmd, handled := a.handleOrders(msg); handled {
+		return cmd
+	}
+	if cmd, handled := a.handleStrategy(msg); handled {
 		return cmd
 	}
 	if cmd, handled := a.handleBaskets(msg); handled {
@@ -297,8 +319,10 @@ func (a *app) periodic() tea.Cmd {
 		return a.refreshPortfolioPrices()
 	case screenInstruments:
 		return a.refreshQuotes()
-	case screenBaskets:
-		return a.fetchBasketQuotes()
+	case screenHistory:
+		if a.onBaskets() {
+			return a.fetchBasketQuotes()
+		}
 	}
 	return nil
 }
@@ -312,10 +336,18 @@ func (a *app) key(msg tea.KeyPressMsg) tea.Cmd {
 	if a.overlay != nil {
 		return a.overlay.update(a, msg)
 	}
+	// ? shows the keys, unless a text field takes it.
+	if isHelpKey(msg.Key()) && !msg.IsRepeat && !a.typing() {
+		return a.openKeys()
+	}
 	// Ctrl+P toggles paper and live trading anywhere; P does on the users,
 	// portfolio and baskets screens.
-	if key == "ctrl+p" || ((key == "p" || key == "P") && (a.screen == screenUsers || a.screen == screenPortfolio || a.screen == screenBaskets)) {
+	if key == "ctrl+p" || ((key == "p" || key == "P") && (a.screen == screenUsers || a.screen == screenPortfolio || a.onBaskets())) {
 		return a.toggleMode()
+	}
+	// ` (₹ on an Indian layout) shows the users, and again goes back.
+	if key == "`" || key == "₹" {
+		return a.toggleUsers()
 	}
 	// Shift+←/→ cycle the tabs.
 	if key == "shift+left" || key == "shift+right" {
@@ -344,8 +376,6 @@ func (a *app) key(msg tea.KeyPressMsg) tea.Cmd {
 		return a.explorerKey(msg)
 	case screenHistory:
 		return a.adminKey(msg)
-	case screenBaskets:
-		return a.basketsKey(msg)
 	}
 	return a.usersKey(msg)
 }
@@ -358,9 +388,10 @@ func (a *app) focusedGrid() *grid {
 	case screenInstruments:
 		return a.explorer.focused()
 	case screenHistory:
+		if a.onBaskets() {
+			return a.baskets.focused()
+		}
 		return a.adminGrids()[0]
-	case screenBaskets:
-		return a.baskets.focused()
 	case screenSettings:
 		return nil
 	}
@@ -374,8 +405,6 @@ func (a *app) selectionChanged() tea.Cmd {
 		return a.explorerSelectionChanged()
 	case screenHistory:
 		return a.adminSelectionChanged()
-	case screenBaskets:
-		return a.basketsChanged("")
 	}
 	return nil
 }
@@ -418,8 +447,6 @@ func (a *app) screenGrids() []*grid {
 		return a.explorer.grids()
 	case screenHistory:
 		return a.adminGrids()
-	case screenBaskets:
-		return []*grid{&a.baskets.baskets, &a.baskets.items}
 	case screenSettings:
 		return nil
 	}
@@ -432,18 +459,25 @@ func (a *app) focusGrid(index int) {
 		a.portfolio.focus = index
 	case screenInstruments:
 		a.explorer.focusGrid(index)
-	case screenBaskets:
-		a.baskets.focus = index
+	case screenHistory:
+		if a.onBaskets() {
+			a.baskets.focus = index
+		}
 	}
 }
 
-// tabOrder is the tab bar's screens, left to right.
-var tabOrder = []screenID{screenUsers, screenPortfolio, screenInstruments, screenBaskets, screenHistory, screenSettings}
+// tabOrder is the tab bar's screens, left to right. The users are off it,
+// on `.
+var tabOrder = []screenID{screenPortfolio, screenInstruments, screenHistory, screenSettings}
 
 // cycleTab switches to the tab step places along, wrapping around and
-// skipping Portfolio until a user is picked.
+// skipping Portfolio until a user is picked. From the users it starts at
+// either end.
 func (a *app) cycleTab(step int) tea.Cmd {
 	current := slices.Index(tabOrder, a.screen)
+	if current < 0 && step < 0 {
+		current = len(tabOrder)
+	}
 	for range tabOrder {
 		current = (current + step + len(tabOrder)) % len(tabOrder)
 		if tabOrder[current] != screenPortfolio || a.portfolio.user.UserID != "" {
@@ -460,8 +494,6 @@ func (a *app) switchTo(target screenID) tea.Cmd {
 		if a.screen != screenInstruments {
 			return a.openInstruments()
 		}
-	case screenBaskets:
-		return a.openBaskets()
 	case screenHistory:
 		return a.openAdmin()
 	case screenSettings:
@@ -476,6 +508,21 @@ func (a *app) switchTo(target screenID) tea.Cmd {
 		a.show(screenUsers)
 	}
 	return nil
+}
+
+// toggleUsers shows the users screen, or leaves it for the screen it was
+// shown from: the portfolio when it was first.
+func (a *app) toggleUsers() tea.Cmd {
+	if a.screen != screenUsers {
+		a.usersBack = a.screen
+		a.show(screenUsers)
+		return nil
+	}
+	back := a.usersBack
+	if back == screenUsers {
+		back = screenPortfolio
+	}
+	return a.switchTo(back)
 }
 
 func (a *app) show(target screenID) {
@@ -515,11 +562,13 @@ func (a *app) notify(message string) {
 	case screenInstruments:
 		a.explorer.status = message
 	case screenHistory:
-		a.history.status = message
+		if a.onBaskets() {
+			a.baskets.status = message
+		} else {
+			a.history.status = message
+		}
 	case screenSettings:
 		a.settingsStatus = message
-	case screenBaskets:
-		a.baskets.status = message
 	default:
 		a.users.status = message
 	}
@@ -595,13 +644,13 @@ func (d *dialog) view(_ *app, w, _ int) string {
 	width := min(64, w-2)
 	var buttons []string
 	for index, button := range d.buttons {
-		style := lipgloss.NewStyle().Padding(0, 2).Background(lipgloss.Color("#2A2D37")).Foreground(colorText)
+		style := lipgloss.NewStyle().Padding(0, 2).Background(colorButton).Foreground(colorText)
 		if index == d.focus {
 			background := colorAccent
 			if d.danger && index == 0 && len(d.buttons) > 1 {
 				background = colorRed
 			}
-			style = style.Background(background).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
+			style = style.Background(background).Foreground(colorOnAccent).Bold(true)
 		}
 		buttons = append(buttons, style.Render(button.label))
 	}
@@ -668,13 +717,16 @@ func (o *inputOverlay) view(_ *app, w, _ int) string {
 	return modal(o.title, "", o.form.view(width-4), width)
 }
 
-// View draws the tab bar, the screen, the status and help lines, and any
-// dialog over them.
+// View draws the tab bar, the screen, the status line, and any dialog over
+// them.
 func (a *app) View() tea.View {
 	view := tea.NewView(a.render())
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
 	view.WindowTitle = "kite"
+	// Key releases, where the terminal reports them, let a held ? show the
+	// keys until it is let go.
+	view.KeyboardEnhancements.ReportEventTypes = true
 	return view
 }
 
@@ -686,7 +738,7 @@ func (a *app) render() string {
 	if w < 40 || h < 12 {
 		return "Terminal too small for kite-cli."
 	}
-	bodyHeight := h - 3
+	bodyHeight := h - 2
 	var body string
 	switch a.screen {
 	case screenPortfolio:
@@ -697,12 +749,10 @@ func (a *app) render() string {
 		body = a.adminView(w, bodyHeight)
 	case screenSettings:
 		body = a.settingsView(w, bodyHeight)
-	case screenBaskets:
-		body = a.basketsView(w, bodyHeight)
 	default:
 		body = a.usersView(w, bodyHeight)
 	}
-	screen := strings.Join([]string{a.tabBar(w), strings.Join(fitLines(body, w, bodyHeight), "\n"), a.helpBar(w), a.statusBar(w)}, "\n")
+	screen := strings.Join([]string{a.tabBar(w), strings.Join(fitLines(body, w, bodyHeight), "\n"), a.statusBar(w)}, "\n")
 	if a.overlay != nil {
 		return composite(screen, a.overlay.view(a, w, h), w, h)
 	}
@@ -710,7 +760,7 @@ func (a *app) render() string {
 }
 
 func (a *app) tabBar(w int) string {
-	logo := pill("◆ kite", colorAccent, lipgloss.Color("#FFFFFF"))
+	logo := pill("◆ kite", colorAccent, colorOnAccent)
 	line := logo + " "
 	a.tabs = a.tabs[:0]
 	portfolio := "Portfolio"
@@ -720,7 +770,7 @@ func (a *app) tabBar(w int) string {
 	for _, tab := range []struct {
 		label  string
 		screen screenID
-	}{{"Users", screenUsers}, {portfolio, screenPortfolio}, {"Watchlists", screenInstruments}, {"Baskets", screenBaskets}, {"Admin", screenHistory}, {"Settings", screenSettings}} {
+	}{{portfolio, screenPortfolio}, {"Watchlists", screenInstruments}, {"Admin", screenHistory}, {"Settings", screenSettings}} {
 		style := lipgloss.NewStyle().Padding(0, 1).Foreground(colorMuted)
 		if tab.screen == a.screen {
 			style = style.Background(colorSelection).Foreground(colorText).Bold(true)
@@ -742,14 +792,15 @@ func (a *app) databaseLabel() string {
 	case screenInstruments:
 		return "DB " + a.deps.catalogPath
 	case screenHistory:
-		if a.admin.tab != adminHistory {
-			return "DB " + a.deps.catalogPath
+		switch a.admin.tab {
+		case adminHistory:
+			return "DB " + a.deps.candlesPath
+		case adminBaskets:
+			return "DB " + a.deps.listsPath
 		}
-		return "DB " + a.deps.candlesPath
+		return "DB " + a.deps.catalogPath
 	case screenSettings:
 		return homeRelative(a.deps.settingsPath)
-	case screenBaskets:
-		return "DB " + a.deps.listsPath
 	}
 	return "DB " + a.deps.credentialsDB
 }
@@ -769,53 +820,35 @@ func (a *app) statusBar(w int) string {
 		pills = a.adminPills()
 	case screenSettings:
 		mode, message = "SETTINGS", a.settingsStatus
-	case screenBaskets:
-		mode, message = "BASKETS", a.baskets.status
 	default:
 		mode, message = "USERS", a.users.status
 		if a.users.sudo {
-			pills = append(pills, pill("SUDO", colorRed, colorInk))
+			pills = append(pills, pill("SUDO", colorRed, colorOnPill))
 		}
 	}
 	if n := a.baskets.unsaved(); n > 0 {
-		pills = append(pills, pill(fmt.Sprintf("UNSAVED %d", n), colorYellow, colorInk))
+		pills = append(pills, pill(fmt.Sprintf("UNSAVED %d", n), colorYellow, colorOnPill))
 	}
-	pills = append(pills, modePill(a.mode))
+	pills = append(pills, modePill(a.mode), styleKey.Render("?")+" "+styleMuted.Render("keys")+" ")
 	// A statusline: the mode, the message in its own segment, then the
 	// pills on the right, all on one bar.
-	left := pill(mode, colorAccent, lipgloss.Color("#FFFFFF"))
+	left := pill(mode, colorAccent, colorOnAccent)
 	if message != "" {
 		left += withBackground(" "+message+" ", colorStatusMsg, 0)
 	}
 	right := strings.Join(pills, " ")
 	gap := w - ansi.StringWidth(left) - ansi.StringWidth(right)
 	if gap < 1 {
-		return withBackground(ansi.Truncate(left, w, "…"), colorStatusBar, w)
+		// A long message gives way to the pills, which carry the trading
+		// mode, unless they leave no room for the mode name.
+		room := w - ansi.StringWidth(right) - 1
+		if room <= ansi.StringWidth(pill(mode, colorAccent, colorOnAccent)) {
+			return withBackground(ansi.Truncate(left, w, "…"), colorStatusBar, w)
+		}
+		left = ansi.Truncate(left, room, "…")
+		gap = w - ansi.StringWidth(left) - ansi.StringWidth(right)
 	}
 	return withBackground(left+strings.Repeat(" ", gap)+right, colorStatusBar, w)
-}
-
-func (a *app) helpBar(w int) string {
-	var text string
-	switch a.screen {
-	case screenPortfolio:
-		keys := []string{"+", "order", "B", "baskets", "M/X", "modify / cancel order · X on a group exits it", "Tab", "next table", "Enter", "collapse / raw order", "J/K", "scroll raw", "R", "reload", "U", "switch user", "P", "paper / live"}
-		if a.mode == broker.Paper {
-			keys = append(keys, "⇧Z", "reset paper")
-		}
-		text = help(append(keys, "W", "watchlists", "H", "admin", "Esc", "users", "^C", "quit")...)
-	case screenInstruments:
-		text = a.explorerHelp()
-	case screenHistory:
-		text = a.adminHelp()
-	case screenSettings:
-		text = a.settingsHelp()
-	case screenBaskets:
-		text = a.basketsHelp()
-	default:
-		text = help("Enter", "portfolio", "W", "watchlists", "H", "admin", "A", "add", "E", "edit", "D", "delete", "F", "refresh session", "B", "open Kite web", "R", "reload", "P", "paper / live", "⇧S", "sudo", "^C", "quit")
-	}
-	return ansi.Truncate(" "+text, w, "…")
 }
 
 // openInstruments shows the explorer, opening the catalog the first time.
@@ -843,13 +876,16 @@ func (a *app) leaveInstruments() {
 
 // orderPlaced reports an accepted order and reloads the portfolio it
 // changes.
-func (a *app) orderPlaced(userID string, mode broker.Mode, orderID string, params kite.OrderParams) tea.Cmd {
+// orderPlaced tells of an order placed, with more after it, and reloads
+// the portfolio it was placed in.
+func (a *app) orderPlaced(userID string, mode broker.Mode, orderID string, params kite.OrderParams, more string) tea.Cmd {
 	message := statusOK(fmt.Sprintf("Order %s placed · %s %d %s for %s · check its status in Kite",
 		orderID, params.TransactionType, params.Quantity, params.Tradingsymbol, userID))
 	if mode == broker.Paper {
 		message = statusOK(fmt.Sprintf("Paper order %s placed · %s %d %s for %s",
 			orderID, params.TransactionType, params.Quantity, params.Tradingsymbol, userID))
 	}
+	message += more
 	a.notify(message)
 	if a.portfolio.user.UserID == userID {
 		a.portfolio.notice = message
@@ -884,9 +920,17 @@ func (a *app) toggleMode() tea.Cmd {
 // modePill is the account mode's badge: yellow for paper, red for live.
 func modePill(mode broker.Mode) string {
 	if mode == broker.Live {
-		return pill("LIVE", colorRed, colorInk)
+		return pill("LIVE", colorRed, colorOnPill)
 	}
-	return pill("PAPER", colorYellow, colorInk)
+	return pill("PAPER", colorYellow, colorOnPill)
+}
+
+// modeName names the account mode in text: LIVE, or paper.
+func modeName(mode broker.Mode) string {
+	if mode == broker.Live {
+		return "LIVE"
+	}
+	return "paper"
 }
 
 // orderChanged reports a modified or cancelled order and reloads the
@@ -900,10 +944,10 @@ func (a *app) orderChanged(userID, message string) tea.Cmd {
 	return nil
 }
 
-// instrumentOrder opens the order menu for the explorer's selected
+// instrumentOrder opens the order form for the explorer's selected
 // instrument, offering to close it when the open portfolio holds it.
 func (a *app) instrumentOrder(instrument models.Instrument, ltp float64) tea.Cmd {
-	return a.openOrderMenu(tradeTarget{instrument: instrument, ltp: ltp, held: a.portfolio.data.held(instrument.ID)})
+	return a.openTradeForm(tradeTarget{instrument: instrument, ltp: ltp, held: a.portfolio.data.held(instrument.ID)})
 }
 
 var errNoUser = errors.New("select a user first")

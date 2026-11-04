@@ -51,11 +51,26 @@ const (
 )
 
 // Tick is a broker tick annotated with its canonical instrument ID and
-// whether it is new or a repeat.
+// whether it is new or a repeat. Fields are its values by the names
+// triggers watch, the day and intraday changes worked out, for consumers
+// that want them without the arithmetic.
 type Tick struct {
 	ID            string        `json:"id"`
 	BroadcastType BroadcastType `json:"broadcast_type"`
 	models.Tick
+	Fields map[models.TickField]float64 `json:"fields,omitempty"`
+}
+
+// InCandle reports whether a tick belongs in a candle: a new, priced tick
+// from the market's open on. Repeats rebroadcast the latest tick, and
+// pre-open ticks would open the day's first candle early.
+func (t Tick) InCandle() bool {
+	if t.ID == "" || t.BroadcastType == BroadcastRepeat || t.LastPrice <= 0 || t.Timestamp.IsZero() {
+		return false
+	}
+	local := t.Timestamp.In(models.ExchangeLocation)
+	open := time.Date(local.Year(), local.Month(), local.Day(), 9, 15, 0, 0, models.ExchangeLocation)
+	return !local.Before(open)
 }
 
 // OrderEvent is the durable envelope used between the socket callback and the
@@ -164,4 +179,8 @@ type Config struct {
 	// before its latest tick is rebroadcast, and then how often; 3s when
 	// unset.
 	ReplayInterval time.Duration
+	// TickObserver, when set, sees every new tick from the socket, before
+	// ticks are coalesced for publishing. It is called on the socket's
+	// goroutine, so it must not block.
+	TickObserver func(Tick)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -302,6 +303,28 @@ func tickQuote(tick producer.Tick) kite.QuoteData {
 		OIDayHigh:       float64(tick.OIDayHigh),
 		OIDayLow:        float64(tick.OIDayLow),
 		Depth:           tick.Depth,
+	}
+}
+
+// quoteTick is a quote as a tick, which alerts read their fields from.
+func quoteTick(quote kite.QuoteData) models.Tick {
+	count := func(value float64) uint32 { return uint32(min(max(value, 0), math.MaxUint32)) }
+	return models.Tick{
+		InstrumentToken:    uint32(max(quote.InstrumentToken, 0)),
+		Timestamp:          quote.Timestamp,
+		LastTradeTime:      quote.LastTradeTime,
+		LastPrice:          quote.LastPrice,
+		LastTradedQuantity: count(float64(quote.LastQuantity)),
+		TotalBuyQuantity:   count(float64(quote.BuyQuantity)),
+		TotalSellQuantity:  count(float64(quote.SellQuantity)),
+		VolumeTraded:       count(float64(quote.Volume)),
+		AverageTradePrice:  quote.AveragePrice,
+		OI:                 count(quote.OI),
+		OIDayHigh:          count(quote.OIDayHigh),
+		OIDayLow:           count(quote.OIDayLow),
+		NetChange:          quote.NetChange,
+		OHLC:               quote.OHLC,
+		Depth:              quote.Depth,
 	}
 }
 

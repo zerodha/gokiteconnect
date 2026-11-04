@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -407,4 +408,142 @@ func assertListIDs(t *testing.T, list models.List, want ...models.InstrumentID) 
 	if got := list.InstrumentIDs(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("list %q items = %v, want %v", list.Name, got, want)
 	}
+}
+
+func TestListsMoveListsAndItems(t *testing.T) {
+	ctx := context.Background()
+	store := openListStore(t, ctx, ":memory:")
+	first := mustCreateList(t, store, models.List{CreatedBy: "AB1234", Name: "First", Items: []models.ListItem{
+		{InstrumentID: "NSE:INFY"}, {InstrumentID: "NSE:TCS"}, {InstrumentID: "NSE:SBIN"}, {InstrumentID: "NSE:ITC"},
+	}})
+	gone := mustCreateList(t, store, models.List{CreatedBy: "AB1234", Name: "Gone"})
+	third := mustCreateList(t, store, models.List{CreatedBy: "AB1234", Name: "Third"})
+	mustCreateList(t, store, models.List{CreatedBy: models.AdminUser, Name: "Banks"})
+	smart := mustCreateList(t, store, models.List{CreatedBy: "CD5678", Name: "Follows", ParentID: first.ID})
+	if err := store.DeleteList(ctx, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	order := func(createdBy string) []string {
+		t.Helper()
+		lists, err := store.GetLists(ctx, createdBy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, list := range lists {
+			names = append(names, fmt.Sprintf("%d %s", list.Number, list.Name))
+		}
+		return names
+	}
+	// Moves stop at either end, and number the creator's lists again.
+	for _, move := range []struct {
+		id     string
+		offset int
+		want   []string
+	}{
+		{third.ID, -1, []string{"1 Third", "2 First"}},
+		{third.ID, -5, []string{"1 Third", "2 First"}},
+		{third.ID, 9, []string{"1 First", "2 Third"}},
+	} {
+		if err := store.MoveList(ctx, move.id, move.offset); err != nil {
+			t.Fatalf("MoveList(%d) error = %v", move.offset, err)
+		}
+		if got := order("AB1234"); !reflect.DeepEqual(got, move.want) {
+			t.Fatalf("after MoveList(%d) lists = %v, want %v", move.offset, got, move.want)
+		}
+	}
+	if got := order(models.AdminUser); !reflect.DeepEqual(got, []string{"1 Banks"}) {
+		t.Fatalf("ADMIN's lists = %v", got)
+	}
+	if err := store.MoveList(ctx, "missing", 1); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("MoveList(missing) error = %v, want ErrNotFound", err)
+	}
+
+	// Items move within their list; new ones still go last, and a smart list
+	// follows its parent's order.
+	if err := store.MoveListItem(ctx, first.ID, "NSE:SBIN", -2); err != nil {
+		t.Fatalf("MoveListItem() error = %v", err)
+	}
+	if err := store.MoveListItem(ctx, first.ID, "NSE:INFY", 10); err != nil {
+		t.Fatalf("MoveListItem() error = %v", err)
+	}
+	if err := store.AddListItems(ctx, first.ID, []models.InstrumentID{"NSE:TCS", "NSE:WIPRO"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetList(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertListIDs(t, got, "NSE:SBIN", "NSE:TCS", "NSE:ITC", "NSE:INFY", "NSE:WIPRO")
+	following, err := store.GetList(ctx, smart.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertListIDs(t, following, "NSE:SBIN", "NSE:TCS", "NSE:ITC", "NSE:INFY", "NSE:WIPRO")
+	if err := store.MoveListItem(ctx, smart.ID, "NSE:SBIN", 1); !errors.Is(err, models.ErrSmartList) {
+		t.Fatalf("MoveListItem(smart) error = %v, want ErrSmartList", err)
+	}
+	if err := store.MoveListItem(ctx, first.ID, "NSE:HDFCBANK", 1); !errors.Is(err, models.ErrNotFound) {
+		t.Fatalf("MoveListItem(missing item) error = %v, want ErrNotFound", err)
+	}
+
+	// The lists following a deleted one keep its order.
+	if err := store.DeleteList(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if following, err = store.GetList(ctx, smart.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertListIDs(t, following, "NSE:SBIN", "NSE:TCS", "NSE:ITC", "NSE:INFY", "NSE:WIPRO")
+	if err := store.AddListItems(ctx, smart.ID, []models.InstrumentID{"NSE:HDFCBANK"}); err != nil {
+		t.Fatal(err)
+	}
+	if following, err = store.GetList(ctx, smart.ID); err != nil {
+		t.Fatal(err)
+	}
+	assertListIDs(t, following, "NSE:SBIN", "NSE:TCS", "NSE:ITC", "NSE:INFY", "NSE:WIPRO", "NSE:HDFCBANK")
+}
+
+func TestListsNumberTheItemsOfAnOlderDatabase(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "lists.sqlite3")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Items added together share created_at, and keep the order they were
+	// inserted in.
+	if _, err := db.Exec(`
+		CREATE TABLE list_metadata (
+			list_id TEXT PRIMARY KEY, created_by TEXT NOT NULL, list_number INTEGER NOT NULL, name TEXT NOT NULL,
+			is_index BOOLEAN NOT NULL DEFAULT FALSE, auto_generated BOOLEAN NOT NULL DEFAULT FALSE, url TEXT,
+			parent_id TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, UNIQUE (created_by, name));
+		CREATE TABLE list_items (list_id TEXT NOT NULL, id TEXT NOT NULL, created_at DATETIME NOT NULL, PRIMARY KEY (list_id, id));
+		INSERT INTO list_metadata VALUES ('old', 'AB1234', 1, 'Old', FALSE, FALSE, NULL, NULL, '2026-01-01 00:00:00', '2026-01-01 00:00:00');
+		INSERT INTO list_items VALUES
+			('old', 'NSE:TCS', '2026-01-02 00:00:00'),
+			('old', 'NSE:SBIN', '2026-01-01 00:00:00'),
+			('old', 'NSE:INFY', '2026-01-01 00:00:00');`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	store := openListStore(t, ctx, path)
+	old, err := store.GetList(ctx, "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertListIDs(t, old, "NSE:SBIN", "NSE:INFY", "NSE:TCS")
+	if err := store.AddListItems(ctx, "old", []models.InstrumentID{"NSE:ITC"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MoveListItem(ctx, "old", "NSE:TCS", -2); err != nil {
+		t.Fatal(err)
+	}
+	if old, err = store.GetList(ctx, "old"); err != nil {
+		t.Fatal(err)
+	}
+	assertListIDs(t, old, "NSE:TCS", "NSE:SBIN", "NSE:INFY", "NSE:ITC")
 }

@@ -13,13 +13,26 @@
 // compatible accounts.<account>.orders message. Tick and price streams retain
 // the latest message per subject.
 //
+// Live 1m candles are folded from every socket tick. Candle heartbeats on
+// TRADEBOT_CANDLE_HEARTBEAT_TOPIC (by default subscriptions.candles) carry a
+// mode as well as IDs, and keep those instruments' ticks subscribed too:
+//
+//	{"ids": ["NSE:INFY"], "mode": "continuous"}
+//	{"ids": ["NSE:INFY"], "mode": "periodic", "interval_seconds": 5}
+//	{"ids": ["NSE:INFY"], "mode": "on_complete"}
+//
+// Each mode publishes JSON candles on its own subject,
+// candles.<exchange>.<symbol>.continuous, .periodic.<n> or .on_complete, and
+// the candles stream retains the latest message per subject. See package
+// livecandles.
+//
 // It reads ~/tradebot/settings.json (see config.SettingSpecs). It needs:
 //
 //	TRADEBOT_TICKER_USER_ID  Zerodha account stored in the credentials database
 //	TRADEBOT_NATS_URL        one or more NATS URLs
 //
 // and also takes the storage paths, TRADEBOT_HEARTBEAT_TOPIC,
-// TRADEBOT_SUBSCRIPTION_TTL_SECONDS, TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS,
+// TRADEBOT_CANDLE_HEARTBEAT_TOPIC, TRADEBOT_SUBSCRIPTION_TTL_SECONDS, TRADEBOT_TICKER_TOKEN_POLL_INTERVAL_SECONDS,
 // TRADEBOT_TICKER_MAPPING_REFRESH_INTERVAL_SECONDS and
 // TRADEBOT_TICKER_SERVICE_PORT, which have defaults.
 //
@@ -54,6 +67,7 @@ import (
 	"time"
 
 	"github.com/devshoe/gokiteconnect/cmd/ticker-server/consumer"
+	"github.com/devshoe/gokiteconnect/cmd/ticker-server/livecandles"
 	"github.com/devshoe/gokiteconnect/cmd/ticker-server/producer"
 	baseconfig "github.com/devshoe/gokiteconnect/config"
 	credentialstore "github.com/devshoe/gokiteconnect/credentials/repository"
@@ -64,6 +78,7 @@ import (
 
 const (
 	defaultHeartbeatTopic        = "ticks.subscriptions"
+	defaultCandleHeartbeatTopic  = "subscriptions.candles"
 	defaultTickerPort            = "8082"
 	defaultSubscriptionTTL       = 60 * time.Second
 	defaultTokenPollInterval     = 300 * time.Second
@@ -76,6 +91,7 @@ type tickerConfig struct {
 	UserID                 string
 	NATSURL                string
 	HeartbeatTopic         string
+	CandleHeartbeatTopic   string
 	CredentialsPath        string
 	InstrumentsPath        string
 	Port                   string
@@ -119,8 +135,9 @@ func (p *catalogIndexProvider) Snapshot(ctx context.Context) (consumer.TokenReso
 }
 
 type healthResponse struct {
-	Running       bool                     `json:"running"`
-	Subscriptions *[]consumer.Subscription `json:"subscriptions,omitempty"`
+	Running             bool                        `json:"running"`
+	Subscriptions       *[]consumer.Subscription    `json:"subscriptions,omitempty"`
+	CandleSubscriptions *[]livecandles.Subscription `json:"candle_subscriptions,omitempty"`
 }
 
 type producerStatusProvider interface {
@@ -134,6 +151,11 @@ type subscriptionStatusProvider interface {
 
 type heartbeatStatusProvider interface {
 	Running() bool
+}
+
+type candleStatusProvider interface {
+	Running() bool
+	Subscriptions() []livecandles.Subscription
 }
 
 func main() {
@@ -196,10 +218,15 @@ func run(logger *slog.Logger, logs *tickerLogBuffer) error {
 		}
 	}()
 
+	// The candle engine needs the manager, which needs the producer, so the
+	// producer reaches the engine through this variable, set before it
+	// starts.
+	var candleEngine *livecandles.Engine
 	tickProducer, err := producer.New(producer.Config{
 		UserID:            config.UserID,
 		TokenPollInterval: config.TokenPollInterval,
 		ReplayInterval:    producer.DefaultReplayInterval,
+		TickObserver:      func(tick producer.Tick) { candleEngine.Fold(tick) },
 	}, sessions, producer.NewZerodhaSocketFactory(), bus, logger)
 	if err != nil {
 		return err
@@ -213,6 +240,14 @@ func run(logger *slog.Logger, logs *tickerLogBuffer) error {
 		return err
 	}
 	heartbeat, err := consumer.NewHeartbeat(bus.Conn(), config.HeartbeatTopic, logger)
+	if err != nil {
+		return err
+	}
+	candleEngine, err = livecandles.New(livecandles.Config{TTL: config.SubscriptionTTL}, bus.Conn(), manager, logger)
+	if err != nil {
+		return err
+	}
+	candleHeartbeat, err := consumer.NewHeartbeat(bus.Conn(), config.CandleHeartbeatTopic, logger)
 	if err != nil {
 		return err
 	}
@@ -230,7 +265,7 @@ func run(logger *slog.Logger, logs *tickerLogBuffer) error {
 		return err
 	}
 	producerStarted := true
-	if err := heartbeat.Start(serviceCtx, manager.HandleHeartbeat); err != nil {
+	if err := candleEngine.Start(serviceCtx); err != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 		defer cancel()
 		_ = manager.Close(shutdownCtx)
@@ -238,11 +273,32 @@ func run(logger *slog.Logger, logs *tickerLogBuffer) error {
 		busOwned = false
 		return err
 	}
+	candleEngineStarted := true
+	if err := heartbeat.Start(serviceCtx, manager.HandleHeartbeat); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
+		defer cancel()
+		_ = candleEngine.Close(shutdownCtx)
+		_ = manager.Close(shutdownCtx)
+		_ = tickProducer.Close(shutdownCtx)
+		busOwned = false
+		return err
+	}
 	heartbeatStarted := true
+	if err := candleHeartbeat.Start(serviceCtx, candleEngine.HandleHeartbeat); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
+		defer cancel()
+		_ = heartbeat.Stop()
+		_ = candleEngine.Close(shutdownCtx)
+		_ = manager.Close(shutdownCtx)
+		_ = tickProducer.Close(shutdownCtx)
+		busOwned = false
+		return err
+	}
+	candleHeartbeatStarted := true
 
 	server := &http.Server{
 		Addr:              ":" + config.Port,
-		Handler:           healthHandler(tickProducer, manager, heartbeat),
+		Handler:           healthHandler(tickProducer, manager, heartbeat, candleEngine, candleHeartbeat),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -256,7 +312,7 @@ func run(logger *slog.Logger, logs *tickerLogBuffer) error {
 		}
 		serverErr <- err
 	}()
-	logger.Info("ticker started", "address", server.Addr, "user_id", config.UserID, "heartbeat_topic", config.HeartbeatTopic)
+	logger.Info("ticker started", "address", server.Addr, "user_id", config.UserID, "heartbeat_topic", config.HeartbeatTopic, "candle_heartbeat_topic", config.CandleHeartbeatTopic)
 
 	var dashboard *tickerApp
 	var dashboardErr chan error
@@ -305,8 +361,15 @@ func run(logger *slog.Logger, logs *tickerLogBuffer) error {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		runErr = errors.Join(runErr, fmt.Errorf("shutdown health server: %w", err))
 	}
+	if candleHeartbeatStarted {
+		runErr = errors.Join(runErr, candleHeartbeat.Stop())
+	}
 	if heartbeatStarted {
 		runErr = errors.Join(runErr, heartbeat.Stop())
+	}
+	// The engine publishes its last candles on the bus the producer closes.
+	if candleEngineStarted {
+		runErr = errors.Join(runErr, candleEngine.Close(shutdownCtx))
 	}
 	if managerStarted {
 		runErr = errors.Join(runErr, manager.Close(shutdownCtx))
@@ -326,7 +389,7 @@ func tickerCLIAvailable() bool {
 		input.Mode()&os.ModeCharDevice != 0 && output.Mode()&os.ModeCharDevice != 0
 }
 
-func healthHandler(tickProducer producerStatusProvider, manager subscriptionStatusProvider, heartbeat heartbeatStatusProvider) http.Handler {
+func healthHandler(tickProducer producerStatusProvider, manager subscriptionStatusProvider, heartbeat heartbeatStatusProvider, candles candleStatusProvider, candleHeartbeat heartbeatStatusProvider) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(writer http.ResponseWriter, request *http.Request) {
 		includeSubscriptions := false
@@ -342,11 +405,14 @@ func healthHandler(tickProducer producerStatusProvider, manager subscriptionStat
 			}
 			includeSubscriptions = parsed
 		}
-		running := tickProducer.Status().Ready() && manager.Running() && heartbeat.Running()
+		running := tickProducer.Status().Ready() && manager.Running() && heartbeat.Running() &&
+			candles.Running() && candleHeartbeat.Running()
 		response := healthResponse{Running: running}
 		if includeSubscriptions {
 			subscriptions := manager.Subscriptions()
 			response.Subscriptions = &subscriptions
+			candleSubscriptions := candles.Subscriptions()
+			response.CandleSubscriptions = &candleSubscriptions
 		}
 		status := http.StatusOK
 		if !running {
@@ -403,6 +469,7 @@ func loadTickerConfig() (tickerConfig, error) {
 		UserID:                 userID,
 		NATSURL:                natsURL,
 		HeartbeatTopic:         settingDefault(base.Settings, "TRADEBOT_HEARTBEAT_TOPIC", defaultHeartbeatTopic),
+		CandleHeartbeatTopic:   settingDefault(base.Settings, "TRADEBOT_CANDLE_HEARTBEAT_TOPIC", defaultCandleHeartbeatTopic),
 		CredentialsPath:        base.CredentialsPath,
 		InstrumentsPath:        base.InstrumentsPath,
 		Port:                   port,

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/devshoe/gokiteconnect/credentials"
 	"github.com/devshoe/gokiteconnect/kite"
 	"github.com/devshoe/gokiteconnect/models"
@@ -15,13 +16,27 @@ import (
 
 // portfolioScreen is one user's positions, grouped by underlying, the day's
 // orders, holdings and mutual funds, repriced from quotes while it is shown.
+// The holdings panel has a tab for the mutual funds, and the orders panel
+// tabs for the user's baskets and price alerts.
 type portfolioScreen struct {
 	user credentials.Credentials
 	data portfolio
-	// positions, orders, holdings and funds are the tables; focus is the
-	// one keys move.
+	// positions, the middle tab's table (holdings or funds) and the lowest
+	// tab's (orders, baskets or alerts) are the panels; focus is the one
+	// keys move.
 	positions, orders, holdings, funds grid
 	focus                              int
+	holdingsTab                        holdingsTab
+	tab                                orderTab
+	basketGrid, alertGrid              grid
+	basketList                         []models.Basket
+	basketsErr                         error
+	basketsLoading                     bool
+	// basketsCollapsed are the baskets, by ID, whose orders are hidden.
+	basketsCollapsed map[string]bool
+	alertList        []models.PriceTrigger
+	alertsErr        error
+	alertsLoading    bool
 	// raw shows the selected order's payload in the details pane, scrolled
 	// down rawOffset lines.
 	raw       bool
@@ -56,11 +71,21 @@ func newPortfolioScreen() *portfolioScreen {
 			{title: "FUND", width: 16, flex: 1}, {title: "FOLIO", width: 10}, right("UNITS", 10), right("AVG", 9),
 			right("NAV", 9), right("INVESTED", 12), right("CURRENT", 12), right("P&L", 12), right("P&L%", 8),
 		}},
+		basketGrid: grid{columns: []column{
+			{title: "BASKET / INSTRUMENT", width: 20, flex: 1}, {title: "EXCH", width: 5}, {title: "SIDE", width: 4},
+			right("QTY", 7), {title: "ORDER", width: 16}, {title: "PRODUCT", width: 7}, {title: "VALIDITY", width: 8},
+			{title: "UPDATED", width: 12},
+		}},
+		alertGrid: grid{columns: []column{
+			{title: "SET", width: 12}, {title: "INSTRUMENT", width: 16, flex: 1}, {title: "WHEN", width: 14},
+			right("VALUE", 10), right("NOW", 10), right("AWAY", 9), {title: "STATUS", width: 18},
+			right("FIRED", 5), right("CHECKS", 6), {title: "THEN", width: 11}, {title: "NOTE", width: 10, flex: 1},
+		}},
 	}
 }
 
 func (p *portfolioScreen) grids() []*grid {
-	return []*grid{&p.positions, &p.holdings, &p.funds, &p.orders}
+	return []*grid{&p.positions, p.holdingsGrid(), p.tabGrid()}
 }
 
 func (p *portfolioScreen) focused() *grid {
@@ -75,14 +100,16 @@ func (a *app) openPortfolio(user credentials.Credentials) tea.Cmd {
 		p.focus = 0
 		p.collapsed = nil
 		p.raw, p.rawOffset = false, 0
-		for _, g := range p.grids() {
+		for _, g := range []*grid{&p.positions, &p.holdings, &p.funds, &p.orders, &p.basketGrid, &p.alertGrid} {
 			g.cursor, g.offset = 0, 0
 		}
+		p.basketList, p.basketsErr, p.alertList, p.alertsErr = nil, nil, nil, nil
+		p.basketsCollapsed = nil
 		p.render()
 	}
 	p.user = user
 	a.show(screenPortfolio)
-	return a.reloadPortfolio()
+	return tea.Batch(a.reloadPortfolio(), a.loadOrderTab())
 }
 
 type (
@@ -287,10 +314,26 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 		p.focus = (p.focus + 1) % count
 	case "shift+tab":
 		p.focus = (p.focus + count - 1) % count
+	case "[", "]":
+		step := 1
+		if key == "[" {
+			step = -1
+		}
+		if p.focus == holdingsPanel {
+			p.switchHoldingsTab(step)
+			return nil
+		}
+		return a.switchOrderTab(step)
 	case "enter":
 		switch reference := p.focused().selectedRef().(type) {
 		case models.InstrumentID:
 			p.toggleGroup(reference)
+		case models.Basket:
+			a.toggleBasket(reference.ID)
+		case basketOrderRow:
+			return a.openPortfolioBasket(reference.basket, reference.item.ID)
+		case alertRow:
+			return a.editAlert(reference)
 		case kite.Order:
 			if a.width < detailMinWidth {
 				a.overlay = newPayloadOverlay(reference)
@@ -309,11 +352,24 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		a.show(screenUsers)
 	case "r", "R":
-		return a.reloadPortfolio()
+		return tea.Batch(a.reloadPortfolio(), a.loadOrderTab())
+	case "d", "D":
+		if reference, ok := p.focused().selectedRef().(alertRow); ok {
+			return a.deleteAlert(reference)
+		}
 	case "u", "U":
 		a.openUserPicker()
 	case "b", "B":
+		// On the Baskets tab, B opens the selected basket.
+		switch reference := p.focused().selectedRef().(type) {
+		case models.Basket:
+			return a.openPortfolioBasket(reference, "")
+		case basketOrderRow:
+			return a.openPortfolioBasket(reference.basket, reference.item.ID)
+		}
 		return a.openBaskets()
+	case "o", "O":
+		return a.portfolioChain()
 	case "Z":
 		return a.confirmResetPaper(p.user.UserID)
 	case "m", "M", "x", "X":
@@ -332,6 +388,8 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 			return a.confirmCancel(p.user.UserID, order)
 		}
 		return a.openOrder(modifyTicket(p.orderTarget(order).instrument, order, p.user.UserID))
+	case "t", "T":
+		return a.portfolioAlert()
 	case "+":
 		if underlying, ok := p.focused().selectedRef().(models.InstrumentID); ok {
 			return a.confirmExitGroup(underlying)
@@ -341,9 +399,47 @@ func (a *app) portfolioKey(msg tea.KeyPressMsg) tea.Cmd {
 			p.status = statusWarn("Select a position or holding to order") + statusInfo(" · funds cannot be ordered here")
 			return nil
 		}
-		return a.openOrderMenu(target)
+		return a.openTradeForm(target)
 	}
 	return nil
+}
+
+// portfolioAlert opens the alert form on the selected row's instrument: a
+// position's, holding's or order's, or a group's underlying.
+func (a *app) portfolioAlert() tea.Cmd {
+	p := a.portfolio
+	switch reference := p.focused().selectedRef().(type) {
+	case models.InstrumentID:
+		return a.openAlertForm(p.instrumentOf(reference), 0)
+	case alertRow:
+		return a.editAlert(reference)
+	}
+	target, ok := p.selectedTarget()
+	if !ok {
+		p.status = statusWarn("Select a position, holding or order to set an alert on")
+		return nil
+	}
+	return a.openAlertForm(target.instrument, target.ltp)
+}
+
+// portfolioChain opens the option chain of the selected row's underlying:
+// a group's, a derivative's, or a held share's own.
+func (a *app) portfolioChain() tea.Cmd {
+	p := a.portfolio
+	if underlying, ok := p.focused().selectedRef().(models.InstrumentID); ok {
+		return a.openChainFrom(underlying)
+	}
+	target, ok := p.selectedTarget()
+	if !ok {
+		p.status = statusWarn("Select a position, order or holding to open its option chain")
+		return nil
+	}
+	underlying, ok := optionUnderlying(target.instrument)
+	if !ok {
+		p.status = statusWarn(target.instrument.TradingSymbol + " has no options to explore")
+		return nil
+	}
+	return a.openChainFrom(underlying)
 }
 
 // selectedTarget is the focused table's selected position or holding.
@@ -601,25 +697,48 @@ func (a *app) portfolioView(w, h int) string {
 		detailW = 0
 	}
 	tableW := w - detailW
-	heights := splitWidth(rest, 3, 3, 2, 3)
+	heights := splitWidth(rest, 3, 4, 3)
 	top := 1 + 3 // tab bar and cards
 	var tables []string
 	groups := groupPositions(data.positions, data.instruments)
 	titles := []struct{ title, info string }{
 		{"Positions", fmt.Sprintf("%d in %d underlyings · P&L %s", len(data.positions), len(groups), signed(positions))},
-		{"Holdings", fmt.Sprintf("%d · invested %s · current %s · P&L %s (%s)", len(data.holdings), formatAmount(invested), formatAmount(current), signed(current-invested), formatPercent(current-invested, invested))},
-		{"Mutual funds", fmt.Sprintf("%d · invested %s · current %s · P&L %s", len(data.funds), formatAmount(fundsInvested), formatAmount(fundsCurrent), signed(fundsCurrent-fundsInvested))},
-		{"Orders", ordersInfo(data)},
+		{"", fmt.Sprintf("%d · invested %s · current %s · P&L %s (%s)", len(data.holdings), formatAmount(invested), formatAmount(current), signed(current-invested), formatPercent(current-invested, invested))},
+		{"", ""},
 	}
-	errs := []error{data.positionsErr, data.holdingsErr, data.fundsErr, data.ordersErr}
+	errs := []error{data.positionsErr, data.holdingsErr, nil}
+	// The tabs leave the holdings panel less room: a narrow one drops the
+	// invested and current values.
+	short := fmt.Sprintf("%d · P&L %s (%s)", len(data.holdings), signed(current-invested), formatPercent(current-invested, invested))
+	if p.holdingsTab == tabFunds {
+		titles[holdingsPanel].info = fmt.Sprintf("%d · invested %s · current %s · P&L %s (%s)", len(data.funds), formatAmount(fundsInvested), formatAmount(fundsCurrent), signed(fundsCurrent-fundsInvested), formatPercent(fundsCurrent-fundsInvested, fundsInvested))
+		short = fmt.Sprintf("%d · P&L %s (%s)", len(data.funds), signed(fundsCurrent-fundsInvested), formatPercent(fundsCurrent-fundsInvested, fundsInvested))
+		errs[holdingsPanel] = data.fundsErr
+	}
 	for index, g := range p.grids() {
 		g.x, g.y = 1, top+2
 		focused := index == p.focus
+		title := titles[index].title
 		info := styleMuted.Render(titles[index].info)
 		if errs[index] != nil {
 			info = styleRed.Render("failed")
 		}
-		tables = append(tables, panel(titles[index].title, info, g.view(tableW-2, heights[index]-2, focused), tableW, heights[index], focused))
+		if index == holdingsPanel {
+			title = tabTitle(holdingsTabNames, int(p.holdingsTab), focused)
+			// panel drops an info wider than this.
+			if errs[index] == nil && ansi.StringWidth(title)+ansi.StringWidth(titles[index].info) > tableW-9 {
+				info = styleMuted.Render(short)
+			}
+		}
+		if g == p.tabGrid() {
+			title = tabTitle(orderTabNames, int(p.tab), focused)
+			text, failed := p.tabInfo()
+			info = styleMuted.Render(text)
+			if failed {
+				info = styleRed.Render("failed")
+			}
+		}
+		tables = append(tables, panel(title, info, g.view(tableW-2, heights[index]-2, focused), tableW, heights[index], focused))
 		top += heights[index]
 	}
 	left := strings.Join(tables, "\n")
@@ -648,6 +767,12 @@ func (p *portfolioScreen) detail() string {
 		return orderDetail(reference, p.data.orderCharges)
 	case kite.MFHolding:
 		return fundDetail(reference)
+	case models.Basket:
+		return basketDetail(reference)
+	case basketOrderRow:
+		return basketOrderDetail(reference)
+	case alertRow:
+		return alertDetail(reference)
 	}
 	return styleFaint.Render("Select a row to see its details.")
 }

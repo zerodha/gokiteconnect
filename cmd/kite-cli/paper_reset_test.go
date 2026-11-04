@@ -5,8 +5,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 func TestPortfolioResetsThePaperAccount(t *testing.T) {
@@ -25,11 +23,11 @@ func TestPortfolioResetsThePaperAccount(t *testing.T) {
 	h.waitFor("users", func() bool { return len(h.a.users.users) == 1 })
 	h.press("enter")
 	h.waitFor("the portfolio", func() bool { return h.a.screen == screenPortfolio && !h.a.portfolio.loading })
-	// The portfolio's help line is long: it fits a wide terminal.
-	h.dispatch(tea.WindowSizeMsg{Width: 260, Height: 40})
+	h.press("?")
 	if !strings.Contains(h.screen(), "reset paper") {
-		t.Errorf("the help lacks the reset:\n%s", h.screen())
+		t.Errorf("the keys lack the reset:\n%s", h.screen())
 	}
+	h.press("?")
 
 	// ⇧Z asks first; Cancel keeps the account.
 	h.press("Z")

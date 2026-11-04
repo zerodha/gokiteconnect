@@ -122,7 +122,7 @@ func TestDurableOrderFailureNAKsWithBoundedBackoff(t *testing.T) {
 
 func TestStreamContracts(t *testing.T) {
 	configs := StreamConfigs()
-	if len(configs) != 4 {
+	if len(configs) != 5 {
 		t.Fatalf("stream count=%d", len(configs))
 	}
 	byName := make(map[string]jetstream.StreamConfig, len(configs))
@@ -134,6 +134,9 @@ func TestStreamContracts(t *testing.T) {
 	}
 	if got := byName[PriceStreamName]; got.Storage != jetstream.MemoryStorage || got.MaxMsgsPerSubject != 1 {
 		t.Fatalf("prices=%+v", got)
+	}
+	if got := byName[CandleStreamName]; got.Storage != jetstream.MemoryStorage || got.MaxMsgsPerSubject != 1 || got.Subjects[0] != "candles.>" {
+		t.Fatalf("candles=%+v", got)
 	}
 	if got := byName[OrderDeliveryStreamName]; got.Storage != jetstream.FileStorage || got.Retention != jetstream.WorkQueuePolicy || got.Subjects[0] != orderDeliverySubject {
 		t.Fatalf("order delivery=%+v", got)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -143,4 +144,46 @@ func settingByKey(t *testing.T, settings Settings, key string) Setting {
 	}
 	t.Fatalf("no setting %s", key)
 	return Setting{}
+}
+
+func TestSyncSettingsAddsNewSettingsToTheFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	old := `{"TRADEBOT_DEFAULT_USER_ID": {"value": "AB1234"}, "TRADEBOT_ZZZ_OLD": {"value": "kept"}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := SyncSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Get("TRADEBOT_DEFAULT_USER_ID") != "AB1234" {
+		t.Fatalf("synced settings lost the default user: %+v", settings)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file map[string]Setting
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file) != len(SettingSpecs)+1 || file["TRADEBOT_ZZZ_OLD"].Value != "kept" || file["TRADEBOT_DEFAULT_USER_ID"].Value != "AB1234" {
+		t.Fatalf("synced file:\n%s", data)
+	}
+	// Hidden settings are written too, marked not visible.
+	if token, ok := file["TRADEBOT_TELEGRAM_BOT_TOKEN"]; !ok || token.Visible || token.DisplayName != "Telegram Bot Token" {
+		t.Fatalf("synced file lacks the hidden token setting:\n%s", data)
+	}
+
+	// A file listing every setting is left as it is.
+	edited := strings.Replace(string(data), `"AB1234"`, `"CD5678"`, 1)
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncSettings(path); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.ReadFile(path); string(again) != edited {
+		t.Fatalf("a complete file was rewritten:\n%s", again)
+	}
 }
